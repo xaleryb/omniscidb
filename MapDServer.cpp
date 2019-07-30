@@ -266,6 +266,7 @@ class MapDProgramOptions {
   bool verbose_logging = false;
   bool jit_debug = false;
   bool intel_jit_profile = false;
+  bool dump_jit_ir_to_file = false;
   bool allow_multifrag = true;
   bool read_only = false;
   bool allow_loop_joins = false;
@@ -309,6 +310,7 @@ class MapDProgramOptions {
    */
   int max_session_duration = kMinsPerMonth;
   std::string udf_file_name = {""};
+  std::vector<std::string> llvm_opts;
 
   void fillOptions();
   void fillAdvancedOptions();
@@ -632,6 +634,12 @@ void MapDProgramOptions::fillAdvancedOptions() {
           ->implicit_value(true),
       "Enable runtime support for the JIT code profiling using Intel VTune.");
   developer_desc.add_options()(
+      "dump-jit-ir-to-file",
+      po::value<bool>(&dump_jit_ir_to_file)
+          ->default_value(dump_jit_ir_to_file)
+          ->implicit_value(true),
+      "Dump each JIT compiled module IR into temporary files '/tmp/omnisci-ir-*'.");
+  developer_desc.add_options()(
       "skip-intermediate-count",
       po::value<bool>(&g_skip_intermediate_count)
           ->default_value(g_skip_intermediate_count)
@@ -707,6 +715,9 @@ void MapDProgramOptions::fillAdvancedOptions() {
       po::value<std::string>(&udf_file_name),
       "Load user defined extension functions from this file at startup. The file is "
       "expected to be a C/C++ file with extension .cpp.");
+  developer_desc.add_options()("llvm-opt",
+                               po::value<std::vector<std::string>>(&llvm_opts),
+                               "Pass specified option to LLVM.");
 }
 
 namespace {
@@ -882,6 +893,15 @@ boost::optional<int> MapDProgramOptions::parse_command_line(int argc,
   } catch (po::error& e) {
     std::cerr << "Usage Error: " << e.what() << std::endl;
     return 1;
+  }
+
+  if (!llvm_opts.empty()) {
+    std::vector<const char*> argv;
+    argv.push_back("llc");
+    for (auto& opt : llvm_opts)
+      argv.push_back(opt.c_str());
+    bool ok = llvm::cl::ParseCommandLineOptions(argv.size(), argv.data());
+    CHECK(ok);
   }
 
   if (g_hll_precision_bits < 1 || g_hll_precision_bits > 16) {
@@ -1129,6 +1149,7 @@ int startMapdServer(MapDProgramOptions& prog_config_opts, bool start_http_server
                                      prog_config_opts.allow_multifrag,
                                      prog_config_opts.jit_debug,
                                      prog_config_opts.intel_jit_profile,
+                                     prog_config_opts.dump_jit_ir_to_file,
                                      prog_config_opts.read_only,
                                      prog_config_opts.allow_loop_joins,
                                      prog_config_opts.enable_rendering,
