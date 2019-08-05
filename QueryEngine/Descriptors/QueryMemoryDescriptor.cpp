@@ -1045,10 +1045,6 @@ size_t QueryMemoryDescriptor::getSlotCount() const {
   return col_slot_context_.getSlotCount();
 }
 
-const int8_t QueryMemoryDescriptor::getPaddedSlotWidthBytes(const size_t slot_idx) const {
-  return col_slot_context_.getSlotInfo(slot_idx).padded_size;
-}
-
 const int8_t QueryMemoryDescriptor::getLogicalSlotWidthBytes(
     const size_t slot_idx) const {
   return col_slot_context_.getSlotInfo(slot_idx).logical_size;

@@ -25,6 +25,7 @@
 #ifndef QUERYENGINE_QUERYMEMORYDESCRIPTOR_H
 #define QUERYENGINE_QUERYMEMORYDESCRIPTOR_H
 
+#include "../../Shared/funcannotations.h"
 #include "../CompilationOptions.h"
 #include "../CountDistinct.h"
 #include "ColSlotContext.h"
@@ -197,7 +198,9 @@ class QueryMemoryDescriptor {
   size_t getColCount() const;
   size_t getSlotCount() const;
 
-  const int8_t getPaddedSlotWidthBytes(const size_t slot_idx) const;
+  const int8_t ALWAYS_INLINE getPaddedSlotWidthBytes(const size_t slot_idx) const {
+    return col_slot_context_.getSlotInfo(slot_idx).padded_size;
+  }
   const int8_t getLogicalSlotWidthBytes(const size_t slot_idx) const;
 
   const int8_t getSlotIndexForSingleSlotCol(const size_t col_idx) const;
