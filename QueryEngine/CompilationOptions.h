@@ -19,7 +19,7 @@
 
 enum class ExecutorDeviceType { CPU, GPU };
 
-enum class ExecutorOptLevel { Default, LoopStrengthReduction };
+enum class ExecutorOptLevel { Default, O1, O2, O3, LoopStrengthReduction };
 
 enum class ExecutorExplainType { Default, Optimized };
 
