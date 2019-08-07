@@ -132,7 +132,18 @@ void optimize_ir(llvm::Function* query_func,
     pass_manager.add(llvm::createInstructionCombiningPass());
     pass_manager.add(llvm::createGlobalOptimizerPass());
 
+    // some extra passes that can speed up execution
+    if (co.opt_level_ == ExecutorOptLevel::O4) {
+      pass_manager.add(llvm::createEarlyCSEPass());
+      pass_manager.add(llvm::createJumpThreadingPass());
+
+      pass_manager.add(llvm::createCorrelatedValuePropagationPass());
+      pass_manager.add(llvm::createReassociatePass());
+    }
     pass_manager.add(llvm::createLICMPass());
+    if (co.opt_level_ == ExecutorOptLevel::O4) {
+      pass_manager.add(llvm::createNewGVNPass());
+    }
     if (co.opt_level_ == ExecutorOptLevel::LoopStrengthReduction) {
       pass_manager.add(llvm::createLoopStrengthReducePass());
     }
