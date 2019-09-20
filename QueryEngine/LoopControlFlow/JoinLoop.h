@@ -47,6 +47,7 @@ struct JoinLoopDomain {
   };
   llvm::Value* values_buffer;  // used for Set
   size_t entry_size = 1;
+  size_t row_id_size = 1;
 };
 
 // Any join is logically a loop. Hash joins just limit the domain of iteration,

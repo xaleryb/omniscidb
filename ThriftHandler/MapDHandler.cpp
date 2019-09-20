@@ -143,6 +143,7 @@ MapDHandler::MapDHandler(const std::vector<LeafHostInfo>& db_leaves,
                          const bool read_only,
                          const bool allow_loop_joins,
                          const bool join_hash_row_payload,
+                         const bool force_join_hash_long_row_id,
                          const bool enable_rendering,
                          const bool enable_auto_clear_render_mem,
                          const int render_oom_retry_threshold,
@@ -169,6 +170,7 @@ MapDHandler::MapDHandler(const std::vector<LeafHostInfo>& db_leaves,
     , read_only_(read_only)
     , allow_loop_joins_(allow_loop_joins)
     , join_hash_row_payload_(join_hash_row_payload)
+    , force_join_hash_long_row_id_(force_join_hash_long_row_id)
     , authMetadata_(authMetadata)
     , mapd_parameters_(mapd_parameters)
     , legacy_syntax_(legacy_syntax)
@@ -4414,7 +4416,8 @@ std::vector<PushedDownFilterInfo> MapDHandler::execute_rel_alg(
                          find_push_down_candidates,
                          just_calcite_explain,
                          mapd_parameters_.gpu_input_mem_limit,
-                         join_hash_row_payload_};
+                         join_hash_row_payload_,
+                         force_join_hash_long_row_id_};
   auto executor = Executor::getExecutor(cat.getCurrentDB().dbId,
                                         jit_debug_ ? "/tmp" : "",
                                         jit_debug_ ? "mapdquery" : "",
@@ -4476,7 +4479,8 @@ void MapDHandler::execute_rel_alg_df(TDataFrame& _return,
                          false,
                          false,
                          mapd_parameters_.gpu_input_mem_limit,
-                         join_hash_row_payload_};
+                         join_hash_row_payload_,
+                         force_join_hash_long_row_id_};
   auto executor = Executor::getExecutor(cat.getCurrentDB().dbId,
                                         jit_debug_ ? "/tmp" : "",
                                         jit_debug_ ? "mapdquery" : "",

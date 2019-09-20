@@ -841,6 +841,7 @@ class Executor {
       const JoinCondition& current_level_join_conditions,
       RelAlgExecutionUnit& ra_exe_unit,
       InputColDescriptorsByScanIdx& payload_cols,
+      const bool force_big_row_id,
       const CompilationOptions& co,
       const std::vector<InputTableInfo>& query_infos,
       ColumnCacheMap& column_cache,
@@ -881,7 +882,8 @@ class Executor {
       const MemoryLevel memory_level,
       const JoinHashTableInterface::HashType preferred_hash_type,
       ColumnCacheMap& column_cache,
-      InputColDescriptorsByScanIdx& payload_cols);
+      InputColDescriptorsByScanIdx& payload_cols,
+      const bool force_big_row_id);
   void nukeOldState(const bool allow_lazy_fetch,
                     const std::vector<InputTableInfo>& query_infos,
                     const RelAlgExecutionUnit& ra_exe_unit);

@@ -310,7 +310,8 @@ std::shared_ptr<JoinHashTable> JoinHashTable::getInstance(
     const int device_count,
     ColumnCacheMap& column_cache,
     Executor* executor,
-    InputColDescriptorsByScanIdx& payload_cols_candidates) {
+    InputColDescriptorsByScanIdx& payload_cols_candidates,
+    bool force_long_row_id) {
   CHECK(IS_EQUIVALENCE(qual_bin_oper->get_optype()));
   const auto cols =
       get_cols(qual_bin_oper.get(), *executor->getCatalog(), executor->temporary_tables_);
@@ -343,18 +344,37 @@ std::shared_ptr<JoinHashTable> JoinHashTable::getInstance(
           source_col_range.hasNulls());
     }
   }
-  // We can't allocate more than 2GB contiguous memory on GPU and each entry is 4 bytes.
-  const auto max_hash_entry_count =
-      memory_level == Data_Namespace::MemoryLevel::GPU_LEVEL
-          ? static_cast<size_t>(std::numeric_limits<int32_t>::max() / sizeof(int32_t))
-          : static_cast<size_t>(std::numeric_limits<int32_t>::max());
-
   auto bucketized_entry_count_info = get_bucketized_hash_entry_info(
       ti, col_range, qual_bin_oper->get_optype() == kBW_EQ);
   auto bucketized_entry_count = bucketized_entry_count_info.getNormalizedHashEntryCount();
 
+
+  // On GPU long row id is not supported because limiting factor
+  // is max contiguous memory size, not int32_t range.
+  if (memory_level == Data_Namespace::MemoryLevel::GPU_LEVEL) {
+    force_long_row_id = false;
+  } else if (!force_long_row_id && bucketized_entry_count > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+    force_long_row_id = true;
+  }
+
+  // We can't allocate more than 2GB contiguous memory on GPU and each entry is 4/8 bytes.
+  const auto max_hash_entry_count =
+      memory_level == Data_Namespace::MemoryLevel::GPU_LEVEL
+          ? static_cast<size_t>(std::numeric_limits<int32_t>::max() / sizeof(int32_t) / (force_long_row_id ? 1 : 2))
+          : force_long_row_id ? huge_join_hash_size_limit_
+          : static_cast<size_t>(std::numeric_limits<int32_t>::max());
+
   if (bucketized_entry_count > max_hash_entry_count) {
-    throw TooManyHashEntries();
+    throw TooManyHashEntries(max_hash_entry_count);
+  }
+
+  // We don't want to build huge and very sparse tables
+  // to consume lots of memory.
+  if (force_long_row_id) {
+    const auto& query_info = get_inner_query_info(inner_col->get_table_id(), query_infos).info;
+    if (query_info.getNumTuplesUpperBound() * 100 < huge_join_hash_min_load_ * bucketized_entry_count) {
+      throw HashJoinFail("Hash table would be too sparse");
+    }
   }
 
   if (qual_bin_oper->get_optype() == kBW_EQ &&
@@ -374,37 +394,14 @@ std::shared_ptr<JoinHashTable> JoinHashTable::getInstance(
     }
   }
 
-  auto join_hash_table =
-      std::shared_ptr<JoinHashTable>(new JoinHashTable(qual_bin_oper,
-                                                       inner_col,
-                                                       payload_cols,
-                                                       query_infos,
-                                                       memory_level,
-                                                       preferred_hash_type,
-                                                       col_range,
-                                                       column_cache,
-                                                       executor,
-                                                       device_count));
-  try {
-    join_hash_table->tryReify(device_count, true);
-    if (!payload_cols.empty()) {
-      for (auto col_it = scan_it->second.begin();
-           !payload_cols.empty() && col_it != scan_it->second.end();) {
-        auto cur = col_it++;
-        if (*cur == payload_cols.front()) {
-          payload_cols.pop_front();
-          scan_it->second.erase(cur);
-        }
-      }
-    }
-  } catch (const OutOfMemory&) {
-    if (payload_cols.empty())
-      throw;
-
-    payload_cols.clear();
-    join_hash_table =
+  std::shared_ptr<JoinHashTable> join_hash_table;
+  bool retry = true;
+  while (retry) {
+    try {
+      join_hash_table =
         std::shared_ptr<JoinHashTable>(new JoinHashTable(qual_bin_oper,
                                                          inner_col,
+                                                         force_long_row_id,
                                                          payload_cols,
                                                          query_infos,
                                                          memory_level,
@@ -413,13 +410,36 @@ std::shared_ptr<JoinHashTable> JoinHashTable::getInstance(
                                                          column_cache,
                                                          executor,
                                                          device_count));
-    join_hash_table->tryReify(device_count, false);
+      join_hash_table->tryReify(device_count);
+      if (!payload_cols.empty()) {
+        for (auto col_it = scan_it->second.begin();
+             !payload_cols.empty() && col_it != scan_it->second.end();) {
+          auto cur = col_it++;
+          if (*cur == payload_cols.front()) {
+            payload_cols.pop_front();
+            scan_it->second.erase(cur);
+          }
+        }
+      }
+      retry = false;
+    } catch (const OutOfMemory& e) {
+      if (payload_cols.empty()) {
+        throw HashJoinFail(std::string("Ran out of memory while building hash tables for equijoin | ") +
+                           e.what());
+      }
+      payload_cols.clear();
+    } catch (const TooManyHashEntries&) {
+      if (force_long_row_id || memory_level == Data_Namespace::MemoryLevel::GPU_LEVEL)
+        throw;
+      force_long_row_id = true;
+    }
   }
   return join_hash_table;
 }
 
 JoinHashTable::JoinHashTable(const std::shared_ptr<Analyzer::BinOper> qual_bin_oper,
                              const Analyzer::ColumnVar* col_var,
+                             const bool long_row_id,
                              const InputColDescriptors& payload_cols,
                              const std::vector<InputTableInfo>& query_infos,
                              const Data_Namespace::MemoryLevel memory_level,
@@ -435,19 +455,19 @@ JoinHashTable::JoinHashTable(const std::shared_ptr<Analyzer::BinOper> qual_bin_o
     , memory_level_(memory_level)
     , hash_type_(preferred_hash_type)
     , hash_entry_count_(0)
+    , row_id_size_(long_row_id ? 2 : 1)
+    , payload_size_(row_id_size_)
     , col_range_(col_range)
     , executor_(executor)
     , column_cache_(column_cache)
     , device_count_(device_count) {
   CHECK(col_range.getType() == ExpressionRangeType::Integer);
   if (payload_cols_.empty()) {
-    payload_size_ = 1;
     payload_type_ = PayloadType::RowId;
   } else {
     payload_type_ = PayloadType::RowIdAndRow;
     const auto& cat = *executor_->getCatalog();
 
-    payload_size_ = 1;
     for (auto& col : payload_cols_) {
       auto* desc = get_column_descriptor(*col, cat);
       CHECK(desc);
@@ -520,7 +540,8 @@ std::shared_ptr<JoinHashTable> JoinHashTable::getSyntheticInstance(
                                                device_count,
                                                column_cache,
                                                executor,
-                                               dummy);
+                                               dummy,
+                                               false);
 
   return hash_table;
 }
@@ -616,9 +637,12 @@ void JoinHashTable::reify(const int device_count) {
   if (query_info.fragments.empty()) {
     return;
   }
-  if (query_info.getNumTuplesUpperBound() >
-      static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-    throw TooManyHashEntries();
+
+  CHECK(row_id_size_ == 1 || row_id_size_ == 2);
+  size_t limit = row_id_size_ == 1 ? static_cast<size_t>(std::numeric_limits<int32_t>::max())
+    : huge_join_hash_size_limit_;
+  if (query_info.getNumTuplesUpperBound() > limit) {
+    throw TooManyHashEntries(limit);
   }
 #ifdef HAVE_CUDA
   gpu_hash_table_buff_.resize(device_count);
@@ -674,7 +698,7 @@ void JoinHashTable::reify(const int device_count) {
   }
 }
 
-void JoinHashTable::tryReify(const int device_count, bool throw_out_of_memory) {
+void JoinHashTable::tryReify(const int device_count) {
   try {
     reify(device_count);
   } catch (const TableMustBeReplicated& e) {
@@ -691,12 +715,6 @@ void JoinHashTable::tryReify(const int device_count, bool throw_out_of_memory) {
   } catch (const ColumnarConversionNotSupported& e) {
     throw HashJoinFail(std::string("Could not build hash tables for equijoin | ") +
                        e.what());
-  } catch (const OutOfMemory& e) {
-    if (throw_out_of_memory)
-      throw;
-    throw HashJoinFail(
-        std::string("Ran out of memory while building hash tables for equijoin | ") +
-        e.what());
   } catch (const std::exception& e) {
     throw std::runtime_error(
         std::string("Fatal error while attempting to build hash tables for join: ") +
@@ -957,6 +975,7 @@ void JoinHashTable::initHashTableOnCpu(
           [this, hash_entry_info, hash_join_invalid_val, thread_idx, thread_count] {
             init_hash_join_buff(&(*cpu_hash_table_buff_)[0],
                                 hash_entry_info.getNormalizedHashEntryCount(),
+                                row_id_size_,
                                 payload_size_,
                                 hash_join_invalid_val,
                                 thread_idx,
@@ -983,6 +1002,7 @@ void JoinHashTable::initHashTableOnCpu(
                                           &payload] {
         int partial_err =
             fill_hash_join_buff_bucketized(&(*cpu_hash_table_buff_)[0],
+                                           row_id_size_,
                                            payload_size_,
                                            hash_join_invalid_val,
                                            {col_buff, num_elements},
@@ -1028,7 +1048,7 @@ void JoinHashTable::initOneToManyHashTableOnCpu(
     return;
   }
   cpu_hash_table_buff_ = std::make_shared<std::vector<int32_t>>(
-      2 * hash_entry_info.getNormalizedHashEntryCount() + num_elements * payload_size_);
+      2 * hash_entry_info.getNormalizedHashEntryCount() * row_id_size_ + num_elements * payload_size_);
   const StringDictionaryProxy* sd_inner_proxy{nullptr};
   const StringDictionaryProxy* sd_outer_proxy{nullptr};
   if (ti.is_string()) {
@@ -1050,6 +1070,7 @@ void JoinHashTable::initOneToManyHashTableOnCpu(
                                          &(*cpu_hash_table_buff_)[0],
                                          hash_entry_info.getNormalizedHashEntryCount(),
                                          1,
+                                         1,
                                          hash_join_invalid_val,
                                          thread_idx,
                                          thread_count));
@@ -1063,6 +1084,7 @@ void JoinHashTable::initOneToManyHashTableOnCpu(
 
   if (ti.get_type() == kDATE) {
     fill_one_to_many_hash_table_bucketized(&(*cpu_hash_table_buff_)[0],
+                                           row_id_size_,
                                            payload_size_,
                                            hash_entry_info,
                                            hash_join_invalid_val,
@@ -1081,6 +1103,7 @@ void JoinHashTable::initOneToManyHashTableOnCpu(
                                            thread_count);
   } else {
     fill_one_to_many_hash_table(&(*cpu_hash_table_buff_)[0],
+                                row_id_size_,
                                 payload_size_,
                                 hash_entry_info,
                                 hash_join_invalid_val,
@@ -1551,6 +1574,7 @@ HashJoinMatchingSet JoinHashTable::codegenMatchingSet(const CompilationOptions& 
                             sub_buff_size,
                             executor_,
                             bucketize,
+                            row_id_size_,
                             payload_size_);
 }
 
@@ -1562,6 +1586,7 @@ HashJoinMatchingSet JoinHashTable::codegenMatchingSet(
     const int64_t sub_buff_size,
     Executor* executor,
     const bool is_bucketized,
+    const size_t row_id_size,
     const size_t payload_size) {
   using namespace std::string_literals;
 
@@ -1575,6 +1600,13 @@ HashJoinMatchingSet JoinHashTable::codegenMatchingSet(
   }
   if (!is_bw_eq && col_is_nullable) {
     fname += "_nullable";
+  }
+
+  if (row_id_size == 1) {
+    fname += "_32";
+  } else {
+    CHECK_EQ(row_id_size, 2);
+    fname += "_64";
   }
 
   const auto slot_lv = executor->cgen_state_->emitCall(fname, hash_join_idx_args_in);
@@ -1626,7 +1658,7 @@ size_t JoinHashTable::payloadBufferOff() const noexcept {
 }
 
 size_t JoinHashTable::getComponentBufferSize() const noexcept {
-  return hash_entry_count_ * sizeof(int32_t);
+  return hash_entry_count_ * sizeof(int32_t) * row_id_size_;
 }
 
 int64_t JoinHashTable::getJoinHashBuffer(const ExecutorDeviceType device_type,
@@ -1761,6 +1793,13 @@ llvm::Value* JoinHashTable::codegenSlot(const CompilationOptions& co,
 
   if (payload_type_ != PayloadType::RowId) {
     fname += "_payload";
+  }
+
+  if (row_id_size_ == 1) {
+    fname += "_32";
+  } else {
+    CHECK_EQ(row_id_size_, 2);
+    fname += "_64";
   }
 
   auto* res = executor_->cgen_state_->emitCall(fname, hash_join_idx_args);

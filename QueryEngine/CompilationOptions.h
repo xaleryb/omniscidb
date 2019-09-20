@@ -49,6 +49,7 @@ struct ExecutionOptions {
   const bool just_calcite_explain;
   const double gpu_input_mem_limit_percent;  // punt to CPU if input memory exceeds this
   const bool join_hash_row_payload;
+  const bool force_join_hash_long_row_id;
 };
 
 #endif  // QUERYENGINE_COMPILATIONOPTIONS_H

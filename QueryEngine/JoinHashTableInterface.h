@@ -26,8 +26,15 @@
 
 class TooManyHashEntries : public std::runtime_error {
  public:
-  TooManyHashEntries()
-      : std::runtime_error("Hash tables with more than 2B entries not supported yet") {}
+  // TODO: remove default value
+  TooManyHashEntries(size_t max_size = 2 << 30)
+      : std::runtime_error(fmt_msg(max_size)) {}
+ private:
+  static std::string fmt_msg(size_t max_size) {
+    std::stringstream ss;
+    ss << "Hash tables with more than " << (max_size / 1000000000ULL) << "B entries not supported yet";
+    return ss.str();
+  }
 };
 
 class TableMustBeReplicated : public std::runtime_error {
@@ -117,6 +124,8 @@ class JoinHashTableInterface {
 
   virtual size_t getPayloadSize() const noexcept { return 1; }
 
+  virtual size_t getRowIdSize() const noexcept { return 1; }
+
   virtual const InputColDescriptors& getPayloadColumns() const noexcept {
     return EMPTY_PAYLOAD;
   }
@@ -136,6 +145,13 @@ class JoinHashTableInterface {
   virtual size_t countBufferOff() const noexcept = 0;
 
   virtual size_t payloadBufferOff() const noexcept = 0;
+
+ protected:
+  // For int32_t row id available range limits the number of
+  // rows in a table. For int64_t row id available range is
+  // really huge, we better give up on smaller size (128B rows
+  // for now).
+  static constexpr size_t huge_join_hash_size_limit_ = (size_t)1 << 37;
 
  private:
   static const InputColDescriptors EMPTY_PAYLOAD;

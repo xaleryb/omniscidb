@@ -101,6 +101,10 @@ llvm::BasicBlock* JoinLoop::codegen(
           auto offs = builder.CreateMul(iteration_counter,
                                         ll_int(iteration_domain.entry_size, context));
           iteration_val = builder.CreateGEP(iteration_domain.values_buffer, offs);
+          if (iteration_domain.row_id_size > 1) {
+            CHECK_EQ(iteration_domain.row_id_size, 2);
+            iteration_val = builder.CreateBitCast(iteration_val, llvm::Type::getInt64PtrTy(context));
+          }
         }
         iterators.push_back(iteration_val);
         if (join_loop.payload_iterators_codegen_)

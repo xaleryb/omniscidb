@@ -2858,7 +2858,8 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
     const MemoryLevel memory_level,
     const JoinHashTableInterface::HashType preferred_hash_type,
     ColumnCacheMap& column_cache,
-    InputColDescriptorsByScanIdx& payload_cols) {
+    InputColDescriptorsByScanIdx& payload_cols,
+    const bool force_big_row_id) {
   std::shared_ptr<JoinHashTableInterface> join_hash_table;
   const int device_count = deviceCountForMemoryLevel(memory_level);
   CHECK_GT(device_count, 0);
@@ -2887,7 +2888,8 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
                                                      device_count,
                                                      column_cache,
                                                      this,
-                                                     payload_cols);
+                                                     payload_cols,
+                                                     force_big_row_id);
       } catch (TooManyHashEntries&) {
         const auto join_quals = coalesce_singleton_equi_join(qual_bin_oper);
         CHECK_EQ(join_quals.size(), size_t(1));

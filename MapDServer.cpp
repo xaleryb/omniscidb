@@ -269,6 +269,7 @@ class MapDProgramOptions {
   bool read_only = false;
   bool allow_loop_joins = false;
   bool join_hash_row_payload = false;
+  bool force_join_hash_long_row_id = false;
   bool enable_legacy_syntax = true;
   AuthMetadata authMetadata;
 
@@ -361,6 +362,11 @@ void MapDProgramOptions::fillOptions() {
                               ->default_value(join_hash_row_payload)
                               ->implicit_value(true),
                           "Enable row payload in join hash indexes");
+  help_desc.add_options()("force-join-hash-long-row-id",
+                          po::value<bool>(&force_join_hash_long_row_id)
+                              ->default_value(force_join_hash_long_row_id)
+                              ->implicit_value(true),
+                          "Force join hashes to use 64-bit row id payload");
   help_desc.add_options()("bigint-count",
                           po::value<bool>(&g_bigint_count)
                               ->default_value(g_bigint_count)
@@ -1132,6 +1138,7 @@ int startMapdServer(MapDProgramOptions& prog_config_opts) {
                                      prog_config_opts.read_only,
                                      prog_config_opts.allow_loop_joins,
                                      prog_config_opts.join_hash_row_payload,
+                                     prog_config_opts.force_join_hash_long_row_id,
                                      prog_config_opts.enable_rendering,
                                      prog_config_opts.enable_auto_clear_render_mem,
                                      prog_config_opts.render_oom_retry_threshold,

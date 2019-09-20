@@ -522,10 +522,13 @@ llvm::Value* CodeGenerator::posArg(const Analyzer::Expr* expr) const {
         cgen_state_->scan_idx_to_hash_pos_.find(col_var->get_rte_idx());
     CHECK(hash_pos_it != cgen_state_->scan_idx_to_hash_pos_.end());
     if (hash_pos_it->second->getType()->isPointerTy()) {
-      CHECK(hash_pos_it->second->getType()->getPointerElementType()->isIntegerTy(32));
       llvm::Value* result = cgen_state_->ir_builder_.CreateLoad(hash_pos_it->second);
-      result = cgen_state_->ir_builder_.CreateSExt(
-          result, get_int_type(64, cgen_state_->context_));
+      if (hash_pos_it->second->getType()->getPointerElementType()->isIntegerTy(32)) {
+        result = cgen_state_->ir_builder_.CreateSExt(
+            result, get_int_type(64, cgen_state_->context_));
+      } else {
+        CHECK(hash_pos_it->second->getType()->getPointerElementType()->isIntegerTy(64));
+      }
       return result;
     }
     return hash_pos_it->second;

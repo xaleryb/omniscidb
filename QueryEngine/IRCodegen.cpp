@@ -232,9 +232,10 @@ std::vector<JoinLoop> Executor::buildJoinLoops(
     const auto& current_level_join_conditions = ra_exe_unit.join_quals[level_idx];
     std::vector<std::string> fail_reasons;
     const auto current_level_hash_table =
-        buildCurrentLevelHashTable(current_level_join_conditions,
+      buildCurrentLevelHashTable(current_level_join_conditions,
                                    ra_exe_unit,
                                    payload_cols,
+                                   eo.force_join_hash_long_row_id,
                                    co,
                                    query_infos,
                                    column_cache,
@@ -259,6 +260,7 @@ std::vector<JoinLoop> Executor::buildJoinLoops(
               domain.slot_lookup_result =
                   current_level_hash_table->codegenSlot(co, current_hash_table_idx);
               domain.entry_size = current_level_hash_table->getPayloadSize();
+              domain.row_id_size = current_level_hash_table->getRowIdSize();
               return domain;
             },
             [this,
@@ -283,6 +285,7 @@ std::vector<JoinLoop> Executor::buildJoinLoops(
               domain.values_buffer = matching_set.elements;
               domain.element_count = matching_set.count;
               domain.entry_size = current_level_hash_table->getPayloadSize();
+              domain.row_id_size = current_level_hash_table->getRowIdSize();
               return domain;
             },
             [this,
@@ -412,6 +415,7 @@ std::shared_ptr<JoinHashTableInterface> Executor::buildCurrentLevelHashTable(
     const JoinCondition& current_level_join_conditions,
     RelAlgExecutionUnit& ra_exe_unit,
     InputColDescriptorsByScanIdx& payload_cols,
+    const bool force_long_row_id,
     const CompilationOptions& co,
     const std::vector<InputTableInfo>& query_infos,
     ColumnCacheMap& column_cache,
@@ -440,7 +444,8 @@ std::shared_ptr<JoinHashTableInterface> Executor::buildCurrentLevelHashTable(
                                                      : MemoryLevel::CPU_LEVEL,
           JoinHashTableInterface::HashType::OneToOne,
           column_cache,
-          payload_cols);
+          payload_cols,
+          force_long_row_id);
       current_level_hash_table = hash_table_or_error.hash_table;
     }
     if (hash_table_or_error.hash_table) {

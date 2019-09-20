@@ -329,7 +329,8 @@ void RelAlgExecutor::executeRelAlgStep(const RaExecutionSequence& seq,
       eo.find_push_down_candidates,
       eo.just_calcite_explain,
       eo.gpu_input_mem_limit_percent,
-      eo.join_hash_row_payload};
+      eo.join_hash_row_payload,
+      eo.force_join_hash_long_row_id};
 
   const auto compound = dynamic_cast<const RelCompound*>(body);
   if (compound) {
@@ -1408,7 +1409,8 @@ std::unique_ptr<WindowFunctionContext> RelAlgExecutor::createWindowFunctionConte
                                             memory_level,
                                             JoinHashTableInterface::HashType::OneToMany,
                                             column_cache_map,
-                                            dummy);
+                                            dummy,
+                                            false);
   if (!join_table_or_err.fail_reason.empty()) {
     throw std::runtime_error(join_table_or_err.fail_reason);
   }

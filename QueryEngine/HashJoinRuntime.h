@@ -53,7 +53,8 @@ struct HashEntryInfo {
 const size_t g_maximum_conditions_to_coalesce{8};
 
 void init_hash_join_buff(int32_t* buff,
-                         const int32_t entry_count,
+                         const size_t entry_count,
+                         const int32_t row_id_size,
                          const int32_t entry_size,
                          const int32_t invalid_slot_val,
                          const int32_t cpu_thread_idx,
@@ -135,6 +136,7 @@ struct JoinBucketInfo {
 };
 
 int fill_hash_join_buff_bucketized(int32_t* buff,
+                                   const size_t row_id_size,
                                    const size_t entry_size,
                                    const int32_t invalid_slot_val,
                                    const JoinColumn join_column,
@@ -199,7 +201,8 @@ void fill_hash_join_buff_on_device_sharded_bucketized(int32_t* buff,
                                                       const int64_t bucket_normalization);
 
 void fill_one_to_many_hash_table(int32_t* buff,
-                                 const int32_t hash_entry_size,
+                                 const size_t row_id_size,
+                                 const size_t hash_entry_size,
                                  const HashEntryInfo hash_entry_info,
                                  const int32_t invalid_slot_val,
                                  const JoinColumn& join_column,
@@ -211,7 +214,8 @@ void fill_one_to_many_hash_table(int32_t* buff,
                                  const unsigned cpu_thread_count);
 
 void fill_one_to_many_hash_table_bucketized(int32_t* buff,
-                                            const int32_t hash_entry_size,
+                                            const size_t row_id_size,
+                                            const size_t hash_entry_size,
                                             const HashEntryInfo hash_entry_info,
                                             const int32_t invalid_slot_val,
                                             const JoinColumn& join_column,

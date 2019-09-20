@@ -61,7 +61,8 @@ class JoinHashTable : public JoinHashTableInterface {
       const int device_count,
       ColumnCacheMap& column_cache,
       Executor* executor,
-      InputColDescriptorsByScanIdx& payload_cols_candidate);
+      InputColDescriptorsByScanIdx& payload_cols_candidate,
+      bool force_long_row_id);
 
   //! Make hash table from named tables and columns (such as for testing).
   static std::shared_ptr<JoinHashTable> getSyntheticInstance(
@@ -108,6 +109,8 @@ class JoinHashTable : public JoinHashTableInterface {
 
   size_t getPayloadSize() const noexcept override { return payload_size_; }
 
+  size_t getRowIdSize() const noexcept override { return row_id_size_; }
+
   const InputColDescriptors& getPayloadColumns() const noexcept override {
     return payload_cols_;
   }
@@ -133,6 +136,7 @@ class JoinHashTable : public JoinHashTableInterface {
       const int64_t sub_buff_size,
       Executor* executor,
       const bool is_bucketized = false,
+      const size_t row_id_size = 1,
       const size_t payload_size = 1);
 
   static llvm::Value* codegenHashTableLoad(const size_t table_idx, Executor* executor);
@@ -147,8 +151,15 @@ class JoinHashTable : public JoinHashTableInterface {
   virtual ~JoinHashTable() {}
 
  private:
+  // We don't want to create JoinHashTable for big ranges
+  // with small number of valid entries. Therefore we set
+  // a minimal part (in percent) of a table which has to
+  // be filled with valid entries.
+  static constexpr size_t huge_join_hash_min_load_ = 25;
+
   JoinHashTable(const std::shared_ptr<Analyzer::BinOper> qual_bin_oper,
                 const Analyzer::ColumnVar* col_var,
+                const bool force_long_row_id,
                 const InputColDescriptors& payload_cols,
                 const std::vector<InputTableInfo>& query_infos,
                 const Data_Namespace::MemoryLevel memory_level,
@@ -175,7 +186,7 @@ class JoinHashTable : public JoinHashTableInterface {
       const Analyzer::Expr* outer_col,
       const Analyzer::ColumnVar* inner_col) const;
 
-  void tryReify(const int device_count, bool throw_out_of_memory);
+  void tryReify(const int device_count);
   void reify(const int device_count);
   void reifyOneToOneForDevice(
       const std::deque<Fragmenter_Namespace::FragmentInfo>& fragments,
@@ -267,6 +278,7 @@ class JoinHashTable : public JoinHashTableInterface {
   HashType hash_type_;
   size_t hash_entry_count_;
   PayloadType payload_type_;
+  size_t row_id_size_;
   size_t payload_size_;
   // Payload col -> <offset, size>
   std::unordered_map<InputColDescriptor, std::pair<size_t, size_t>> payload_col_pos_;

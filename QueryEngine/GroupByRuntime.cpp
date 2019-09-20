@@ -268,21 +268,40 @@ get_columnar_scan_output_offset(int64_t* output_buffer,
   return -1;
 }
 
-extern "C" ALWAYS_INLINE DEVICE int64_t
-bucketized_hash_join_idx(int64_t hash_buff,
+template <typename T>
+static ALWAYS_INLINE DEVICE int64_t bucketized_hash_join_idx_impl(int64_t hash_buff,
                          int64_t const key,
                          int64_t const min_key,
                          int64_t const max_key,
                          int64_t bucket_normalization) {
   if (key >= min_key && key <= max_key) {
-    return *SUFFIX(get_bucketized_hash_slot)(
-        reinterpret_cast<int32_t*>(hash_buff), key, min_key, bucket_normalization);
+    int32_t* ptr = SUFFIX(get_bucketized_hash_slot_payload)(
+        reinterpret_cast<int32_t*>(hash_buff), key, min_key, sizeof(T) / sizeof(int32_t), bucket_normalization);
+    return *reinterpret_cast<T*>(ptr);
   }
   return -1;
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-bucketized_hash_join_idx_payload(int64_t hash_buff,
+bucketized_hash_join_idx_32(int64_t hash_buff,
+                         int64_t const key,
+                         int64_t const min_key,
+                         int64_t const max_key,
+                         int64_t bucket_normalization) {
+  return bucketized_hash_join_idx_impl<int32_t>(hash_buff, key, min_key, max_key, bucket_normalization);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+bucketized_hash_join_idx_64(int64_t hash_buff,
+                         int64_t const key,
+                         int64_t const min_key,
+                         int64_t const max_key,
+                         int64_t bucket_normalization) {
+  return bucketized_hash_join_idx_impl<int64_t>(hash_buff, key, min_key, max_key, bucket_normalization);
+}
+
+template <typename T>
+static ALWAYS_INLINE DEVICE int64_t bucketized_hash_join_idx_payload_impl(int64_t hash_buff,
                                  int64_t const key,
                                  int64_t const min_key,
                                  int64_t const max_key,
@@ -296,98 +315,207 @@ bucketized_hash_join_idx_payload(int64_t hash_buff,
                                                entry_size,
                                                bucket_normalization);
   if (key >= min_key && key <= max_key) {
-    return **entry_ptr;
-  }
-  return -1;
-}
-
-extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx(int64_t hash_buff,
-                                                      const int64_t key,
-                                                      const int64_t min_key,
-                                                      const int64_t max_key) {
-  if (key >= min_key && key <= max_key) {
-    return *SUFFIX(get_hash_slot)(reinterpret_cast<int32_t*>(hash_buff), key, min_key);
-  }
-  return -1;
-}
-
-extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_payload(int64_t hash_buff,
-                                                              const int64_t key,
-                                                              const int64_t min_key,
-                                                              const int64_t max_key,
-                                                              const int64_t entry_size,
-                                                              int32_t** entry_ptr) {
-  *entry_ptr = SUFFIX(get_hash_slot_payload)(
-      reinterpret_cast<int32_t*>(hash_buff), key, min_key, entry_size);
-  if (key >= min_key && key <= max_key) {
-    return **entry_ptr;
+    return *reinterpret_cast<T*>(*entry_ptr);
   }
   return -1;
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-bucketized_hash_join_idx_nullable(int64_t hash_buff,
-                                  const int64_t key,
-                                  const int64_t min_key,
-                                  const int64_t max_key,
-                                  const int64_t null_val,
-                                  const int64_t bucket_normalization) {
-  return key != null_val ? bucketized_hash_join_idx(
+bucketized_hash_join_idx_payload_32(int64_t hash_buff,
+                                 int64_t const key,
+                                 int64_t const min_key,
+                                 int64_t const max_key,
+                                 int64_t bucket_normalization,
+                                 int64_t entry_size,
+                                 int32_t** entry_ptr) {
+  return bucketized_hash_join_idx_payload_impl<int32_t>(hash_buff, key, min_key, max_key, bucket_normalization, entry_size, entry_ptr);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+bucketized_hash_join_idx_payload_64(int64_t hash_buff,
+                                 int64_t const key,
+                                 int64_t const min_key,
+                                 int64_t const max_key,
+                                 int64_t bucket_normalization,
+                                 int64_t entry_size,
+                                 int32_t** entry_ptr) {
+  return bucketized_hash_join_idx_payload_impl<int64_t>(hash_buff, key, min_key, max_key, bucket_normalization, entry_size, entry_ptr);
+}
+
+template <typename T>
+static ALWAYS_INLINE DEVICE int64_t hash_join_idx_impl(int64_t hash_buff,
+                                                       const int64_t key,
+                                                       const int64_t min_key,
+                                                       const int64_t max_key) {
+  if (key >= min_key && key <= max_key) {
+    int32_t* ptr = SUFFIX(get_hash_slot_payload)(reinterpret_cast<int32_t*>(hash_buff), key, min_key, sizeof(T) / sizeof(int32_t));
+    return *reinterpret_cast<T*>(ptr);
+  }
+  return -1;
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_32(int64_t hash_buff,
+                                                         const int64_t key,
+                                                         const int64_t min_key,
+                                                         const int64_t max_key) {
+  return hash_join_idx_impl<int32_t>(hash_buff, key, min_key, max_key);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_64(int64_t hash_buff,
+                                                         const int64_t key,
+                                                         const int64_t min_key,
+                                                         const int64_t max_key) {
+  return hash_join_idx_impl<int64_t>(hash_buff, key, min_key, max_key);
+}
+
+template <typename T>
+static ALWAYS_INLINE DEVICE int64_t hash_join_idx_payload_impl(int64_t hash_buff,
+                                                               const int64_t key,
+                                                               const int64_t min_key,
+                                                               const int64_t max_key,
+                                                               const int64_t entry_size,
+                                                               int32_t** entry_ptr) {
+  *entry_ptr = SUFFIX(get_hash_slot_payload)(
+      reinterpret_cast<int32_t*>(hash_buff), key, min_key, entry_size);
+  if (key >= min_key && key <= max_key) {
+    return *reinterpret_cast<T*>(*entry_ptr);
+  }
+  return -1;
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_payload_32(int64_t hash_buff,
+                                                                 const int64_t key,
+                                                                 const int64_t min_key,
+                                                                 const int64_t max_key,
+                                                                 const int64_t entry_size,
+                                                                 int32_t** entry_ptr) {
+  return hash_join_idx_payload_impl<int32_t>(hash_buff, key, min_key, max_key, entry_size, entry_ptr);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_payload_64(int64_t hash_buff,
+                                                                 const int64_t key,
+                                                                 const int64_t min_key,
+                                                                 const int64_t max_key,
+                                                                 const int64_t entry_size,
+                                                                 int32_t** entry_ptr) {
+  return hash_join_idx_payload_impl<int64_t>(hash_buff, key, min_key, max_key, entry_size, entry_ptr);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+bucketized_hash_join_idx_nullable_32(int64_t hash_buff,
+                                     const int64_t key,
+                                     const int64_t min_key,
+                                     const int64_t max_key,
+                                     const int64_t null_val,
+                                     const int64_t bucket_normalization) {
+  return key != null_val ? bucketized_hash_join_idx_32(
                                hash_buff, key, min_key, max_key, bucket_normalization)
                          : -1;
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-bucketized_hash_join_idx_nullable_payload(int64_t hash_buff,
-                                          const int64_t key,
-                                          const int64_t min_key,
-                                          const int64_t max_key,
-                                          const int64_t null_val,
-                                          const int64_t bucket_normalization,
-                                          const int64_t entry_size,
-                                          int32_t** entry_ptr) {
-  return key != null_val ? bucketized_hash_join_idx_payload(hash_buff,
-                                                            key,
-                                                            min_key,
-                                                            max_key,
-                                                            bucket_normalization,
-                                                            entry_size,
-                                                            entry_ptr)
+bucketized_hash_join_idx_nullable_64(int64_t hash_buff,
+                                     const int64_t key,
+                                     const int64_t min_key,
+                                     const int64_t max_key,
+                                     const int64_t null_val,
+                                     const int64_t bucket_normalization) {
+  return key != null_val ? bucketized_hash_join_idx_64(
+                               hash_buff, key, min_key, max_key, bucket_normalization)
                          : -1;
 }
 
-extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_nullable(int64_t hash_buff,
-                                                               const int64_t key,
-                                                               const int64_t min_key,
-                                                               const int64_t max_key,
-                                                               const int64_t null_val) {
-  return key != null_val ? hash_join_idx(hash_buff, key, min_key, max_key) : -1;
+extern "C" ALWAYS_INLINE DEVICE int64_t
+bucketized_hash_join_idx_nullable_payload_32(int64_t hash_buff,
+                                             const int64_t key,
+                                             const int64_t min_key,
+                                             const int64_t max_key,
+                                             const int64_t null_val,
+                                             const int64_t bucket_normalization,
+                                             const int64_t entry_size,
+                                             int32_t** entry_ptr) {
+  return key != null_val ? bucketized_hash_join_idx_payload_32(hash_buff,
+                                                               key,
+                                                               min_key,
+                                                               max_key,
+                                                               bucket_normalization,
+                                                               entry_size,
+                                                               entry_ptr)
+                         : -1;
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_nullable_payload(int64_t hash_buff,
-                               const int64_t key,
-                               const int64_t min_key,
-                               const int64_t max_key,
-                               const int64_t null_val,
-                               const int64_t entry_size,
-                               int32_t** entry_ptr) {
-  return key != null_val ? hash_join_idx_payload(
+bucketized_hash_join_idx_nullable_payload_64(int64_t hash_buff,
+                                             const int64_t key,
+                                             const int64_t min_key,
+                                             const int64_t max_key,
+                                             const int64_t null_val,
+                                             const int64_t bucket_normalization,
+                                             const int64_t entry_size,
+                                             int32_t** entry_ptr) {
+  return key != null_val ? bucketized_hash_join_idx_payload_64(hash_buff,
+                                                               key,
+                                                               min_key,
+                                                               max_key,
+                                                               bucket_normalization,
+                                                               entry_size,
+                                                               entry_ptr)
+                         : -1;
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_nullable_32(int64_t hash_buff,
+                                                                  const int64_t key,
+                                                                  const int64_t min_key,
+                                                                  const int64_t max_key,
+                                                                  const int64_t null_val) {
+  return key != null_val ? hash_join_idx_32(hash_buff, key, min_key, max_key) : -1;
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t hash_join_idx_nullable_64(int64_t hash_buff,
+                                                                  const int64_t key,
+                                                                  const int64_t min_key,
+                                                                  const int64_t max_key,
+                                                                  const int64_t null_val) {
+  return key != null_val ? hash_join_idx_64(hash_buff, key, min_key, max_key) : -1;
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+hash_join_idx_nullable_payload_32(int64_t hash_buff,
+                                  const int64_t key,
+                                  const int64_t min_key,
+                                  const int64_t max_key,
+                                  const int64_t null_val,
+                                  const int64_t entry_size,
+                                  int32_t** entry_ptr) {
+  return key != null_val ? hash_join_idx_payload_32(
                                hash_buff, key, min_key, max_key, entry_size, entry_ptr)
                          : -1;
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-bucketized_hash_join_idx_bitwise(int64_t hash_buff,
+hash_join_idx_nullable_payload_64(int64_t hash_buff,
+                                  const int64_t key,
+                                  const int64_t min_key,
+                                  const int64_t max_key,
+                                  const int64_t null_val,
+                                  const int64_t entry_size,
+                                  int32_t** entry_ptr) {
+  return key != null_val ? hash_join_idx_payload_64(
+                               hash_buff, key, min_key, max_key, entry_size, entry_ptr)
+                         : -1;
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+bucketized_hash_join_idx_bitwise_32(int64_t hash_buff,
                                  const int64_t key,
                                  const int64_t min_key,
                                  const int64_t max_key,
                                  const int64_t null_val,
                                  const int64_t translated_val,
                                  const int64_t bucket_normalization) {
-  return key != null_val ? bucketized_hash_join_idx(
+  return key != null_val ? bucketized_hash_join_idx_32(
                                hash_buff, key, min_key, max_key, bucket_normalization)
-                         : bucketized_hash_join_idx(hash_buff,
+                         : bucketized_hash_join_idx_32(hash_buff,
                                                     translated_val,
                                                     min_key,
                                                     translated_val,
@@ -395,7 +523,24 @@ bucketized_hash_join_idx_bitwise(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-bucketized_hash_join_idx_bitwise_payload(int64_t hash_buff,
+bucketized_hash_join_idx_bitwise_64(int64_t hash_buff,
+                                 const int64_t key,
+                                 const int64_t min_key,
+                                 const int64_t max_key,
+                                 const int64_t null_val,
+                                 const int64_t translated_val,
+                                 const int64_t bucket_normalization) {
+  return key != null_val ? bucketized_hash_join_idx_64(
+                               hash_buff, key, min_key, max_key, bucket_normalization)
+                         : bucketized_hash_join_idx_64(hash_buff,
+                                                    translated_val,
+                                                    min_key,
+                                                    translated_val,
+                                                    bucket_normalization);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+bucketized_hash_join_idx_bitwise_payload_32(int64_t hash_buff,
                                          const int64_t key,
                                          const int64_t min_key,
                                          const int64_t max_key,
@@ -404,14 +549,39 @@ bucketized_hash_join_idx_bitwise_payload(int64_t hash_buff,
                                          const int64_t bucket_normalization,
                                          const int64_t entry_size,
                                          int32_t** entry_ptr) {
-  return key != null_val ? bucketized_hash_join_idx_payload(hash_buff,
+  return key != null_val ? bucketized_hash_join_idx_payload_32(hash_buff,
                                                             key,
                                                             min_key,
                                                             max_key,
                                                             bucket_normalization,
                                                             entry_size,
                                                             entry_ptr)
-                         : bucketized_hash_join_idx_payload(hash_buff,
+                         : bucketized_hash_join_idx_payload_32(hash_buff,
+                                                            translated_val,
+                                                            min_key,
+                                                            translated_val,
+                                                            bucket_normalization,
+                                                            entry_size,
+                                                            entry_ptr);
+}
+extern "C" ALWAYS_INLINE DEVICE int64_t
+bucketized_hash_join_idx_bitwise_payload_64(int64_t hash_buff,
+                                         const int64_t key,
+                                         const int64_t min_key,
+                                         const int64_t max_key,
+                                         const int64_t null_val,
+                                         const int64_t translated_val,
+                                         const int64_t bucket_normalization,
+                                         const int64_t entry_size,
+                                         int32_t** entry_ptr) {
+  return key != null_val ? bucketized_hash_join_idx_payload_64(hash_buff,
+                                                            key,
+                                                            min_key,
+                                                            max_key,
+                                                            bucket_normalization,
+                                                            entry_size,
+                                                            entry_ptr)
+                         : bucketized_hash_join_idx_payload_64(hash_buff,
                                                             translated_val,
                                                             min_key,
                                                             translated_val,
@@ -421,19 +591,31 @@ bucketized_hash_join_idx_bitwise_payload(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_bitwise(int64_t hash_buff,
+hash_join_idx_bitwise_32(int64_t hash_buff,
                       const int64_t key,
                       const int64_t min_key,
                       const int64_t max_key,
                       const int64_t null_val,
                       const int64_t translated_val) {
   return key != null_val
-             ? hash_join_idx(hash_buff, key, min_key, max_key)
-             : hash_join_idx(hash_buff, translated_val, min_key, translated_val);
+             ? hash_join_idx_32(hash_buff, key, min_key, max_key)
+             : hash_join_idx_32(hash_buff, translated_val, min_key, translated_val);
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_bitwise_payload(int64_t hash_buff,
+hash_join_idx_bitwise_64(int64_t hash_buff,
+                      const int64_t key,
+                      const int64_t min_key,
+                      const int64_t max_key,
+                      const int64_t null_val,
+                      const int64_t translated_val) {
+  return key != null_val
+             ? hash_join_idx_64(hash_buff, key, min_key, max_key)
+             : hash_join_idx_64(hash_buff, translated_val, min_key, translated_val);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+hash_join_idx_bitwise_payload_32(int64_t hash_buff,
                               const int64_t key,
                               const int64_t min_key,
                               const int64_t max_key,
@@ -441,9 +623,9 @@ hash_join_idx_bitwise_payload(int64_t hash_buff,
                               const int64_t translated_val,
                               const int64_t entry_size,
                               int32_t** entry_ptr) {
-  return key != null_val ? hash_join_idx_payload(
+  return key != null_val ? hash_join_idx_payload_32(
                                hash_buff, key, min_key, max_key, entry_size, entry_ptr)
-                         : hash_join_idx_payload(hash_buff,
+                         : hash_join_idx_payload_32(hash_buff,
                                                  translated_val,
                                                  min_key,
                                                  translated_val,
@@ -452,7 +634,26 @@ hash_join_idx_bitwise_payload(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_sharded(int64_t hash_buff,
+hash_join_idx_bitwise_payload_64(int64_t hash_buff,
+                              const int64_t key,
+                              const int64_t min_key,
+                              const int64_t max_key,
+                              const int64_t null_val,
+                              const int64_t translated_val,
+                              const int64_t entry_size,
+                              int32_t** entry_ptr) {
+  return key != null_val ? hash_join_idx_payload_64(
+                               hash_buff, key, min_key, max_key, entry_size, entry_ptr)
+                         : hash_join_idx_payload_64(hash_buff,
+                                                 translated_val,
+                                                 min_key,
+                                                 translated_val,
+                                                 entry_size,
+                                                 entry_ptr);
+}
+
+extern "C" ALWAYS_INLINE DEVICE int64_t
+hash_join_idx_sharded_32(int64_t hash_buff,
                       const int64_t key,
                       const int64_t min_key,
                       const int64_t max_key,
@@ -471,7 +672,7 @@ hash_join_idx_sharded(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_sharded_payload(int64_t hash_buff,
+hash_join_idx_sharded_payload_32(int64_t hash_buff,
                               const int64_t key,
                               const int64_t min_key,
                               const int64_t max_key,
@@ -495,7 +696,7 @@ hash_join_idx_sharded_payload(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_sharded_nullable(int64_t hash_buff,
+hash_join_idx_sharded_nullable_32(int64_t hash_buff,
                                const int64_t key,
                                const int64_t min_key,
                                const int64_t max_key,
@@ -503,7 +704,7 @@ hash_join_idx_sharded_nullable(int64_t hash_buff,
                                const uint32_t num_shards,
                                const uint32_t device_count,
                                const int64_t null_val) {
-  return key != null_val ? hash_join_idx_sharded(hash_buff,
+  return key != null_val ? hash_join_idx_sharded_32(hash_buff,
                                                  key,
                                                  min_key,
                                                  max_key,
@@ -514,7 +715,7 @@ hash_join_idx_sharded_nullable(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_sharded_nullable_payload(int64_t hash_buff,
+hash_join_idx_sharded_nullable_payload_32(int64_t hash_buff,
                                        const int64_t key,
                                        const int64_t min_key,
                                        const int64_t max_key,
@@ -524,7 +725,7 @@ hash_join_idx_sharded_nullable_payload(int64_t hash_buff,
                                        const int64_t null_val,
                                        const int64_t entry_size,
                                        int32_t** entry_ptr) {
-  return key != null_val ? hash_join_idx_sharded_payload(hash_buff,
+  return key != null_val ? hash_join_idx_sharded_payload_32(hash_buff,
                                                          key,
                                                          min_key,
                                                          max_key,
@@ -537,7 +738,7 @@ hash_join_idx_sharded_nullable_payload(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_bitwise_sharded(int64_t hash_buff,
+hash_join_idx_bitwise_sharded_32(int64_t hash_buff,
                               const int64_t key,
                               const int64_t min_key,
                               const int64_t max_key,
@@ -546,14 +747,14 @@ hash_join_idx_bitwise_sharded(int64_t hash_buff,
                               const uint32_t device_count,
                               const int64_t null_val,
                               const int64_t translated_val) {
-  return key != null_val ? hash_join_idx_sharded(hash_buff,
+  return key != null_val ? hash_join_idx_sharded_32(hash_buff,
                                                  key,
                                                  min_key,
                                                  max_key,
                                                  entry_count_per_shard,
                                                  num_shards,
                                                  device_count)
-                         : hash_join_idx_sharded(hash_buff,
+                         : hash_join_idx_sharded_32(hash_buff,
                                                  translated_val,
                                                  min_key,
                                                  translated_val,
@@ -563,7 +764,7 @@ hash_join_idx_bitwise_sharded(int64_t hash_buff,
 }
 
 extern "C" ALWAYS_INLINE DEVICE int64_t
-hash_join_idx_bitwise_sharded_payload(int64_t hash_buff,
+hash_join_idx_bitwise_sharded_payload_32(int64_t hash_buff,
                                       const int64_t key,
                                       const int64_t min_key,
                                       const int64_t max_key,
@@ -574,7 +775,7 @@ hash_join_idx_bitwise_sharded_payload(int64_t hash_buff,
                                       const int64_t translated_val,
                                       const int64_t entry_size,
                                       int32_t** entry_ptr) {
-  return key != null_val ? hash_join_idx_sharded_payload(hash_buff,
+  return key != null_val ? hash_join_idx_sharded_payload_32(hash_buff,
                                                          key,
                                                          min_key,
                                                          max_key,
@@ -583,7 +784,7 @@ hash_join_idx_bitwise_sharded_payload(int64_t hash_buff,
                                                          device_count,
                                                          entry_size,
                                                          entry_ptr)
-                         : hash_join_idx_sharded_payload(hash_buff,
+                         : hash_join_idx_sharded_payload_32(hash_buff,
                                                          translated_val,
                                                          min_key,
                                                          translated_val,
