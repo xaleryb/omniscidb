@@ -50,7 +50,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
       const HashType preferred_hash_type,
       const int device_count,
       ColumnCacheMap& column_cache,
-      Executor* executor);
+      Executor* executor,
+      bool force_long_row_id);
 
   //! Make hash table from named tables and columns (such as for testing).
   static std::shared_ptr<BaselineJoinHashTable> getSyntheticInstance(
@@ -94,6 +95,10 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
 
   JoinHashTableInterface::HashType getHashType() const noexcept override;
 
+  size_t getPayloadSize() const noexcept override;
+
+  size_t getRowIdSize() const noexcept override;
+
   size_t offsetBufferOff() const noexcept override;
 
   size_t countBufferOff() const noexcept override;
@@ -120,7 +125,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
                         const size_t entry_count,
                         ColumnCacheMap& column_cache,
                         Executor* executor,
-                        const std::vector<InnerOuter>& inner_outer_pairs);
+                        const std::vector<InnerOuter>& inner_outer_pairs,
+                        bool long_row_id);
 
   static int getInnerTableId(const std::vector<InnerOuter>& inner_outer_pairs);
 
@@ -254,6 +260,7 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
   JoinHashTableInterface::HashType layout_;
   size_t entry_count_;         // number of keys in the hash table
   size_t emitted_keys_count_;  // number of keys emitted across all rows
+  size_t row_id_size_;
   Executor* executor_;
   ColumnCacheMap& column_cache_;
   std::shared_ptr<std::vector<int8_t>> cpu_hash_table_buff_;
@@ -278,6 +285,7 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
     const JoinHashTableInterface::HashType type;
     const size_t entry_count;
     const size_t emitted_keys_count;
+    const size_t row_id_size;
   };
 
   const HashTableCacheValue* findHashTableOnCpuInCache(const HashTableCacheKey&);

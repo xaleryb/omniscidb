@@ -525,6 +525,7 @@ int OverlapsJoinHashTable::initHashTableOnCpu(
                                               entry_count_,
                                               key_component_count,
                                               false,
+                                              row_id_size_,
                                               -1,
                                               thread_idx,
                                               thread_count);
@@ -534,6 +535,7 @@ int OverlapsJoinHashTable::initHashTableOnCpu(
                                               entry_count_,
                                               key_component_count,
                                               false,
+                                              row_id_size_,
                                               -1,
                                               thread_idx,
                                               thread_count);
@@ -605,9 +607,9 @@ int OverlapsJoinHashTable::initHashTableOnCpu(
     cpu_hash_table_buff_.reset();
     return err;
   }
-  auto one_to_many_buff =
-      reinterpret_cast<int32_t*>(&(*cpu_hash_table_buff_)[0] + entry_count_ * entry_size);
-  init_hash_join_buff(one_to_many_buff, entry_count_, 1, 1, -1, 0, 1);
+  auto one_to_many_buff = cpu_hash_table_buff_->data() + entry_count_ * entry_size;
+  init_hash_join_buff(
+      reinterpret_cast<int32_t*>(one_to_many_buff), entry_count_, 1, 1, -1, 0, 1);
   switch (key_component_width) {
     case 4: {
       const auto composite_key_dict =
@@ -617,6 +619,7 @@ int OverlapsJoinHashTable::initHashTableOnCpu(
                                               entry_count_,
                                               -1,
                                               key_component_count,
+                                              row_id_size_,
                                               join_columns,
                                               join_column_types,
                                               join_bucket_info,
@@ -633,6 +636,7 @@ int OverlapsJoinHashTable::initHashTableOnCpu(
                                               entry_count_,
                                               -1,
                                               key_component_count,
+                                              row_id_size_,
                                               join_columns,
                                               join_column_types,
                                               join_bucket_info,
@@ -766,6 +770,7 @@ int OverlapsJoinHashTable::initHashTableOnGpu(
 llvm::Value* OverlapsJoinHashTable::codegenKey(const CompilationOptions& co) {
   const auto key_component_width = getKeyComponentWidth();
   CHECK(key_component_width == 4 || key_component_width == 8);
+  CHECK_EQ(row_id_size_, 4);
   const auto key_size_lv = LL_INT(getKeyComponentCount() * key_component_width);
   llvm::Value* key_buff_lv{nullptr};
   switch (key_component_width) {

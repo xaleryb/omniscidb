@@ -883,7 +883,7 @@ class Executor {
       const JoinHashTableInterface::HashType preferred_hash_type,
       ColumnCacheMap& column_cache,
       InputColDescriptorsByScanIdx& payload_cols,
-      const bool force_big_row_id);
+      const bool force_long_row_id);
   void nukeOldState(const bool allow_lazy_fetch,
                     const std::vector<InputTableInfo>& query_infos,
                     const RelAlgExecutionUnit& ra_exe_unit);

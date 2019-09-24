@@ -1,6 +1,7 @@
 #ifndef QUERYENGINE_MURMURHASH1INL_H
 #define QUERYENGINE_MURMURHASH1INL_H
 
+#include <type_traits>
 #include "../Shared/funcannotations.h"
 
 FORCE_INLINE DEVICE uint32_t MurmurHash1Impl(const void* key,
@@ -95,6 +96,25 @@ FORCE_INLINE DEVICE uint64_t MurmurHash64AImpl(const void* key, int len, uint64_
   h ^= h >> r;
 
   return h;
+}
+
+template <typename T>
+FORCE_INLINE DEVICE typename std::make_unsigned<T>::type MurmurHashImpl(const void* key,
+                                                                        int len,
+                                                                        typename std::make_unsigned<T>::type seed);
+#include <iostream>
+template <>
+FORCE_INLINE DEVICE uint32_t MurmurHashImpl<int32_t>(const void* key,
+                                                     int len,
+                                                     uint32_t seed) {
+  return MurmurHash1Impl(key, len, seed);
+}
+
+template <>
+FORCE_INLINE DEVICE uint64_t MurmurHashImpl<int64_t>(const void* key,
+                                                     int len,
+                                                     uint64_t seed) {
+  return MurmurHash64AImpl(key, len, seed);
 }
 
 #endif  // QUERYENGINE_MURMURHASH1INL_H

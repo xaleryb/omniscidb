@@ -373,7 +373,7 @@ std::shared_ptr<JoinHashTable> JoinHashTable::getInstance(
   if (force_long_row_id) {
     const auto& query_info = get_inner_query_info(inner_col->get_table_id(), query_infos).info;
     if (query_info.getNumTuplesUpperBound() * 100 < huge_join_hash_min_load_ * bucketized_entry_count) {
-      throw HashJoinFail("Hash table would be too sparse");
+      throw TooManyHashEntries();
     }
   }
 

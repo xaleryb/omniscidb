@@ -95,15 +95,15 @@ DEVICE void SUFFIX(init_hash_join_buff_impl)(int32_t* groups_buffer,
                                              const int32_t cpu_thread_idx,
                                              const int32_t cpu_thread_count) {
 #ifdef __CUDACC__
-  int32_t start = threadIdx.x + blockDim.x * blockIdx.x;
-  int32_t end = hash_entry_count;
-  int32_t step = blockDim.x * gridDim.x;
+  size_t start = threadIdx.x + blockDim.x * blockIdx.x;
+  size_t end = hash_entry_count;
+  size_t step = blockDim.x * gridDim.x;
 #else
-  int32_t start = cpu_thread_idx * hash_entry_size;
-  int32_t step = cpu_thread_count * hash_entry_size;
-  int32_t end = hash_entry_count * hash_entry_size;
+  size_t start = cpu_thread_idx * hash_entry_size;
+  size_t step = cpu_thread_count * hash_entry_size;
+  size_t end = hash_entry_count * hash_entry_size;
 #endif
-  for (int32_t i = start; i < end; i += step) {
+  for (size_t i = start; i < end; i += step) {
     reinterpret_cast<T&>(groups_buffer[i]) = invalid_slot_val;
   }
 }
@@ -114,15 +114,24 @@ DEVICE void SUFFIX(init_hash_join_buff)(int32_t* groups_buffer,
                                         const int32_t hash_entry_size,
                                         const int32_t invalid_slot_val,
                                         const int32_t cpu_thread_idx,
-                                        const int32_t cpu_thread_count)
-{
+                                        const int32_t cpu_thread_count) {
   if (row_id_size == 1) {
-    SUFFIX(init_hash_join_buff_impl)<int32_t>(groups_buffer, hash_entry_count, hash_entry_size, invalid_slot_val, cpu_thread_idx, cpu_thread_count);
+    SUFFIX(init_hash_join_buff_impl)<int32_t>(groups_buffer,
+                                              hash_entry_count,
+                                              hash_entry_size,
+                                              invalid_slot_val,
+                                              cpu_thread_idx,
+                                              cpu_thread_count);
   } else {
 #ifndef __CUDACC__
     CHECK_EQ(row_id_size, 2);
 #endif
-    SUFFIX(init_hash_join_buff_impl)<int64_t>(groups_buffer, hash_entry_count, hash_entry_size, invalid_slot_val, cpu_thread_idx, cpu_thread_count);
+    SUFFIX(init_hash_join_buff_impl)<int64_t>(groups_buffer,
+                                              hash_entry_count,
+                                              hash_entry_size,
+                                              invalid_slot_val,
+                                              cpu_thread_idx,
+                                              cpu_thread_count);
   }
 }
 
@@ -210,7 +219,9 @@ DEVICE auto fill_hash_join_buff_impl(int32_t* buff,
 #endif
     using row_id_t = typename cas_type<ROW_ID_TYPE>::type;
     auto* entry_ptr = slot_sel(elem);
-    if (mapd_cas(reinterpret_cast<row_id_t*>(entry_ptr), static_cast<row_id_t>(invalid_slot_val), static_cast<row_id_t>(i)) != static_cast<row_id_t>(invalid_slot_val)) {
+    if (mapd_cas(reinterpret_cast<row_id_t*>(entry_ptr),
+                 static_cast<row_id_t>(invalid_slot_val),
+                 static_cast<row_id_t>(i)) != static_cast<row_id_t>(invalid_slot_val)) {
       return -1;
     }
 #ifndef __CUDACC__
@@ -405,14 +416,14 @@ DEVICE int SUFFIX(fill_hash_join_buff_sharded)(int32_t* buff,
                                           slot_selector);
 }
 
-template <typename T>
-DEVICE void SUFFIX(init_baseline_hash_join_buff)(int8_t* hash_buff,
-                                                 const size_t entry_count,
-                                                 const size_t key_component_count,
-                                                 const bool with_val_slot,
-                                                 const int32_t invalid_slot_val,
-                                                 const int32_t cpu_thread_idx,
-                                                 const int32_t cpu_thread_count) {
+template <typename KEY_TYPE, typename VAL_TYPE>
+DEVICE void SUFFIX(init_baseline_hash_join_buff_impl)(int8_t* hash_buff,
+                                                      const size_t entry_count,
+                                                      const size_t key_component_count,
+                                                      const bool with_val_slot,
+                                                      const VAL_TYPE invalid_slot_val,
+                                                      const int32_t cpu_thread_idx,
+                                                      const int32_t cpu_thread_count) {
 #ifdef __CUDACC__
   int32_t start = threadIdx.x + blockDim.x * blockIdx.x;
   int32_t step = blockDim.x * gridDim.x;
@@ -420,31 +431,65 @@ DEVICE void SUFFIX(init_baseline_hash_join_buff)(int8_t* hash_buff,
   int32_t start = cpu_thread_idx;
   int32_t step = cpu_thread_count;
 #endif
-  const T empty_key = SUFFIX(get_invalid_key)<T>();
-  for (uint32_t h = start; h < entry_count; h += step) {
-    uint32_t off = h * (key_component_count + (with_val_slot ? 1 : 0)) * sizeof(T);
-    auto row_ptr = reinterpret_cast<T*>(hash_buff + off);
+  const KEY_TYPE empty_key = SUFFIX(get_invalid_key)<KEY_TYPE>();
+  for (size_t h = start; h < entry_count; h += step) {
+    size_t off = h * (key_component_count * sizeof(KEY_TYPE) +
+                      (with_val_slot ? sizeof(VAL_TYPE) : 0));
+    auto row_ptr = reinterpret_cast<KEY_TYPE*>(hash_buff + off);
     for (size_t i = 0; i < key_component_count; ++i) {
       row_ptr[i] = empty_key;
     }
     if (with_val_slot) {
-      row_ptr[key_component_count] = invalid_slot_val;
+      *reinterpret_cast<VAL_TYPE*>(row_ptr + key_component_count) = invalid_slot_val;
     }
   }
 }
 
-#ifdef __CUDACC__
-template <typename T>
-__device__ T* get_matching_baseline_hash_slot_at(int8_t* hash_buff,
-                                                 const uint32_t h,
-                                                 const T* key,
+template <typename KEY_TYPE>
+DEVICE void SUFFIX(init_baseline_hash_join_buff)(int8_t* hash_join_buff,
+                                                 const size_t entry_count,
                                                  const size_t key_component_count,
-                                                 const bool with_val_slot) {
-  uint32_t off = h * (key_component_count + (with_val_slot ? 1 : 0)) * sizeof(T);
-  auto row_ptr = reinterpret_cast<T*>(hash_buff + off);
-  const T empty_key = SUFFIX(get_invalid_key)<T>();
+                                                 const bool with_val_slot,
+                                                 const size_t val_slot_size,
+                                                 const int32_t invalid_slot_val,
+                                                 const int32_t cpu_thread_idx,
+                                                 const int32_t cpu_thread_count) {
+  if (val_slot_size == 8) {
+    SUFFIX(init_baseline_hash_join_buff_impl)<KEY_TYPE, int64_t>(hash_join_buff,
+                                                                 entry_count,
+                                                                 key_component_count,
+                                                                 with_val_slot,
+                                                                 invalid_slot_val,
+                                                                 cpu_thread_idx,
+                                                                 cpu_thread_count);
+  } else {
+#ifndef __CUDACC__
+    CHECK_EQ(val_slot_size, 4);
+#endif
+    SUFFIX(init_baseline_hash_join_buff_impl)<KEY_TYPE, int32_t>(hash_join_buff,
+                                                                 entry_count,
+                                                                 key_component_count,
+                                                                 with_val_slot,
+                                                                 invalid_slot_val,
+                                                                 cpu_thread_idx,
+                                                                 cpu_thread_count);
+  }
+}
+
+#ifdef __CUDACC__
+template <typename KEY_TYPE, typename VAL_TYPE>
+__device__ VAL_TYPE* get_matching_baseline_hash_slot_at(
+    int8_t* hash_buff,
+    const typename std::make_unsigned<VAL_TYPE>::type h,
+    const KEY_TYPE* key,
+    const size_t key_component_count,
+    const bool with_val_slot) {
+  auto off = h * (key_component_count * sizeof(KEY_TYPE) +
+                  (with_val_slot ? sizeof(VAL_TYPE) : 0));
+  auto row_ptr = reinterpret_cast<KEY_TYPE*>(hash_buff + off);
+  const KEY_TYPE empty_key = SUFFIX(get_invalid_key)<KEY_TYPE>();
   {
-    const T old = atomicCAS(row_ptr, empty_key, *key);
+    const KEY_TYPE old = atomicCAS(row_ptr, empty_key, *key);
     if (empty_key == old && key_component_count > 1) {
       for (size_t i = 1; i <= key_component_count - 1; ++i) {
         atomicExch(row_ptr + i, key[i]);
@@ -466,7 +511,7 @@ __device__ T* get_matching_baseline_hash_slot_at(int8_t* hash_buff,
   }
 
   if (match) {
-    return reinterpret_cast<T*>(row_ptr + key_component_count);
+    return reinterpret_cast<VAL_TYPE*>(row_ptr + key_component_count);
   }
   return nullptr;
 }
@@ -478,16 +523,18 @@ __device__ T* get_matching_baseline_hash_slot_at(int8_t* hash_buff,
 #define store_cst(ptr, val) __atomic_store_n(ptr, val, __ATOMIC_SEQ_CST)
 #define load_cst(ptr) __atomic_load_n(ptr, __ATOMIC_SEQ_CST)
 
-template <typename T>
-T* get_matching_baseline_hash_slot_at(int8_t* hash_buff,
-                                      const uint32_t h,
-                                      const T* key,
-                                      const size_t key_component_count,
-                                      const bool with_val_slot) {
-  uint32_t off = h * (key_component_count + (with_val_slot ? 1 : 0)) * sizeof(T);
-  auto row_ptr = reinterpret_cast<T*>(hash_buff + off);
-  T empty_key = SUFFIX(get_invalid_key)<T>();
-  T write_pending = SUFFIX(get_invalid_key)<T>() - 1;
+template <typename KEY_TYPE, typename VAL_TYPE>
+VAL_TYPE* get_matching_baseline_hash_slot_at(
+    int8_t* hash_buff,
+    const typename std::make_unsigned<VAL_TYPE>::type h,
+    const KEY_TYPE* key,
+    const size_t key_component_count,
+    const bool with_val_slot) {
+  auto off = h * (key_component_count * sizeof(KEY_TYPE) +
+                  (with_val_slot ? sizeof(VAL_TYPE) : 0));
+  auto row_ptr = reinterpret_cast<KEY_TYPE*>(hash_buff + off);
+  KEY_TYPE empty_key = SUFFIX(get_invalid_key)<KEY_TYPE>();
+  KEY_TYPE write_pending = SUFFIX(get_invalid_key)<KEY_TYPE>() - 1;
   if (UNLIKELY(*key == write_pending)) {
     // Address the singularity case where the first column contains the pending
     // write special value. Should never happen, but avoid doing wrong things.
@@ -496,10 +543,10 @@ T* get_matching_baseline_hash_slot_at(int8_t* hash_buff,
   const bool success = cas_cst(row_ptr, &empty_key, write_pending);
   if (success) {
     if (key_component_count > 1) {
-      memcpy(row_ptr + 1, key + 1, (key_component_count - 1) * sizeof(T));
+      memcpy(row_ptr + 1, key + 1, (key_component_count - 1) * sizeof(KEY_TYPE));
     }
     store_cst(row_ptr, *key);
-    return reinterpret_cast<T*>(row_ptr + key_component_count);
+    return reinterpret_cast<VAL_TYPE*>(row_ptr + key_component_count);
   }
   while (load_cst(row_ptr) == write_pending) {
     // spin until the winning thread has finished writing the entire key
@@ -509,7 +556,7 @@ T* get_matching_baseline_hash_slot_at(int8_t* hash_buff,
       return nullptr;
     }
   }
-  return reinterpret_cast<T*>(row_ptr + key_component_count);
+  return reinterpret_cast<VAL_TYPE*>(row_ptr + key_component_count);
 }
 
 #undef load_cst
@@ -518,22 +565,23 @@ T* get_matching_baseline_hash_slot_at(int8_t* hash_buff,
 
 #endif  // __CUDACC__
 
-template <typename T>
-DEVICE int write_baseline_hash_slot(const int32_t val,
+template <typename KEY_TYPE, typename VAL_TYPE>
+DEVICE int write_baseline_hash_slot(const VAL_TYPE val,
                                     int8_t* hash_buff,
                                     const size_t entry_count,
-                                    const T* key,
+                                    const KEY_TYPE* key,
                                     const size_t key_component_count,
                                     const bool with_val_slot,
-                                    const int32_t invalid_slot_val) {
-  const uint32_t h =
-      MurmurHash1Impl(key, key_component_count * sizeof(T), 0) % entry_count;
-  T* matching_group = get_matching_baseline_hash_slot_at(
+                                    const VAL_TYPE invalid_slot_val) {
+  const auto h =
+      MurmurHashImpl<VAL_TYPE>(key, key_component_count * sizeof(KEY_TYPE), 0) %
+      entry_count;
+  VAL_TYPE* matching_group = get_matching_baseline_hash_slot_at<KEY_TYPE, VAL_TYPE>(
       hash_buff, h, key, key_component_count, with_val_slot);
   if (!matching_group) {
-    uint32_t h_probe = (h + 1) % entry_count;
+    auto h_probe = (h + 1) % entry_count;
     while (h_probe != h) {
-      matching_group = get_matching_baseline_hash_slot_at(
+      matching_group = get_matching_baseline_hash_slot_at<KEY_TYPE, VAL_TYPE>(
           hash_buff, h_probe, key, key_component_count, with_val_slot);
       if (matching_group) {
         break;
@@ -547,8 +595,53 @@ DEVICE int write_baseline_hash_slot(const int32_t val,
   if (!with_val_slot) {
     return 0;
   }
-  if (mapd_cas(matching_group, invalid_slot_val, val) != invalid_slot_val) {
+  using cas_t = typename cas_type<VAL_TYPE>::type;
+  if (mapd_cas(reinterpret_cast<cas_t*>(matching_group),
+               static_cast<cas_t>(invalid_slot_val),
+               static_cast<cas_t>(val)) != invalid_slot_val) {
     return -1;
+  }
+  return 0;
+}
+
+template <typename KEY_TYPE, typename SLOT_TYPE, typename FILL_HANDLER>
+DEVICE int SUFFIX(fill_baseline_hash_join_buff_impl)(int8_t* hash_buff,
+                                                     const size_t entry_count,
+                                                     const SLOT_TYPE invalid_slot_val,
+                                                     const size_t key_component_count,
+                                                     const bool with_val_slot,
+                                                     const FILL_HANDLER* f,
+                                                     const size_t num_elems,
+                                                     const int32_t cpu_thread_idx,
+                                                     const int32_t cpu_thread_count) {
+#ifdef __CUDACC__
+  int32_t start = threadIdx.x + blockDim.x * blockIdx.x;
+  int32_t step = blockDim.x * gridDim.x;
+#else
+  int32_t start = cpu_thread_idx;
+  int32_t step = cpu_thread_count;
+#endif
+
+  KEY_TYPE key_scratch_buff[g_maximum_conditions_to_coalesce];
+
+  auto key_buff_handler = [hash_buff, entry_count, invalid_slot_val, with_val_slot](
+                              const size_t entry_idx,
+                              const KEY_TYPE* key_scratch_buffer,
+                              const size_t key_component_count) {
+    return write_baseline_hash_slot<KEY_TYPE, SLOT_TYPE>(entry_idx,
+                                                         hash_buff,
+                                                         entry_count,
+                                                         key_scratch_buffer,
+                                                         key_component_count,
+                                                         with_val_slot,
+                                                         invalid_slot_val);
+  };
+
+  for (size_t i = start; i < num_elems; i += step) {
+    const auto err = (*f)(i, key_scratch_buff, key_buff_handler);
+    if (err) {
+      return err;
+    }
   }
   return 0;
 }
@@ -559,40 +652,35 @@ DEVICE int SUFFIX(fill_baseline_hash_join_buff)(int8_t* hash_buff,
                                                 const int32_t invalid_slot_val,
                                                 const size_t key_component_count,
                                                 const bool with_val_slot,
+                                                const size_t val_slot_size,
                                                 const FILL_HANDLER* f,
                                                 const size_t num_elems,
                                                 const int32_t cpu_thread_idx,
                                                 const int32_t cpu_thread_count) {
-#ifdef __CUDACC__
-  int32_t start = threadIdx.x + blockDim.x * blockIdx.x;
-  int32_t step = blockDim.x * gridDim.x;
-#else
-  int32_t start = cpu_thread_idx;
-  int32_t step = cpu_thread_count;
+  if (val_slot_size == 8) {
+    return SUFFIX(fill_baseline_hash_join_buff_impl)<T, int64_t>(hash_buff,
+                                                                 entry_count,
+                                                                 invalid_slot_val,
+                                                                 key_component_count,
+                                                                 with_val_slot,
+                                                                 f,
+                                                                 num_elems,
+                                                                 cpu_thread_idx,
+                                                                 cpu_thread_count);
+  } else {
+#ifndef __CUDACC__
+    CHECK_EQ(val_slot_size, 4);
 #endif
-
-  T key_scratch_buff[g_maximum_conditions_to_coalesce];
-
-  auto key_buff_handler = [hash_buff, entry_count, with_val_slot, invalid_slot_val](
-                              const size_t entry_idx,
-                              const T* key_scratch_buffer,
-                              const size_t key_component_count) {
-    return write_baseline_hash_slot<T>(entry_idx,
-                                       hash_buff,
-                                       entry_count,
-                                       key_scratch_buffer,
-                                       key_component_count,
-                                       with_val_slot,
-                                       invalid_slot_val);
-  };
-
-  for (size_t i = start; i < num_elems; i += step) {
-    const auto err = (*f)(i, key_scratch_buff, key_buff_handler);
-    if (err) {
-      return err;
-    }
+    return SUFFIX(fill_baseline_hash_join_buff_impl)<T, int32_t>(hash_buff,
+                                                                 entry_count,
+                                                                 invalid_slot_val,
+                                                                 key_component_count,
+                                                                 with_val_slot,
+                                                                 f,
+                                                                 num_elems,
+                                                                 cpu_thread_idx,
+                                                                 cpu_thread_count);
   }
-  return 0;
 }
 
 #undef mapd_cas
@@ -666,41 +754,40 @@ GLOBAL void SUFFIX(count_matches)(int32_t* count_buff,
 #endif
 ) {
   auto slot_sel = [&type_info, row_id_size](auto count_buff, auto elem) {
-    return SUFFIX(get_hash_slot_payload)(count_buff, elem, type_info.min_val, row_id_size);
+    return SUFFIX(get_hash_slot_payload)(
+        count_buff, elem, type_info.min_val, row_id_size);
   };
   if (row_id_size == 1) {
-    count_matches_impl<decltype(slot_sel), int32_t>(
-        count_buff,
-        invalid_slot_val,
-        join_column,
-        type_info
+    count_matches_impl<decltype(slot_sel), int32_t>(count_buff,
+                                                    invalid_slot_val,
+                                                    join_column,
+                                                    type_info
 #ifndef __CUDACC__
-        ,
-        sd_inner_proxy,
-        sd_outer_proxy,
-        cpu_thread_idx,
-        cpu_thread_count
+                                                    ,
+                                                    sd_inner_proxy,
+                                                    sd_outer_proxy,
+                                                    cpu_thread_idx,
+                                                    cpu_thread_count
 #endif
-        ,
-        slot_sel);
+                                                    ,
+                                                    slot_sel);
   } else {
 #ifndef __CUDACC__
     CHECK_EQ(row_id_size, 2);
 #endif
-    count_matches_impl<decltype(slot_sel), int64_t>(
-        count_buff,
-        invalid_slot_val,
-        join_column,
-        type_info
+    count_matches_impl<decltype(slot_sel), int64_t>(count_buff,
+                                                    invalid_slot_val,
+                                                    join_column,
+                                                    type_info
 #ifndef __CUDACC__
-        ,
-        sd_inner_proxy,
-        sd_outer_proxy,
-        cpu_thread_idx,
-        cpu_thread_count
+                                                    ,
+                                                    sd_inner_proxy,
+                                                    sd_outer_proxy,
+                                                    cpu_thread_idx,
+                                                    cpu_thread_count
 #endif
-        ,
-        slot_sel);
+                                                    ,
+                                                    slot_sel);
   }
 }
 
@@ -718,44 +805,43 @@ GLOBAL void SUFFIX(count_matches_bucketized)(int32_t* count_buff,
 #endif
                                              ,
                                              const int64_t bucket_normalization) {
-  auto slot_sel = [bucket_normalization, &type_info, row_id_size](auto count_buff, auto elem) {
+  auto slot_sel = [bucket_normalization, &type_info, row_id_size](auto count_buff,
+                                                                  auto elem) {
     return SUFFIX(get_bucketized_hash_slot_payload)(
         count_buff, elem, type_info.min_val, row_id_size, bucket_normalization);
   };
   if (row_id_size == 1) {
-    count_matches_impl<decltype(slot_sel), int32_t>(
-        count_buff,
-        invalid_slot_val,
-        join_column,
-        type_info
+    count_matches_impl<decltype(slot_sel), int32_t>(count_buff,
+                                                    invalid_slot_val,
+                                                    join_column,
+                                                    type_info
 #ifndef __CUDACC__
-        ,
-        sd_inner_proxy,
-        sd_outer_proxy,
-        cpu_thread_idx,
-        cpu_thread_count
+                                                    ,
+                                                    sd_inner_proxy,
+                                                    sd_outer_proxy,
+                                                    cpu_thread_idx,
+                                                    cpu_thread_count
 #endif
-        ,
-        slot_sel);
+                                                    ,
+                                                    slot_sel);
   } else {
 #ifndef __CUDACC__
     CHECK_EQ(row_id_size, 2);
 #endif
-    count_matches_impl<decltype(slot_sel), int64_t>(
-        count_buff,
-        invalid_slot_val,
-        join_column,
-        type_info
+    count_matches_impl<decltype(slot_sel), int64_t>(count_buff,
+                                                    invalid_slot_val,
+                                                    join_column,
+                                                    type_info
 #ifndef __CUDACC__
-        ,
-        sd_inner_proxy,
-        sd_outer_proxy,
-        cpu_thread_idx,
-        cpu_thread_count
+                                                    ,
+                                                    sd_inner_proxy,
+                                                    sd_outer_proxy,
+                                                    cpu_thread_idx,
+                                                    cpu_thread_count
 #endif
-        ,
-        slot_sel);
-    }
+                                                    ,
+                                                    slot_sel);
+  }
 }
 
 GLOBAL void SUFFIX(count_matches_sharded)(int32_t* count_buff,
@@ -810,19 +896,20 @@ GLOBAL void SUFFIX(count_matches_sharded)(int32_t* count_buff,
   }
 }
 
-template <typename T>
-DEVICE NEVER_INLINE const T* SUFFIX(get_matching_baseline_hash_slot_readonly)(
-    const T* key,
+template <typename KEY_TYPE, typename VAL_TYPE>
+DEVICE NEVER_INLINE const KEY_TYPE* SUFFIX(get_matching_baseline_hash_slot_readonly)(
+    const KEY_TYPE* key,
     const size_t key_component_count,
-    const T* composite_key_dict,
+    const KEY_TYPE* composite_key_dict,
     const size_t entry_count) {
-  const uint32_t h =
-      MurmurHash1Impl(key, key_component_count * sizeof(T), 0) % entry_count;
-  uint32_t off = h * key_component_count;
+  const auto h =
+      MurmurHashImpl<VAL_TYPE>(key, key_component_count * sizeof(KEY_TYPE), 0) %
+      entry_count;
+  auto off = h * key_component_count;
   if (keys_are_equal(&composite_key_dict[off], key, key_component_count)) {
     return &composite_key_dict[off];
   }
-  uint32_t h_probe = (h + 1) % entry_count;
+  auto h_probe = (h + 1) % entry_count;
   while (h_probe != h) {
     off = h_probe * key_component_count;
     if (keys_are_equal(&composite_key_dict[off], key, key_component_count)) {
@@ -838,9 +925,9 @@ DEVICE NEVER_INLINE const T* SUFFIX(get_matching_baseline_hash_slot_readonly)(
   return nullptr;
 }
 
-template <typename T, typename KEY_HANDLER>
-GLOBAL void SUFFIX(count_matches_baseline)(int32_t* count_buff,
-                                           const T* composite_key_dict,
+template <typename KEY_TYPE, typename VAL_TYPE, typename KEY_HANDLER>
+GLOBAL void SUFFIX(count_matches_baseline)(VAL_TYPE* count_buff,
+                                           const KEY_TYPE* composite_key_dict,
                                            const size_t entry_count,
                                            const KEY_HANDLER* f,
                                            const size_t num_elems
@@ -860,16 +947,17 @@ GLOBAL void SUFFIX(count_matches_baseline)(int32_t* count_buff,
 #ifdef __CUDACC__
   assert(composite_key_dict);
 #endif
-  T key_scratch_buff[g_maximum_conditions_to_coalesce];
+  KEY_TYPE key_scratch_buff[g_maximum_conditions_to_coalesce];
 
   auto key_buff_handler = [composite_key_dict, entry_count, count_buff](
                               const size_t row_entry_idx,
-                              const T* key_scratch_buff,
+                              const KEY_TYPE* key_scratch_buff,
                               const size_t key_component_count) {
-    const auto matching_group = SUFFIX(get_matching_baseline_hash_slot_readonly)(
-        key_scratch_buff, key_component_count, composite_key_dict, entry_count);
+    const auto matching_group =
+        SUFFIX(get_matching_baseline_hash_slot_readonly)<KEY_TYPE, VAL_TYPE>(
+            key_scratch_buff, key_component_count, composite_key_dict, entry_count);
     const auto entry_idx = (matching_group - composite_key_dict) / key_component_count;
-    mapd_add(&count_buff[entry_idx], int32_t(1));
+    mapd_add(&count_buff[entry_idx], static_cast<VAL_TYPE>(1));
     return 0;
   };
 
@@ -929,13 +1017,16 @@ DEVICE void fill_row_payload_impl(ROW_ID_TYPE* buff,
     CHECK_GE(elem, type_info.min_val)
         << "Element " << elem << " less than min val " << type_info.min_val;
 #endif
-    auto pos_ptr = reinterpret_cast<ROW_ID_TYPE*>(slot_selector(reinterpret_cast<int32_t*>(pos_buff), elem));
+    auto pos_ptr = reinterpret_cast<ROW_ID_TYPE*>(
+        slot_selector(reinterpret_cast<int32_t*>(pos_buff), elem));
 #ifndef __CUDACC__
     CHECK_NE(*pos_ptr, invalid_slot_val);
 #endif
     const auto bin_idx = pos_ptr - pos_buff;
     using count_t = typename cas_type<ROW_ID_TYPE>::type;
-    const auto id_buff_idx = mapd_add(reinterpret_cast<count_t*>(count_buff + bin_idx), static_cast<count_t>(1)) + *pos_ptr;
+    const auto id_buff_idx = mapd_add(reinterpret_cast<count_t*>(count_buff + bin_idx),
+                                      static_cast<count_t>(1)) +
+                             *pos_ptr;
     int32_t* entry_ptr = id_buff + id_buff_idx * hash_entry_size;
     *reinterpret_cast<ROW_ID_TYPE*>(entry_ptr) = static_cast<ROW_ID_TYPE>(i);
 #ifndef __CUDACC__
@@ -1023,7 +1114,7 @@ GLOBAL void SUFFIX(fill_row_payload)(int32_t* buff,
 #endif
 ) {
   auto slot_sel = [&type_info, row_id_size](auto pos_buff, auto elem) {
-                    return SUFFIX(get_hash_slot_payload)(pos_buff, elem, type_info.min_val, row_id_size);
+    return SUFFIX(get_hash_slot_payload)(pos_buff, elem, type_info.min_val, row_id_size);
   };
 
   fill_row_payload_impl(buff,
@@ -1064,7 +1155,8 @@ GLOBAL void SUFFIX(fill_row_payload_bucketized)(int32_t* buff,
 #endif
                                                 ,
                                                 const int64_t bucket_normalization) {
-  auto slot_sel = [&type_info, row_id_size, bucket_normalization](auto pos_buff, auto elem) {
+  auto slot_sel = [&type_info, row_id_size, bucket_normalization](auto pos_buff,
+                                                                  auto elem) {
     return SUFFIX(get_bucketized_hash_slot_payload)(
         pos_buff, elem, type_info.min_val, row_id_size, bucket_normalization);
   };
@@ -1238,11 +1330,11 @@ GLOBAL void SUFFIX(fill_row_ids_sharded_bucketized)(int32_t* buff,
                         slot_sel);
 }
 
-template <typename T, typename KEY_HANDLER>
-GLOBAL void SUFFIX(fill_row_ids_baseline)(int32_t* buff,
-                                          const T* composite_key_dict,
+template <typename KEY_TYPE, typename VAL_TYPE, typename KEY_HANDLER>
+GLOBAL void SUFFIX(fill_row_ids_baseline)(VAL_TYPE* buff,
+                                          const KEY_TYPE* composite_key_dict,
                                           const size_t hash_entry_count,
-                                          const int32_t invalid_slot_val,
+                                          const VAL_TYPE invalid_slot_val,
                                           const KEY_HANDLER* f,
                                           const size_t num_elems
 #ifndef __CUDACC__
@@ -1251,18 +1343,18 @@ GLOBAL void SUFFIX(fill_row_ids_baseline)(int32_t* buff,
                                           const int32_t cpu_thread_count
 #endif
 ) {
-  int32_t* pos_buff = buff;
-  int32_t* count_buff = buff + hash_entry_count;
-  int32_t* id_buff = count_buff + hash_entry_count;
+  VAL_TYPE* pos_buff = buff;
+  VAL_TYPE* count_buff = buff + hash_entry_count;
+  VAL_TYPE* id_buff = count_buff + hash_entry_count;
 #ifdef __CUDACC__
-  int32_t start = threadIdx.x + blockDim.x * blockIdx.x;
-  int32_t step = blockDim.x * gridDim.x;
+  size_t start = threadIdx.x + blockDim.x * blockIdx.x;
+  size_t step = blockDim.x * gridDim.x;
 #else
-  int32_t start = cpu_thread_idx;
-  int32_t step = cpu_thread_count;
+  size_t start = cpu_thread_idx;
+  size_t step = cpu_thread_count;
 #endif
 
-  T key_scratch_buff[g_maximum_conditions_to_coalesce];
+  KEY_TYPE key_scratch_buff[g_maximum_conditions_to_coalesce];
 #ifdef __CUDACC__
   assert(composite_key_dict);
 #endif
@@ -1273,18 +1365,19 @@ GLOBAL void SUFFIX(fill_row_ids_baseline)(int32_t* buff,
                            invalid_slot_val,
                            count_buff,
                            id_buff](const size_t row_index,
-                                    const T* key_scratch_buff,
+                                    const KEY_TYPE* key_scratch_buff,
                                     const size_t key_component_count) {
-    const T* matching_group = SUFFIX(get_matching_baseline_hash_slot_readonly)(
-        key_scratch_buff, key_component_count, composite_key_dict, hash_entry_count);
+    const KEY_TYPE* matching_group =
+        SUFFIX(get_matching_baseline_hash_slot_readonly)<KEY_TYPE, VAL_TYPE>(
+            key_scratch_buff, key_component_count, composite_key_dict, hash_entry_count);
     const auto entry_idx = (matching_group - composite_key_dict) / key_component_count;
-    int32_t* pos_ptr = pos_buff + entry_idx;
+    VAL_TYPE* pos_ptr = pos_buff + entry_idx;
 #ifndef __CUDACC__
     CHECK_NE(*pos_ptr, invalid_slot_val);
 #endif
     const auto bin_idx = pos_ptr - pos_buff;
     const auto id_buff_idx = mapd_add(count_buff + bin_idx, 1) + *pos_ptr;
-    id_buff[id_buff_idx] = static_cast<int32_t>(row_index);
+    id_buff[id_buff_idx] = static_cast<VAL_TYPE>(row_index);
     return 0;
   };
 
@@ -1473,7 +1566,9 @@ void inclusive_scan(InputIterator first,
   }
 }
 
-template <typename COUNT_MATCHES_LAUNCH_FUNCTOR, typename FILL_ROW_IDS_LAUNCH_FUNCTOR, typename COUNTER>
+template <typename COUNT_MATCHES_LAUNCH_FUNCTOR,
+          typename FILL_ROW_IDS_LAUNCH_FUNCTOR,
+          typename COUNTER>
 void fill_one_to_many_hash_table_impl(COUNTER* buff,
                                       const size_t hash_entry_count,
                                       const size_t hash_entry_size,
@@ -1600,26 +1695,25 @@ void fill_one_to_many_hash_table(int32_t* buff,
                                  const void* sd_inner_proxy,
                                  const void* sd_outer_proxy,
                                  const unsigned cpu_thread_count) {
-  auto launch_count_matches = [count_buff = buff + hash_entry_info.hash_entry_count * row_id_size,
-                               row_id_size,
-                               invalid_slot_val,
-                               &join_column,
-                               &type_info,
-                               sd_inner_proxy,
-                               sd_outer_proxy](auto cpu_thread_idx,
-                                               auto cpu_thread_count) {
-
-    SUFFIX(count_matches)
-    (count_buff,
-     row_id_size,
-     invalid_slot_val,
-     join_column,
-     type_info,
-     sd_inner_proxy,
-     sd_outer_proxy,
-     cpu_thread_idx,
-     cpu_thread_count);
-  };
+  auto launch_count_matches =
+      [count_buff = buff + hash_entry_info.hash_entry_count * row_id_size,
+       row_id_size,
+       invalid_slot_val,
+       &join_column,
+       &type_info,
+       sd_inner_proxy,
+       sd_outer_proxy](auto cpu_thread_idx, auto cpu_thread_count) {
+        SUFFIX(count_matches)
+        (count_buff,
+         row_id_size,
+         invalid_slot_val,
+         join_column,
+         type_info,
+         sd_inner_proxy,
+         sd_outer_proxy,
+         cpu_thread_idx,
+         cpu_thread_count);
+      };
   auto launch_fill_row_ids = [hash_entry_count = hash_entry_info.hash_entry_count,
                               row_id_size,
                               hash_entry_size,
@@ -1885,9 +1979,10 @@ void fill_one_to_many_hash_table_sharded(int32_t* buff,
 }
 
 void init_baseline_hash_join_buff_32(int8_t* hash_join_buff,
-                                     const int32_t entry_count,
+                                     const size_t entry_count,
                                      const size_t key_component_count,
                                      const bool with_val_slot,
+                                     const size_t val_slot_size,
                                      const int32_t invalid_slot_val,
                                      const int32_t cpu_thread_idx,
                                      const int32_t cpu_thread_count) {
@@ -1895,15 +1990,17 @@ void init_baseline_hash_join_buff_32(int8_t* hash_join_buff,
                                         entry_count,
                                         key_component_count,
                                         with_val_slot,
+                                        val_slot_size,
                                         invalid_slot_val,
                                         cpu_thread_idx,
                                         cpu_thread_count);
 }
 
 void init_baseline_hash_join_buff_64(int8_t* hash_join_buff,
-                                     const int32_t entry_count,
+                                     const size_t entry_count,
                                      const size_t key_component_count,
                                      const bool with_val_slot,
+                                     const size_t val_slot_size,
                                      const int32_t invalid_slot_val,
                                      const int32_t cpu_thread_idx,
                                      const int32_t cpu_thread_count) {
@@ -1911,6 +2008,7 @@ void init_baseline_hash_join_buff_64(int8_t* hash_join_buff,
                                         entry_count,
                                         key_component_count,
                                         with_val_slot,
+                                        val_slot_size,
                                         invalid_slot_val,
                                         cpu_thread_idx,
                                         cpu_thread_count);
@@ -1921,6 +2019,7 @@ int fill_baseline_hash_join_buff_32(int8_t* hash_buff,
                                     const int32_t invalid_slot_val,
                                     const size_t key_component_count,
                                     const bool with_val_slot,
+                                    const size_t val_slot_size,
                                     const GenericKeyHandler* key_handler,
                                     const size_t num_elems,
                                     const int32_t cpu_thread_idx,
@@ -1930,6 +2029,7 @@ int fill_baseline_hash_join_buff_32(int8_t* hash_buff,
                                                invalid_slot_val,
                                                key_component_count,
                                                with_val_slot,
+                                               val_slot_size,
                                                key_handler,
                                                num_elems,
                                                cpu_thread_idx,
@@ -1950,6 +2050,7 @@ int overlaps_fill_baseline_hash_join_buff_32(int8_t* hash_buff,
                                                invalid_slot_val,
                                                key_component_count,
                                                with_val_slot,
+                                               sizeof(int32_t),
                                                key_handler,
                                                num_elems,
                                                cpu_thread_idx,
@@ -1961,6 +2062,7 @@ int fill_baseline_hash_join_buff_64(int8_t* hash_buff,
                                     const int32_t invalid_slot_val,
                                     const size_t key_component_count,
                                     const bool with_val_slot,
+                                    const size_t val_slot_size,
                                     const GenericKeyHandler* key_handler,
                                     const size_t num_elems,
                                     const int32_t cpu_thread_idx,
@@ -1970,6 +2072,7 @@ int fill_baseline_hash_join_buff_64(int8_t* hash_buff,
                                                invalid_slot_val,
                                                key_component_count,
                                                with_val_slot,
+                                               val_slot_size,
                                                key_handler,
                                                num_elems,
                                                cpu_thread_idx,
@@ -1990,18 +2093,19 @@ int overlaps_fill_baseline_hash_join_buff_64(int8_t* hash_buff,
                                                invalid_slot_val,
                                                key_component_count,
                                                with_val_slot,
+                                               sizeof(int32_t),
                                                key_handler,
                                                num_elems,
                                                cpu_thread_idx,
                                                cpu_thread_count);
 }
 
-template <typename T>
-void fill_one_to_many_baseline_hash_table(
-    int32_t* buff,
-    const T* composite_key_dict,
+template <typename KEY_TYPE, typename VAL_TYPE>
+void fill_one_to_many_baseline_hash_table_impl(
+    VAL_TYPE* buff,
+    const KEY_TYPE* composite_key_dict,
     const size_t hash_entry_count,
-    const int32_t invalid_slot_val,
+    const VAL_TYPE invalid_slot_val,
     const size_t key_component_count,
     const std::vector<JoinColumn>& join_column_per_key,
     const std::vector<JoinColumnTypeInfo>& type_info_per_key,
@@ -2009,9 +2113,9 @@ void fill_one_to_many_baseline_hash_table(
     const std::vector<const void*>& sd_inner_proxy_per_key,
     const std::vector<const void*>& sd_outer_proxy_per_key,
     const size_t cpu_thread_count) {
-  int32_t* pos_buff = buff;
-  int32_t* count_buff = buff + hash_entry_count;
-  memset(count_buff, 0, hash_entry_count * sizeof(int32_t));
+  VAL_TYPE* pos_buff = buff;
+  VAL_TYPE* count_buff = buff + hash_entry_count;
+  memset(count_buff, 0, hash_entry_count * sizeof(VAL_TYPE));
   std::vector<std::future<void>> counter_threads;
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
     if (join_buckets_per_key.size() > 0) {
@@ -2070,9 +2174,9 @@ void fill_one_to_many_baseline_hash_table(
     child.get();
   }
 
-  std::vector<int32_t> count_copy(hash_entry_count, 0);
+  std::vector<VAL_TYPE> count_copy(hash_entry_count, 0);
   CHECK_GT(hash_entry_count, 0u);
-  memcpy(&count_copy[1], count_buff, (hash_entry_count - 1) * sizeof(int32_t));
+  memcpy(&count_copy[1], count_buff, (hash_entry_count - 1) * sizeof(VAL_TYPE));
   ::inclusive_scan(
       count_copy.begin(), count_copy.end(), count_copy.begin(), cpu_thread_count);
   std::vector<std::future<void>> pos_threads;
@@ -2092,7 +2196,7 @@ void fill_one_to_many_baseline_hash_table(
     child.get();
   }
 
-  memset(count_buff, 0, hash_entry_count * sizeof(int32_t));
+  memset(count_buff, 0, hash_entry_count * sizeof(VAL_TYPE));
   std::vector<std::future<void>> rowid_threads;
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
     if (join_buckets_per_key.size() > 0) {
@@ -2158,12 +2262,57 @@ void fill_one_to_many_baseline_hash_table(
   }
 }
 
+template <typename KEY_TYPE>
+void fill_one_to_many_baseline_hash_table(
+    int8_t* buff,
+    const KEY_TYPE* composite_key_dict,
+    const size_t hash_entry_count,
+    const int32_t invalid_slot_val,
+    const size_t key_component_count,
+    const size_t val_size,
+    const std::vector<JoinColumn>& join_column_per_key,
+    const std::vector<JoinColumnTypeInfo>& type_info_per_key,
+    const std::vector<JoinBucketInfo>& join_buckets_per_key,
+    const std::vector<const void*>& sd_inner_proxy_per_key,
+    const std::vector<const void*>& sd_outer_proxy_per_key,
+    const size_t cpu_thread_count) {
+  if (val_size == 8) {
+    fill_one_to_many_baseline_hash_table_impl(reinterpret_cast<int64_t*>(buff),
+                                              composite_key_dict,
+                                              hash_entry_count,
+                                              static_cast<int64_t>(invalid_slot_val),
+                                              key_component_count,
+                                              join_column_per_key,
+                                              type_info_per_key,
+                                              join_buckets_per_key,
+                                              sd_inner_proxy_per_key,
+                                              sd_outer_proxy_per_key,
+                                              cpu_thread_count);
+  } else {
+#ifndef __CUDACC__
+    CHECK_EQ(val_size, 4);
+#endif
+    fill_one_to_many_baseline_hash_table_impl(reinterpret_cast<int32_t*>(buff),
+                                              composite_key_dict,
+                                              hash_entry_count,
+                                              static_cast<int32_t>(invalid_slot_val),
+                                              key_component_count,
+                                              join_column_per_key,
+                                              type_info_per_key,
+                                              join_buckets_per_key,
+                                              sd_inner_proxy_per_key,
+                                              sd_outer_proxy_per_key,
+                                              cpu_thread_count);
+  }
+}
+
 void fill_one_to_many_baseline_hash_table_32(
-    int32_t* buff,
+    int8_t* buff,
     const int32_t* composite_key_dict,
     const size_t hash_entry_count,
     const int32_t invalid_slot_val,
     const size_t key_component_count,
+    const size_t val_size,
     const std::vector<JoinColumn>& join_column_per_key,
     const std::vector<JoinColumnTypeInfo>& type_info_per_key,
     const std::vector<JoinBucketInfo>& join_bucket_info,
@@ -2175,6 +2324,7 @@ void fill_one_to_many_baseline_hash_table_32(
                                                 hash_entry_count,
                                                 invalid_slot_val,
                                                 key_component_count,
+                                                val_size,
                                                 join_column_per_key,
                                                 type_info_per_key,
                                                 join_bucket_info,
@@ -2184,11 +2334,12 @@ void fill_one_to_many_baseline_hash_table_32(
 }
 
 void fill_one_to_many_baseline_hash_table_64(
-    int32_t* buff,
+    int8_t* buff,
     const int64_t* composite_key_dict,
     const size_t hash_entry_count,
     const int32_t invalid_slot_val,
     const size_t key_component_count,
+    const size_t val_size,
     const std::vector<JoinColumn>& join_column_per_key,
     const std::vector<JoinColumnTypeInfo>& type_info_per_key,
     const std::vector<JoinBucketInfo>& join_bucket_info,
@@ -2200,6 +2351,7 @@ void fill_one_to_many_baseline_hash_table_64(
                                                 hash_entry_count,
                                                 invalid_slot_val,
                                                 key_component_count,
+                                                val_size,
                                                 join_column_per_key,
                                                 type_info_per_key,
                                                 join_bucket_info,

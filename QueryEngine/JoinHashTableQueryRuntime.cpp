@@ -36,23 +36,23 @@ const int kNotPresent = -2;
 
 }  // namespace
 
-template <class T>
+template <typename KEY_TYPE, typename VAL_TYPE>
 DEVICE int64_t get_matching_slot(const int8_t* hash_buff,
                                  const uint32_t h,
                                  const int8_t* key,
                                  const size_t key_bytes) {
-  const auto lookup_result_ptr = hash_buff + h * (key_bytes + sizeof(T));
+  const auto lookup_result_ptr = hash_buff + h * (key_bytes + sizeof(VAL_TYPE));
   if (compare_to_key(lookup_result_ptr, key, key_bytes)) {
-    return *reinterpret_cast<const T*>(lookup_result_ptr + key_bytes);
+    return *reinterpret_cast<const VAL_TYPE*>(lookup_result_ptr + key_bytes);
   }
-  if (*reinterpret_cast<const T*>(lookup_result_ptr) ==
-      SUFFIX(get_invalid_key) < T > ()) {
+  if (*reinterpret_cast<const KEY_TYPE*>(lookup_result_ptr) ==
+      SUFFIX(get_invalid_key) < KEY_TYPE > ()) {
     return kNotPresent;
   }
   return kNoMatch;
 }
 
-template <class T>
+template <typename KEY_TYPE, typename VAL_TYPE>
 FORCE_INLINE DEVICE int64_t baseline_hash_join_idx_impl(const int8_t* hash_buff,
                                                         const int8_t* key,
                                                         const size_t key_bytes,
@@ -60,14 +60,14 @@ FORCE_INLINE DEVICE int64_t baseline_hash_join_idx_impl(const int8_t* hash_buff,
   if (!entry_count) {
     return kNoMatch;
   }
-  const uint32_t h = MurmurHash1(key, key_bytes, 0) % entry_count;
-  int64_t matching_slot = get_matching_slot<T>(hash_buff, h, key, key_bytes);
+  const auto h = MurmurHash<VAL_TYPE>(key, key_bytes, 0) % entry_count;
+  int64_t matching_slot = get_matching_slot<KEY_TYPE, VAL_TYPE>(hash_buff, h, key, key_bytes);
   if (matching_slot != kNoMatch) {
     return matching_slot;
   }
-  uint32_t h_probe = (h + 1) % entry_count;
+  auto h_probe = (h + 1) % entry_count;
   while (h_probe != h) {
-    matching_slot = get_matching_slot<T>(hash_buff, h_probe, key, key_bytes);
+    matching_slot = get_matching_slot<KEY_TYPE, VAL_TYPE>(hash_buff, h_probe, key, key_bytes);
     if (matching_slot != kNoMatch) {
       return matching_slot;
     }
@@ -77,19 +77,35 @@ FORCE_INLINE DEVICE int64_t baseline_hash_join_idx_impl(const int8_t* hash_buff,
 }
 
 extern "C" NEVER_INLINE DEVICE int64_t
-baseline_hash_join_idx_32(const int8_t* hash_buff,
+baseline_hash_join_idx_32_32(const int8_t* hash_buff,
                           const int8_t* key,
                           const size_t key_bytes,
                           const size_t entry_count) {
-  return baseline_hash_join_idx_impl<int32_t>(hash_buff, key, key_bytes, entry_count);
+  return baseline_hash_join_idx_impl<int32_t, int32_t>(hash_buff, key, key_bytes, entry_count);
 }
 
 extern "C" NEVER_INLINE DEVICE int64_t
-baseline_hash_join_idx_64(const int8_t* hash_buff,
+baseline_hash_join_idx_32_64(const int8_t* hash_buff,
                           const int8_t* key,
                           const size_t key_bytes,
                           const size_t entry_count) {
-  return baseline_hash_join_idx_impl<int64_t>(hash_buff, key, key_bytes, entry_count);
+  return baseline_hash_join_idx_impl<int32_t, int64_t>(hash_buff, key, key_bytes, entry_count);
+}
+
+extern "C" NEVER_INLINE DEVICE int64_t
+baseline_hash_join_idx_64_32(const int8_t* hash_buff,
+                          const int8_t* key,
+                          const size_t key_bytes,
+                          const size_t entry_count) {
+  return baseline_hash_join_idx_impl<int64_t, int32_t>(hash_buff, key, key_bytes, entry_count);
+}
+
+extern "C" NEVER_INLINE DEVICE int64_t
+baseline_hash_join_idx_64_64(const int8_t* hash_buff,
+                          const int8_t* key,
+                          const size_t key_bytes,
+                          const size_t entry_count) {
+  return baseline_hash_join_idx_impl<int64_t, int64_t>(hash_buff, key, key_bytes, entry_count);
 }
 
 template <typename T>
@@ -132,23 +148,23 @@ get_bucket_key_for_range_compressed(const int8_t* range,
       range, range_component_index, bucket_size);
 }
 
-template <typename T>
-FORCE_INLINE DEVICE int64_t get_composite_key_index_impl(const T* key,
+template <typename KEY_TYPE, typename VAL_TYPE>
+FORCE_INLINE DEVICE int64_t get_composite_key_index_impl(const KEY_TYPE* key,
                                                          const size_t key_component_count,
-                                                         const T* composite_key_dict,
+                                                         const KEY_TYPE* composite_key_dict,
                                                          const size_t entry_count) {
-  const uint32_t h = MurmurHash1(key, key_component_count * sizeof(T), 0) % entry_count;
-  uint32_t off = h * key_component_count;
+  const auto h = MurmurHash<VAL_TYPE>(key, key_component_count * sizeof(KEY_TYPE), 0) % entry_count;
+  auto off = h * key_component_count;
   if (keys_are_equal(&composite_key_dict[off], key, key_component_count)) {
     return h;
   }
-  uint32_t h_probe = (h + 1) % entry_count;
+  auto h_probe = (h + 1) % entry_count;
   while (h_probe != h) {
     off = h_probe * key_component_count;
     if (keys_are_equal(&composite_key_dict[off], key, key_component_count)) {
       return h_probe;
     }
-    if (composite_key_dict[off] == SUFFIX(get_invalid_key) < T > ()) {
+    if (composite_key_dict[off] == SUFFIX(get_invalid_key) < KEY_TYPE > ()) {
       return -1;
     }
     h_probe = (h_probe + 1) % entry_count;
@@ -157,19 +173,37 @@ FORCE_INLINE DEVICE int64_t get_composite_key_index_impl(const T* key,
 }
 
 extern "C" NEVER_INLINE DEVICE int64_t
-get_composite_key_index_32(const int32_t* key,
+get_composite_key_index_32_32(const int32_t* key,
                            const size_t key_component_count,
                            const int32_t* composite_key_dict,
                            const size_t entry_count) {
-  return get_composite_key_index_impl(
+  return get_composite_key_index_impl<int32_t, int32_t>(
       key, key_component_count, composite_key_dict, entry_count);
 }
 
 extern "C" NEVER_INLINE DEVICE int64_t
-get_composite_key_index_64(const int64_t* key,
+get_composite_key_index_32_64(const int32_t* key,
+                           const size_t key_component_count,
+                           const int32_t* composite_key_dict,
+                           const size_t entry_count) {
+  return get_composite_key_index_impl<int32_t, int64_t>(
+      key, key_component_count, composite_key_dict, entry_count);
+}
+
+extern "C" NEVER_INLINE DEVICE int64_t
+get_composite_key_index_64_32(const int64_t* key,
                            const size_t key_component_count,
                            const int64_t* composite_key_dict,
                            const size_t entry_count) {
-  return get_composite_key_index_impl(
+  return get_composite_key_index_impl<int64_t, int32_t>(
+      key, key_component_count, composite_key_dict, entry_count);
+}
+
+extern "C" NEVER_INLINE DEVICE int64_t
+get_composite_key_index_64_64(const int64_t* key,
+                           const size_t key_component_count,
+                           const int64_t* composite_key_dict,
+                           const size_t entry_count) {
+  return get_composite_key_index_impl<int64_t, int64_t>(
       key, key_component_count, composite_key_dict, entry_count);
 }

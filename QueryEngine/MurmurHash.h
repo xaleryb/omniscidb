@@ -18,6 +18,7 @@
 #define QUERYENGINE_MURMURHASH_H
 
 #include <cstdint>
+#include <type_traits>
 #include "../Shared/funcannotations.h"
 
 extern "C" NEVER_INLINE DEVICE uint32_t MurmurHash1(const void* key,
@@ -27,5 +28,24 @@ extern "C" NEVER_INLINE DEVICE uint32_t MurmurHash1(const void* key,
 extern "C" NEVER_INLINE DEVICE uint64_t MurmurHash64A(const void* key,
                                                       int len,
                                                       uint64_t seed);
+
+template <typename T>
+FORCE_INLINE DEVICE typename std::make_unsigned<T>::type MurmurHash(const void* key,
+                                                                    int len,
+                                                                    typename std::make_unsigned<T>::type seed);
+
+template <>
+FORCE_INLINE DEVICE uint32_t MurmurHash<int32_t>(const void* key,
+                                                 int len,
+                                                 uint32_t seed) {
+  return MurmurHash1(key, len, seed);
+}
+
+template <>
+FORCE_INLINE DEVICE uint64_t MurmurHash<int64_t>(const void* key,
+                                                 int len,
+                                                 uint64_t seed) {
+  return MurmurHash64A(key, len, seed);
+}
 
 #endif  // QUERYENGINE_MURMURHASH_H

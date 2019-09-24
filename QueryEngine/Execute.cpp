@@ -2859,7 +2859,7 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
     const JoinHashTableInterface::HashType preferred_hash_type,
     ColumnCacheMap& column_cache,
     InputColDescriptorsByScanIdx& payload_cols,
-    const bool force_big_row_id) {
+    const bool force_long_row_id) {
   std::shared_ptr<JoinHashTableInterface> join_hash_table;
   const int device_count = deviceCountForMemoryLevel(memory_level);
   CHECK_GT(device_count, 0);
@@ -2878,7 +2878,8 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
                                                            preferred_hash_type,
                                                            device_count,
                                                            column_cache,
-                                                           this);
+                                                           this,
+                                                           force_long_row_id);
     } else {
       try {
         join_hash_table = JoinHashTable::getInstance(qual_bin_oper,
@@ -2889,7 +2890,7 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
                                                      column_cache,
                                                      this,
                                                      payload_cols,
-                                                     force_big_row_id);
+                                                     force_long_row_id);
       } catch (TooManyHashEntries&) {
         const auto join_quals = coalesce_singleton_equi_join(qual_bin_oper);
         CHECK_EQ(join_quals.size(), size_t(1));
@@ -2901,7 +2902,8 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
                                                              preferred_hash_type,
                                                              device_count,
                                                              column_cache,
-                                                             this);
+                                                             this,
+                                                             force_long_row_id);
       }
     }
     CHECK(join_hash_table);

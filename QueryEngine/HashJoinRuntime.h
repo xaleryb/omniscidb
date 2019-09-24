@@ -67,17 +67,19 @@ void init_hash_join_buff_on_device(int32_t* buff,
                                    const size_t grid_size_x);
 
 void init_baseline_hash_join_buff_32(int8_t* hash_join_buff,
-                                     const int32_t entry_count,
+                                     const size_t entry_count,
                                      const size_t key_component_count,
                                      const bool with_val_slot,
+                                     const size_t val_slot_size,
                                      const int32_t invalid_slot_val,
                                      const int32_t cpu_thread_idx,
                                      const int32_t cpu_thread_count);
 
 void init_baseline_hash_join_buff_64(int8_t* hash_join_buff,
-                                     const int32_t entry_count,
+                                     const size_t entry_count,
                                      const size_t key_component_count,
                                      const bool with_val_slot,
+                                     const size_t val_slot_size,
                                      const int32_t invalid_slot_val,
                                      const int32_t cpu_thread_idx,
                                      const int32_t cpu_thread_count);
@@ -266,6 +268,7 @@ int fill_baseline_hash_join_buff_32(int8_t* hash_buff,
                                     const int32_t invalid_slot_val,
                                     const size_t key_component_count,
                                     const bool with_val_slot,
+                                    const size_t val_slot_size,
                                     const GenericKeyHandler* key_handler,
                                     const size_t num_elems,
                                     const int32_t cpu_thread_idx,
@@ -286,6 +289,7 @@ int fill_baseline_hash_join_buff_64(int8_t* hash_buff,
                                     const int32_t invalid_slot_val,
                                     const size_t key_component_count,
                                     const bool with_val_slot,
+                                    const size_t val_slot_size,
                                     const GenericKeyHandler* key_handler,
                                     const size_t num_elems,
                                     const int32_t cpu_thread_idx,
@@ -336,11 +340,12 @@ void overlaps_fill_baseline_hash_join_buff_on_device_64(
     const size_t grid_size_x);
 
 void fill_one_to_many_baseline_hash_table_32(
-    int32_t* buff,
+    int8_t* buff,
     const int32_t* composite_key_dict,
     const size_t hash_entry_count,
     const int32_t invalid_slot_val,
     const size_t key_component_count,
+    const size_t val_size,
     const std::vector<JoinColumn>& join_column_per_key,
     const std::vector<JoinColumnTypeInfo>& type_info_per_key,
     const std::vector<JoinBucketInfo>& join_bucket_info,
@@ -349,11 +354,12 @@ void fill_one_to_many_baseline_hash_table_32(
     const int32_t cpu_thread_count);
 
 void fill_one_to_many_baseline_hash_table_64(
-    int32_t* buff,
+    int8_t* buff,
     const int64_t* composite_key_dict,
     const size_t hash_entry_count,
     const int32_t invalid_slot_val,
     const size_t key_component_count,
+    const size_t val_size,
     const std::vector<JoinColumn>& join_column_per_key,
     const std::vector<JoinColumnTypeInfo>& type_info_per_key,
     const std::vector<JoinBucketInfo>& join_bucket_info,

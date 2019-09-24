@@ -37,14 +37,23 @@ std::shared_ptr<BaselineJoinHashTable> BaselineJoinHashTable::getInstance(
     const HashType preferred_hash_type,
     const int device_count,
     ColumnCacheMap& column_cache,
-    Executor* executor) {
+    Executor* executor,
+    bool force_long_row_id) {
   auto inner_outer_pairs = normalize_column_pairs(
       condition.get(), *executor->getCatalog(), executor->getTemporaryTables());
   const auto& query_info =
       get_inner_query_info(getInnerTableId(inner_outer_pairs), query_infos).info;
   const auto total_entries = 2 * query_info.getNumTuplesUpperBound();
+  // Long row id is unsupported for GPU.
+  if (memory_level == Data_Namespace::GPU_LEVEL) {
+    force_long_row_id = false;
+  }
   if (total_entries > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-    throw TooManyHashEntries();
+    if (memory_level == Data_Namespace::GPU_LEVEL)
+      throw TooManyHashEntries(std::numeric_limits<int32_t>::max());
+    if (total_entries > huge_join_hash_size_limit_)
+      throw TooManyHashEntries(huge_join_hash_size_limit_);
+    force_long_row_id = true;
   }
   const auto shard_count = memory_level == Data_Namespace::GPU_LEVEL
                                ? BaselineJoinHashTable::getShardCountForCondition(
@@ -60,7 +69,8 @@ std::shared_ptr<BaselineJoinHashTable> BaselineJoinHashTable::getInstance(
                                 entries_per_device,
                                 column_cache,
                                 executor,
-                                inner_outer_pairs));
+                                inner_outer_pairs,
+                                force_long_row_id));
   join_hash_table->checkHashJoinReplicationConstraint(getInnerTableId(inner_outer_pairs));
   try {
     join_hash_table->reify(device_count);
@@ -139,7 +149,8 @@ std::shared_ptr<BaselineJoinHashTable> BaselineJoinHashTable::getSyntheticInstan
                                                        preferred_hash_type,
                                                        device_count,
                                                        column_cache,
-                                                       executor);
+                                                       executor,
+                                                       false);
   return hash_table;
 }
 
@@ -151,13 +162,15 @@ BaselineJoinHashTable::BaselineJoinHashTable(
     const size_t entry_count,
     ColumnCacheMap& column_cache,
     Executor* executor,
-    const std::vector<InnerOuter>& inner_outer_pairs)
+    const std::vector<InnerOuter>& inner_outer_pairs,
+    bool long_row_id)
     : condition_(condition)
     , query_infos_(query_infos)
     , memory_level_(memory_level)
     , layout_(preferred_hash_type)
     , entry_count_(entry_count)
     , emitted_keys_count_(0)
+    , row_id_size_(long_row_id ? 8 : 4)
     , executor_(executor)
     , column_cache_(column_cache)
     , inner_outer_pairs_(inner_outer_pairs)
@@ -706,19 +719,19 @@ int BaselineJoinHashTable::initHashTableOnCpu(
   const auto key_component_width = getKeyComponentWidth();
   const auto key_component_count = getKeyComponentCount();
   const auto entry_size =
-      (key_component_count +
-       (layout == JoinHashTableInterface::HashType::OneToOne ? 1 : 0)) *
-      key_component_width;
+      key_component_count * key_component_width +
+      (layout == JoinHashTableInterface::HashType::OneToOne ? row_id_size_ : 0);
   const auto keys_for_all_rows = join_columns.front().num_elems;
   const size_t one_to_many_hash_entries =
       layout == JoinHashTableInterface::HashType::OneToMany
           ? 2 * entry_count_ + keys_for_all_rows
           : 0;
   const size_t hash_table_size =
-      entry_size * entry_count_ + one_to_many_hash_entries * sizeof(int32_t);
+      entry_size * entry_count_ + one_to_many_hash_entries * row_id_size_;
 
   // We can't allocate more than 2GB contiguous memory on GPU and each entry is 4 bytes.
-  if (hash_table_size > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+  if (memory_level_ == Data_Namespace::GPU_LEVEL &&
+      hash_table_size > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
     throw TooManyHashEntries();
   }
 
@@ -746,6 +759,7 @@ int BaselineJoinHashTable::initHashTableOnCpu(
                              entry_count_,
                              key_component_count,
                              layout == JoinHashTableInterface::HashType::OneToOne,
+                             row_id_size_,
                              -1,
                              thread_idx,
                              thread_count);
@@ -756,6 +770,7 @@ int BaselineJoinHashTable::initHashTableOnCpu(
                              entry_count_,
                              key_component_count,
                              layout == JoinHashTableInterface::HashType::OneToOne,
+                             row_id_size_,
                              -1,
                              thread_idx,
                              thread_count);
@@ -796,6 +811,7 @@ int BaselineJoinHashTable::initHashTableOnCpu(
                   -1,
                   key_component_count,
                   layout == JoinHashTableInterface::HashType::OneToOne,
+                  row_id_size_,
                   &key_handler,
                   join_columns[0].num_elems,
                   thread_idx,
@@ -816,6 +832,7 @@ int BaselineJoinHashTable::initHashTableOnCpu(
                   -1,
                   key_component_count,
                   layout == JoinHashTableInterface::HashType::OneToOne,
+                  row_id_size_,
                   &key_handler,
                   join_columns[0].num_elems,
                   thread_idx,
@@ -840,9 +857,14 @@ int BaselineJoinHashTable::initHashTableOnCpu(
     return err;
   }
   if (layout == JoinHashTableInterface::HashType::OneToMany) {
-    auto one_to_many_buff = reinterpret_cast<int32_t*>(&(*cpu_hash_table_buff_)[0] +
-                                                       entry_count_ * entry_size);
-    init_hash_join_buff(one_to_many_buff, entry_count_, 1, 1, -1, 0, 1);
+    auto one_to_many_buff = cpu_hash_table_buff_->data() + entry_count_ * entry_size;
+    init_hash_join_buff(reinterpret_cast<int32_t*>(one_to_many_buff),
+                        entry_count_,
+                        row_id_size_ / sizeof(int32_t),
+                        row_id_size_ / sizeof(int32_t),
+                        -1,
+                        0,
+                        1);
     switch (key_component_width) {
       case 4: {
         const auto composite_key_dict =
@@ -852,6 +874,7 @@ int BaselineJoinHashTable::initHashTableOnCpu(
                                                 entry_count_,
                                                 -1,
                                                 key_component_count,
+                                                row_id_size_,
                                                 join_columns,
                                                 join_column_types,
                                                 join_bucket_info,
@@ -868,6 +891,7 @@ int BaselineJoinHashTable::initHashTableOnCpu(
                                                 entry_count_,
                                                 -1,
                                                 key_component_count,
+                                                row_id_size_,
                                                 join_columns,
                                                 join_column_types,
                                                 join_bucket_info,
@@ -1101,13 +1125,15 @@ llvm::Value* BaselineJoinHashTable::codegenSlot(const CompilationOptions& co,
   CHECK(getHashType() == JoinHashTableInterface::HashType::OneToOne);
   const auto key_component_width = getKeyComponentWidth();
   CHECK(key_component_width == 4 || key_component_width == 8);
+  CHECK(row_id_size_ == 4 || row_id_size_ == 8);
   auto key_buff_lv = codegenKey(co);
   const auto hash_ptr = hashPtr(index);
   const auto key_ptr_lv =
       LL_BUILDER.CreatePointerCast(key_buff_lv, llvm::Type::getInt8PtrTy(LL_CONTEXT));
   const auto key_size_lv = LL_INT(getKeyComponentCount() * key_component_width);
   return executor_->cgen_state_->emitExternalCall(
-      "baseline_hash_join_idx_" + std::to_string(key_component_width * 8),
+      "baseline_hash_join_idx_" + std::to_string(key_component_width * 8) + "_" +
+          std::to_string(row_id_size_ * 8),
       get_int_type(64, LL_CONTEXT),
       {hash_ptr, key_ptr_lv, key_size_lv, LL_INT(entry_count_)});
 }
@@ -1117,6 +1143,7 @@ HashJoinMatchingSet BaselineJoinHashTable::codegenMatchingSet(
     const size_t index) {
   const auto key_component_width = getKeyComponentWidth();
   CHECK(key_component_width == 4 || key_component_width == 8);
+  CHECK(row_id_size_ == 4 || row_id_size_ == 8);
   auto key_buff_lv = codegenKey(co);
   CHECK(layout_ == JoinHashTableInterface::HashType::OneToMany);
   auto hash_ptr = JoinHashTable::codegenHashTableLoad(index, executor_);
@@ -1128,7 +1155,8 @@ HashJoinMatchingSet BaselineJoinHashTable::codegenMatchingSet(
           : LL_BUILDER.CreateIntToPtr(hash_ptr, composite_dict_ptr_type);
   const auto key_component_count = getKeyComponentCount();
   const auto key = executor_->cgen_state_->emitExternalCall(
-      "get_composite_key_index_" + std::to_string(key_component_width * 8),
+      "get_composite_key_index_" + std::to_string(key_component_width * 8) + "_" +
+          std::to_string(row_id_size_ * 8),
       get_int_type(64, LL_CONTEXT),
       {key_buff_lv,
        LL_INT(key_component_count),
@@ -1150,7 +1178,10 @@ HashJoinMatchingSet BaselineJoinHashTable::codegenMatchingSet(
       false,
       false,
       getComponentBufferSize(),
-      executor_);
+      executor_,
+      false,
+      row_id_size_ / sizeof(int32_t),
+      row_id_size_ / sizeof(int32_t));
 }
 
 size_t BaselineJoinHashTable::offsetBufferOff() const noexcept {
@@ -1159,6 +1190,16 @@ size_t BaselineJoinHashTable::offsetBufferOff() const noexcept {
   CHECK(key_component_width == 4 || key_component_width == 8);
   const auto key_component_count = getKeyComponentCount();
   return entry_count_ * key_component_count * key_component_width;
+}
+
+size_t BaselineJoinHashTable::getPayloadSize() const noexcept {
+  CHECK(row_id_size_ == 4 || row_id_size_ == 8);
+  return row_id_size_ / sizeof(int32_t);
+}
+
+size_t BaselineJoinHashTable::getRowIdSize() const noexcept {
+  CHECK(row_id_size_ == 4 || row_id_size_ == 8);
+  return row_id_size_ / sizeof(int32_t);
 }
 
 size_t BaselineJoinHashTable::countBufferOff() const noexcept {
@@ -1172,7 +1213,7 @@ size_t BaselineJoinHashTable::payloadBufferOff() const noexcept {
 }
 
 size_t BaselineJoinHashTable::getComponentBufferSize() const noexcept {
-  return entry_count_ * sizeof(int32_t);
+  return entry_count_ * row_id_size_;
 }
 
 llvm::Value* BaselineJoinHashTable::codegenKey(const CompilationOptions& co) {
@@ -1279,6 +1320,7 @@ void BaselineJoinHashTable::initHashTableOnCpuFromCache(const HashTableCacheKey&
       layout_ = kv.second.type;
       entry_count_ = kv.second.entry_count;
       emitted_keys_count_ = kv.second.emitted_keys_count;
+      row_id_size_ = kv.second.row_id_size;
       break;
     }
   }
@@ -1291,10 +1333,12 @@ void BaselineJoinHashTable::putHashTableOnCpuToCache(const HashTableCacheKey& ke
       return;
     }
   }
-  hash_table_cache_.emplace_back(
-      key,
-      HashTableCacheValue{
-          cpu_hash_table_buff_, layout_, entry_count_, emitted_keys_count_});
+  hash_table_cache_.emplace_back(key,
+                                 HashTableCacheValue{cpu_hash_table_buff_,
+                                                     layout_,
+                                                     entry_count_,
+                                                     emitted_keys_count_,
+                                                     row_id_size_});
 }
 
 std::pair<ssize_t, size_t> BaselineJoinHashTable::getApproximateTupleCountFromCache(

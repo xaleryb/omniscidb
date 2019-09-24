@@ -35,7 +35,8 @@ class OverlapsJoinHashTable : public BaselineJoinHashTable {
                               entry_count,
                               column_cache,
                               executor,
-                              inner_outer_pairs) {}
+                              inner_outer_pairs,
+                              false) {}
 
   ~OverlapsJoinHashTable() override {}
 
