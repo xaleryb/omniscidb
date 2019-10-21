@@ -23,6 +23,8 @@
 
 #include "Execute.h"
 
+#include "Utils/Async.h"
+
 std::map<OverlapsJoinHashTable::HashTableCacheKey, double>
     OverlapsJoinHashTable::auto_tuner_cache_;
 std::mutex OverlapsJoinHashTable::auto_tuner_cache_mutex_;
@@ -225,13 +227,13 @@ void OverlapsJoinHashTable::reifyWithLayout(const int device_count,
         shard_count
             ? only_shards_for_device(query_info.fragments, device_id, device_count)
             : query_info.fragments;
-    init_threads.push_back(std::async(sync ? std::launch::deferred : std::launch::async,
-                                      &OverlapsJoinHashTable::reifyForDevice,
-                                      this,
-                                      columns_per_device[device_id],
-                                      layout,
-                                      device_id,
-                                      sync));
+    init_threads.push_back(utils::async(std::launch::async,
+                                        &OverlapsJoinHashTable::reifyForDevice,
+                                        this,
+                                        columns_per_device[device_id],
+                                        layout,
+                                        device_id,
+                                        sync));
   }
   for (auto& init_thread : init_threads) {
     init_thread.wait();
@@ -388,7 +390,7 @@ std::pair<size_t, size_t> OverlapsJoinHashTable::approximateTupleCount(
   std::vector<size_t> emitted_keys_count_device_threads(device_count, 0);
   std::vector<std::future<void>> approximate_distinct_device_threads;
   for (int device_id = 0; device_id < device_count; ++device_id) {
-    approximate_distinct_device_threads.emplace_back(std::async(
+    approximate_distinct_device_threads.emplace_back(utils::async(
         std::launch::async,
         [device_id,
          &columns_per_device,
@@ -522,8 +524,8 @@ int OverlapsJoinHashTable::initHashTableOnCpu(
   int thread_count = sync ? 1 : cpu_threads();
   std::vector<std::future<void>> init_cpu_buff_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
-    init_cpu_buff_threads.emplace_back(std::async(
-        sync ? std::launch::deferred : std::launch::async,
+    init_cpu_buff_threads.emplace_back(utils::async(
+        std::launch::async,
         [this, key_component_count, key_component_width, thread_idx, thread_count] {
           switch (key_component_width) {
             case 4:
@@ -554,8 +556,8 @@ int OverlapsJoinHashTable::initHashTableOnCpu(
   }
   std::vector<std::future<int>> fill_cpu_buff_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
-    fill_cpu_buff_threads.emplace_back(std::async(
-        sync ? std::launch::deferred : std::launch::async,
+    fill_cpu_buff_threads.emplace_back(utils::async(
+        std::launch::async,
         [this,
          &join_columns,
          &join_bucket_info,

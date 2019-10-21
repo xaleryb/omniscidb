@@ -23,6 +23,7 @@
 #include "JoinHashTableGpuUtils.h"
 
 #include <future>
+#include "Utils/Async.h"
 
 namespace {
 
@@ -505,13 +506,13 @@ void BaselineJoinHashTable::reifyWithLayout(const int device_count,
         shard_count
             ? only_shards_for_device(query_info.fragments, device_id, device_count)
             : query_info.fragments;
-    init_threads.push_back(std::async(sync ? std::launch::deferred : std::launch::async,
-                                      &BaselineJoinHashTable::reifyForDevice,
-                                      this,
-                                      columns_per_device[device_id],
-                                      layout,
-                                      device_id,
-                                      sync));
+    init_threads.push_back(utils::async(std::launch::async,
+                                        &BaselineJoinHashTable::reifyForDevice,
+                                        this,
+                                        columns_per_device[device_id],
+                                        layout,
+                                        device_id,
+                                        sync));
   }
   for (auto& init_thread : init_threads) {
     init_thread.wait();
@@ -603,7 +604,7 @@ std::pair<size_t, size_t> BaselineJoinHashTable::approximateTupleCount(
   }
   std::vector<std::future<void>> approximate_distinct_device_threads;
   for (int device_id = 0; device_id < device_count; ++device_id) {
-    approximate_distinct_device_threads.emplace_back(std::async(
+    approximate_distinct_device_threads.emplace_back(utils::async(
         std::launch::async,
         [device_id,
          &columns_per_device,
@@ -881,46 +882,46 @@ int BaselineJoinHashTable::initHashTableOnCpu(
   std::vector<std::future<void>> init_cpu_buff_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
     init_cpu_buff_threads.emplace_back(
-        std::async(sync ? std::launch::deferred : std::launch::async,
-                   [this,
-                    key_component_count,
-                    key_component_width,
-                    thread_idx,
-                    thread_count,
-                    layout] {
-                     switch (key_component_width) {
-                       case 4:
-                         init_baseline_hash_join_buff_32(
-                             &(*cpu_hash_table_buff_)[0],
-                             entry_count_,
-                             key_component_count,
-                             layout == JoinHashTableInterface::HashType::OneToOne,
-                             -1,
-                             thread_idx,
-                             thread_count);
-                         break;
-                       case 8:
-                         init_baseline_hash_join_buff_64(
-                             &(*cpu_hash_table_buff_)[0],
-                             entry_count_,
-                             key_component_count,
-                             layout == JoinHashTableInterface::HashType::OneToOne,
-                             -1,
-                             thread_idx,
-                             thread_count);
-                         break;
-                       default:
-                         CHECK(false);
-                     }
-                   }));
+        utils::async(std::launch::async,
+                     [this,
+                      key_component_count,
+                      key_component_width,
+                      thread_idx,
+                      thread_count,
+                      layout] {
+                       switch (key_component_width) {
+                         case 4:
+                           init_baseline_hash_join_buff_32(
+                               &(*cpu_hash_table_buff_)[0],
+                               entry_count_,
+                               key_component_count,
+                               layout == JoinHashTableInterface::HashType::OneToOne,
+                               -1,
+                               thread_idx,
+                               thread_count);
+                           break;
+                         case 8:
+                           init_baseline_hash_join_buff_64(
+                               &(*cpu_hash_table_buff_)[0],
+                               entry_count_,
+                               key_component_count,
+                               layout == JoinHashTableInterface::HashType::OneToOne,
+                               -1,
+                               thread_idx,
+                               thread_count);
+                           break;
+                         default:
+                           CHECK(false);
+                       }
+                     }));
   }
   for (auto& child : init_cpu_buff_threads) {
     child.get();
   }
   std::vector<std::future<int>> fill_cpu_buff_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
-    fill_cpu_buff_threads.emplace_back(std::async(
-        sync ? std::launch::deferred : std::launch::async,
+    fill_cpu_buff_threads.emplace_back(utils::async(
+        std::launch::async,
         [this,
          &composite_key_info,
          &join_columns,
