@@ -23,7 +23,7 @@
 #include "JoinHashTableGpuUtils.h"
 
 #include <future>
-#include "Utils/Async.h"
+#include "Utils/Threading.h"
 
 namespace {
 
