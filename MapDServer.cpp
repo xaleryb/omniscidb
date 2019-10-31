@@ -718,6 +718,11 @@ void MapDProgramOptions::fillAdvancedOptions() {
   developer_desc.add_options()("llvm-opt",
                                po::value<std::vector<std::string>>(&llvm_opts),
                                "Pass specified option to LLVM.");
+  developer_desc.add_options()("force-radix-join",
+                               po::value<bool>(&g_force_radix_join)
+                                   ->default_value(g_force_radix_join)
+                                   ->implicit_value(true),
+                               "Force all joins to use radix join algorithm.");
 }
 
 namespace {

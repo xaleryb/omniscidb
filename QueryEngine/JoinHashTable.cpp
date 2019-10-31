@@ -1432,18 +1432,21 @@ HashJoinMatchingSet JoinHashTable::codegenMatchingSet(
   return {rowid_ptr_i32, row_count_lv, slot_lv};
 }
 
-size_t JoinHashTable::offsetBufferOff() const noexcept {
+size_t JoinHashTable::offsetBufferOff(const int partition_id) const noexcept {
   CHECK(hash_type_ == JoinHashTableInterface::HashType::OneToMany);
+  CHECK_EQ(partition_id, -1);
   return 0;
 }
 
-size_t JoinHashTable::countBufferOff() const noexcept {
+size_t JoinHashTable::countBufferOff(const int partition_id) const noexcept {
   CHECK(hash_type_ == JoinHashTableInterface::HashType::OneToMany);
+  CHECK_EQ(partition_id, -1);
   return getComponentBufferSize();
 }
 
-size_t JoinHashTable::payloadBufferOff() const noexcept {
+size_t JoinHashTable::payloadBufferOff(const int partition_id) const noexcept {
   CHECK(hash_type_ == JoinHashTableInterface::HashType::OneToMany);
+  CHECK_EQ(partition_id, -1);
   return 2 * getComponentBufferSize();
 }
 
@@ -1452,7 +1455,9 @@ size_t JoinHashTable::getComponentBufferSize() const noexcept {
 }
 
 int64_t JoinHashTable::getJoinHashBuffer(const ExecutorDeviceType device_type,
-                                         const int device_id) const noexcept {
+                                         const int device_id,
+                                         const int partition_id) const noexcept {
+  CHECK_EQ(partition_id, -1);
   if (device_type == ExecutorDeviceType::CPU && !cpu_hash_table_buff_) {
     return 0;
   }
@@ -1473,7 +1478,9 @@ int64_t JoinHashTable::getJoinHashBuffer(const ExecutorDeviceType device_type,
 }
 
 size_t JoinHashTable::getJoinHashBufferSize(const ExecutorDeviceType device_type,
-                                            const int device_id) const noexcept {
+                                            const int device_id,
+                                            const int partition_id) const noexcept {
+  CHECK_EQ(partition_id, -1);
   if (device_type == ExecutorDeviceType::CPU && !cpu_hash_table_buff_) {
     return 0;
   }

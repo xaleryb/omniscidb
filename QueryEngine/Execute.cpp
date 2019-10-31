@@ -34,6 +34,7 @@
 #include "OverlapsJoinHashTable.h"
 #include "QueryRewrite.h"
 #include "QueryTemplateGenerator.h"
+#include "RadixJoinHashTable.h"
 #include "ResultSetReductionJIT.h"
 #include "RuntimeFunctions.h"
 #include "SpeculativeTopN.h"
@@ -101,6 +102,7 @@ bool g_enable_bump_allocator{false};
 double g_bump_allocator_step_reduction{0.75};
 bool g_enable_direct_columnarization{true};
 extern bool g_enable_experimental_string_functions;
+bool g_force_radix_join{false};
 
 int const Executor::max_gpu_count;
 
@@ -2895,7 +2897,15 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
     return {nullptr, "Overlaps hash join disabled, attempting to fall back to loop join"};
   }
   try {
-    if (qual_bin_oper->is_overlaps_oper()) {
+    if (g_force_radix_join) {
+      join_hash_table = RadixJoinHashTable::getInstance(qual_bin_oper,
+                                                        query_infos,
+                                                        memory_level,
+                                                        preferred_hash_type,
+                                                        device_count,
+                                                        column_cache,
+                                                        this);
+    } else if (qual_bin_oper->is_overlaps_oper()) {
       join_hash_table = OverlapsJoinHashTable::getInstance(
           qual_bin_oper, query_infos, memory_level, device_count, column_cache, this);
     } else if (dynamic_cast<const Analyzer::ExpressionTuple*>(

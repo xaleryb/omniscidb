@@ -74,10 +74,12 @@ class JoinHashTable : public JoinHashTableInterface {
       Executor* executor);
 
   int64_t getJoinHashBuffer(const ExecutorDeviceType device_type,
-                            const int device_id) const noexcept override;
+                            const int device_id,
+                            const int partition_id = -1) const noexcept override;
 
   size_t getJoinHashBufferSize(const ExecutorDeviceType device_type,
-                               const int device_id) const noexcept override;
+                               const int device_id,
+                               const int partition_id = -1) const noexcept override;
 
   std::string toString(const ExecutorDeviceType device_type,
                        const int device_id,
@@ -102,11 +104,11 @@ class JoinHashTable : public JoinHashTableInterface {
 
   HashType getHashType() const noexcept override { return hash_type_; }
 
-  size_t offsetBufferOff() const noexcept override;
+  size_t offsetBufferOff(const int partition_id = -1) const noexcept override;
 
-  size_t countBufferOff() const noexcept override;
+  size_t countBufferOff(const int partition_id = -1) const noexcept override;
 
-  size_t payloadBufferOff() const noexcept override;
+  size_t payloadBufferOff(const int partition_id = -1) const noexcept override;
 
   static HashJoinMatchingSet codegenMatchingSet(
       const std::vector<llvm::Value*>& hash_join_idx_args_in,

@@ -189,7 +189,9 @@ size_t BaselineJoinHashTable::getShardCountForCondition(
 }
 
 int64_t BaselineJoinHashTable::getJoinHashBuffer(const ExecutorDeviceType device_type,
-                                                 const int device_id) const noexcept {
+                                                 const int device_id,
+                                                 const int partition_id) const noexcept {
+  CHECK_EQ(partition_id, -1);
   if (device_type == ExecutorDeviceType::CPU && !cpu_hash_table_buff_) {
     return 0;
   }
@@ -210,7 +212,10 @@ int64_t BaselineJoinHashTable::getJoinHashBuffer(const ExecutorDeviceType device
 }
 
 size_t BaselineJoinHashTable::getJoinHashBufferSize(const ExecutorDeviceType device_type,
-                                                    const int device_id) const noexcept {
+                                                    const int device_id,
+                                                    const int partition_id) const
+    noexcept {
+  CHECK_EQ(partition_id, -1);
   if (device_type == ExecutorDeviceType::CPU && !cpu_hash_table_buff_) {
     return 0;
   }
@@ -1157,21 +1162,24 @@ HashJoinMatchingSet BaselineJoinHashTable::codegenMatchingSet(
       executor_);
 }
 
-size_t BaselineJoinHashTable::offsetBufferOff() const noexcept {
+size_t BaselineJoinHashTable::offsetBufferOff(const int partition_id) const noexcept {
   CHECK(layout_ == JoinHashTableInterface::HashType::OneToMany);
+  CHECK_EQ(partition_id, -1);
   const auto key_component_width = getKeyComponentWidth();
   CHECK(key_component_width == 4 || key_component_width == 8);
   const auto key_component_count = getKeyComponentCount();
   return entry_count_ * key_component_count * key_component_width;
 }
 
-size_t BaselineJoinHashTable::countBufferOff() const noexcept {
+size_t BaselineJoinHashTable::countBufferOff(const int partition_id) const noexcept {
   CHECK(layout_ == JoinHashTableInterface::HashType::OneToMany);
+  CHECK_EQ(partition_id, -1);
   return offsetBufferOff() + getComponentBufferSize();
 }
 
-size_t BaselineJoinHashTable::payloadBufferOff() const noexcept {
+size_t BaselineJoinHashTable::payloadBufferOff(const int partition_id) const noexcept {
   CHECK(layout_ == JoinHashTableInterface::HashType::OneToMany);
+  CHECK_EQ(partition_id, -1);
   return countBufferOff() + getComponentBufferSize();
 }
 

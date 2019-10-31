@@ -90,6 +90,7 @@ extern bool g_enable_table_functions;
 extern size_t g_max_memory_allocation_size;
 extern double g_bump_allocator_step_reduction;
 extern bool g_enable_direct_columnarization;
+extern bool g_force_radix_join;
 
 class QueryCompilationDescriptor;
 using QueryCompilationDescriptorOwned = std::unique_ptr<QueryCompilationDescriptor>;
@@ -1063,6 +1064,7 @@ class Executor {
   friend class TableOptimizer;
   friend class TableFunctionCompilationContext;
   friend class TableFunctionExecutionContext;
+  friend class RadixJoinHashTable;
   friend struct TargetExprCodegenBuilder;
   friend struct TargetExprCodegen;
 

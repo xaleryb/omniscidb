@@ -65,11 +65,13 @@ set(query_engine_source_files
     OutputBufferInitialization.cpp
     OverlapsJoinHashTable.cpp
     QueryPhysicalInputsCollector.cpp
+    Partitioning.cpp
     PlanState.cpp
     QueryRewrite.cpp
     QueryTemplateGenerator.cpp
     QueryExecutionContext.cpp
     QueryMemoryInitializer.cpp
+    RadixJoinHashTable.cpp
     RelAlgAbstractInterpreter.cpp
     RelLeftDeepInnerJoin.cpp
     RelAlgExecutor.cpp
@@ -97,6 +99,7 @@ set(query_engine_source_files
     TableFunctions/TableFunctionsFactory.cpp
     TableGenerations.cpp
     TableOptimizer.cpp
+    TablePartitioner.cpp
     TargetExprBuilder.cpp
     UDFCompiler.cpp
     StringFunctions.cpp

@@ -19,6 +19,7 @@
 #include "ExtensionFunctionsWhitelist.h"
 #include "LLVMFunctionAttributesUtil.h"
 #include "OutputBufferInitialization.h"
+#include "Partitioning.h"
 #include "QueryTemplateGenerator.h"
 
 #include "Shared/mapdpath.h"
@@ -1731,6 +1732,7 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
   cgen_state_->ir_builder_.SetInsertPoint(bb);
   preloadFragOffsets(ra_exe_unit.input_descs, query_infos);
   RelAlgExecutionUnit body_execution_unit = ra_exe_unit;
+  performTablesPartitioning(body_execution_unit, co, eo, query_infos, column_cache, this);
   const auto join_loops =
       buildJoinLoops(body_execution_unit, co, eo, query_infos, column_cache);
   plan_state_->allocateLocalColumnIds(ra_exe_unit.input_col_descs);

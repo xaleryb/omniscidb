@@ -75,11 +75,16 @@ using InnerOuter = std::pair<const Analyzer::ColumnVar*, const Analyzer::Expr*>;
 
 class JoinHashTableInterface {
  public:
+  virtual bool isPartitioned() const noexcept { return false; }
+
   virtual int64_t getJoinHashBuffer(const ExecutorDeviceType device_type,
-                                    const int device_id) const noexcept = 0;
+                                    const int device_id,
+                                    const int partition_id = -1) const noexcept = 0;
 
   virtual size_t getJoinHashBufferSize(const ExecutorDeviceType device_type,
-                                       const int device_id) const noexcept = 0;  // bytes
+                                       const int device_id,
+                                       const int partition_id = -1) const
+      noexcept = 0;  // bytes
 
   virtual std::string toString(const ExecutorDeviceType device_type,
                                const int device_id,
@@ -108,11 +113,11 @@ class JoinHashTableInterface {
 
   virtual HashType getHashType() const noexcept = 0;
 
-  virtual size_t offsetBufferOff() const noexcept = 0;
+  virtual size_t offsetBufferOff(const int partition_id = -1) const noexcept = 0;
 
-  virtual size_t countBufferOff() const noexcept = 0;
+  virtual size_t countBufferOff(const int partition_id = -1) const noexcept = 0;
 
-  virtual size_t payloadBufferOff() const noexcept = 0;
+  virtual size_t payloadBufferOff(const int partition_id = -1) const noexcept = 0;
 };
 
 std::string decodeJoinHashBufferToString(

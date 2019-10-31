@@ -70,10 +70,12 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
       const std::vector<InnerOuter>& inner_outer_pairs);
 
   int64_t getJoinHashBuffer(const ExecutorDeviceType device_type,
-                            const int device_id) const noexcept override;
+                            const int device_id,
+                            const int partition_id = -1) const noexcept override;
 
   size_t getJoinHashBufferSize(const ExecutorDeviceType device_type,
-                               const int device_id) const noexcept override;
+                               const int device_id,
+                               const int partition_id = -1) const noexcept override;
 
   std::string toString(const ExecutorDeviceType device_type,
                        const int device_id,
@@ -94,11 +96,11 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
 
   JoinHashTableInterface::HashType getHashType() const noexcept override;
 
-  size_t offsetBufferOff() const noexcept override;
+  size_t offsetBufferOff(const int partition_id = -1) const noexcept override;
 
-  size_t countBufferOff() const noexcept override;
+  size_t countBufferOff(const int partition_id = -1) const noexcept override;
 
-  size_t payloadBufferOff() const noexcept override;
+  size_t payloadBufferOff(const int partition_id = -1) const noexcept override;
 
   static auto yieldCacheInvalidator() -> std::function<void()> {
     return []() -> void {
