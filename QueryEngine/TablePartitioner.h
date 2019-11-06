@@ -41,7 +41,6 @@ class TablePartitioner {
   void computePartitionSizesAndOffsets(
       std::vector<std::vector<size_t>>& partition_offsets);
   void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
-  SQLTypeInfo getType(const InputColDescriptor& col);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
   std::vector<InputColDescriptor> key_cols_;

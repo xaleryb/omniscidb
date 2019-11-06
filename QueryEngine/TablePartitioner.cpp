@@ -47,16 +47,16 @@ TemporaryTable TablePartitioner::runPartitioning() {
   for (auto& col : key_cols_) {
     auto col_var = createColVar(col);
     slots.push_back(col_var.get());
-    col_vars.emplace_back(std::move(col_var));
     targets.emplace_back(
-        TargetInfo{false, kMIN, getType(col), SQLTypeInfo(), false, false});
+        TargetInfo{false, kMIN, col_var->get_type_info(), SQLTypeInfo(), false, false});
+    col_vars.emplace_back(std::move(col_var));
   }
   for (auto& col : payload_cols_) {
     auto col_var = createColVar(col);
     slots.push_back(col_var.get());
-    col_vars.emplace_back(std::move(col_var));
     targets.emplace_back(
-        TargetInfo{false, kMIN, getType(col), SQLTypeInfo(), false, false});
+        TargetInfo{false, kMIN, col_var->get_type_info(), SQLTypeInfo(), false, false});
+    col_vars.emplace_back(std::move(col_var));
   }
   std::vector<ssize_t> dummy;
   ColSlotContext slot_ctx(slots, dummy);
@@ -121,20 +121,6 @@ void TablePartitioner::computePartitionSizesAndOffsets(
   for (size_t j = 0; j < pcnt; ++j) {
     partition_sizes_[j] = partition_offsets.back()[j] + histograms.back()[j];
   }
-}
-
-SQLTypeInfo TablePartitioner::getType(const InputColDescriptor& col) {
-  auto& cat = *executor_->getCatalog();
-  auto table_id = col.getScanDesc().getTableId();
-
-  if (table_id < 0)
-    throw std::runtime_error(
-        "Failed to patition table: virtual tables are not supported");
-
-  auto* desc = get_column_descriptor(col.getColId(), table_id, cat);
-  CHECK(desc);
-
-  return desc->columnType;
 }
 
 std::shared_ptr<Analyzer::ColumnVar> TablePartitioner::createColVar(
