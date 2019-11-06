@@ -28,7 +28,34 @@ class Catalog;
 
 class Executor;
 
-using TemporaryTables = std::unordered_map<int, const ResultSetPtr&>;
+class TemporaryTable {
+ public:
+  TemporaryTable(const ResultSetPtr& rs) { results_.push_back(rs); }
+  TemporaryTable(const std::vector<ResultSetPtr>& results) : results_(results) {}
+  TemporaryTable(std::vector<ResultSetPtr>&& results) : results_(results) {}
+
+  TemporaryTable(const TemporaryTable& other) = default;
+  TemporaryTable(TemporaryTable&& other) = default;
+
+  int getFragCount() const { return static_cast<int>(results_.size()); }
+
+  const ResultSetPtr& getResultSet(const int frag_id) const {
+    CHECK(frag_id < getFragCount());
+    return results_[frag_id];
+  }
+
+  size_t getLimit() const;
+  size_t rowCount() const;
+  size_t colCount() const;
+
+  SQLTypeInfo getColType(const size_t col_idx) const;
+
+ private:
+  std::vector<ResultSetPtr> results_;
+};
+
+// using TemporaryTables = std::unordered_map<int, const ResultSetPtr&>;
+using TemporaryTables = std::unordered_map<int, TemporaryTable>;
 
 struct InputTableInfo {
   int table_id;

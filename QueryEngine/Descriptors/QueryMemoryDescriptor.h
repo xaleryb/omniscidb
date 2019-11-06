@@ -99,6 +99,12 @@ class QueryMemoryDescriptor {
                         const bool has_nulls,
                         const std::vector<int8_t>& group_col_widths);
 
+  QueryMemoryDescriptor(const QueryDescriptionType query_desc_type,
+                        const Executor* executor,
+                        const ColSlotContext& col_slot_context,
+                        const size_t entry_count,
+                        const bool output_columnar);
+
   // Serialization
   QueryMemoryDescriptor(const TResultSetBufferDescriptor& thrift_query_memory_descriptor);
   static TResultSetBufferDescriptor toThrift(const QueryMemoryDescriptor&);

@@ -41,6 +41,7 @@ void performTablesPartitioning(RelAlgExecutionUnit& ra_exe_unit,
                                const ExecutionOptions& eo,
                                const std::vector<InputTableInfo>& query_infos,
                                ColumnCacheMap& column_cache,
-                               Executor* executor);
+                               Executor* executor,
+                               std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner);
 
 #endif  // QUERYENGINE_PARTITIONING_H

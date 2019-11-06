@@ -18,30 +18,39 @@
 #define QUERYENGINE_TABLEPARTITIONER_H
 
 #include "Descriptors/InputDescriptors.h"
+#include "Execute.h"
 #include "InputMetadata.h"
 #include "Partitioning.h"
 
 class TablePartitioner {
  public:
-  TablePartitioner(std::vector<InputColDescriptor> key_cols,
+  TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
+                   std::vector<InputColDescriptor> key_cols,
                    std::vector<InputColDescriptor> payload_cols,
-                   const Fragmenter_Namespace::TableInfo& info,
-                   PartitioningOptions po);
+                   const InputTableInfo& info,
+                   PartitioningOptions po,
+                   Executor* executor,
+                   std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner);
 
-  InputTableInfo runPartitioning();
+  TemporaryTable runPartitioning();
 
-  int getPartitionsCount() const;
+  size_t getPartitionsCount() const;
 
  private:
   void fetchFragments();
   void computePartitionSizesAndOffsets(
       std::vector<std::vector<size_t>>& partition_offsets);
   void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
+  SQLTypeInfo getType(const InputColDescriptor& col);
+  std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
   std::vector<InputColDescriptor> key_cols_;
   std::vector<InputColDescriptor> payload_cols_;
-  const Fragmenter_Namespace::TableInfo& info_;
+  const InputTableInfo& info_;
   PartitioningOptions po_;
+  Executor* executor_;
+  const RelAlgExecutionUnit& ra_exe_unit_;
+  std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
   // Maps partition ID to a number of tuples in this partition.
   std::vector<size_t> partition_sizes_;
   //

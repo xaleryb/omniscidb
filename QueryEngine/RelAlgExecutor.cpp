@@ -425,10 +425,12 @@ void RelAlgExecutor::handleNop(RaExecutionDesc& ed) {
   body->setOutputMetainfo(input->getOutputMetainfo());
   const auto it = temporary_tables_.find(-input->getId());
   CHECK(it != temporary_tables_.end());
+
+  CHECK_EQ(it->second.getFragCount(), 1);
+  ed.setResult({it->second.getResultSet(0), input->getOutputMetainfo()});
+
   // set up temp table as it could be used by the outer query or next step
   addTemporaryTable(-body->getId(), it->second);
-
-  ed.setResult({it->second, input->getOutputMetainfo()});
 }
 
 namespace {
@@ -1154,8 +1156,7 @@ void RelAlgExecutor::executeUpdateViaProject(const RelProject* project,
     if (dynamic_cast<const RelSort*>(input_ra)) {
       const auto& input_table =
           get_temporary_table(&temporary_tables_, -input_ra->getId());
-      CHECK(input_table);
-      work_unit.exe_unit.scan_limit = input_table->rowCount();
+      work_unit.exe_unit.scan_limit = input_table.rowCount();
     }
   }
 
@@ -1241,8 +1242,7 @@ void RelAlgExecutor::executeDeleteViaProject(const RelProject* project,
     if (dynamic_cast<const RelSort*>(input_ra)) {
       const auto& input_table =
           get_temporary_table(&temporary_tables_, -input_ra->getId());
-      CHECK(input_table);
-      work_unit.exe_unit.scan_limit = input_table->rowCount();
+      work_unit.exe_unit.scan_limit = input_table.rowCount();
     }
   }
 
@@ -1328,9 +1328,8 @@ ExecutionResult RelAlgExecutor::executeProject(const RelProject* project,
       co_project.device_type_ = ExecutorDeviceType::CPU;
       const auto& input_table =
           get_temporary_table(&temporary_tables_, -input_ra->getId());
-      CHECK(input_table);
       work_unit.exe_unit.scan_limit =
-          std::min(input_table->getLimit(), input_table->rowCount());
+          std::min(input_table.getLimit(), input_table.rowCount());
     }
   }
   return executeWorkUnit(work_unit,

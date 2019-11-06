@@ -27,7 +27,8 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
                               const ExecutionOptions& eo,
                               const std::vector<InputTableInfo>& query_infos,
                               ColumnCacheMap& column_cache,
-                              Executor* executor) {
+                              Executor* executor,
+                              std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner) {
   auto table_id = key_cols.front()->get_table_id();
   auto scan_idx = key_cols.front()->get_rte_idx();
 
@@ -56,10 +57,12 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   }
 
   // Select fragments to process.
-  const auto& table_info = get_inner_query_info(table_id, query_infos).info;
+  const auto& table_info = get_inner_query_info(table_id, query_infos);
 
-  TablePartitioner partitioner;
-  InputTableInfo partitions = partitioner.runPartitioning(key, payload, table_info);
+  PartitioningOptions po;
+  TablePartitioner partitioner(
+      ra_exe_unit, key, payload, table_info, po, executor, row_set_mem_owner);
+  auto tmp_table = partitioner.runPartitioning();
 
   // Fix-up execution unit and query infos to use partitions
   // instead of original table.
@@ -77,7 +80,8 @@ void performPartitioningForQualifier(
     const ExecutionOptions& eo,
     const std::vector<InputTableInfo>& query_infos,
     ColumnCacheMap& column_cache,
-    Executor* executor) {
+    Executor* executor,
+    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner) {
   std::vector<InnerOuter> inner_outer_pairs;
   try {
     inner_outer_pairs = normalize_column_pairs(
@@ -97,10 +101,22 @@ void performPartitioningForQualifier(
     }
   }
 
-  performTablePartitioning(
-      inner_key, ra_exe_unit, co, eo, query_infos, column_cache, executor);
-  performTablePartitioning(
-      outer_key, ra_exe_unit, co, eo, query_infos, column_cache, executor);
+  performTablePartitioning(inner_key,
+                           ra_exe_unit,
+                           co,
+                           eo,
+                           query_infos,
+                           column_cache,
+                           executor,
+                           row_set_mem_owner);
+  performTablePartitioning(outer_key,
+                           ra_exe_unit,
+                           co,
+                           eo,
+                           query_infos,
+                           column_cache,
+                           executor,
+                           row_set_mem_owner);
 }
 
 }  // namespace
@@ -110,7 +126,11 @@ void performTablesPartitioning(RelAlgExecutionUnit& ra_exe_unit,
                                const ExecutionOptions& eo,
                                const std::vector<InputTableInfo>& query_infos,
                                ColumnCacheMap& column_cache,
-                               Executor* executor) {
+                               Executor* executor,
+                               std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner) {
+  if (!g_force_radix_join)
+    return;
+
   if (ra_exe_unit.join_quals.empty())
     return;
 
@@ -128,7 +148,13 @@ void performTablesPartitioning(RelAlgExecutionUnit& ra_exe_unit,
     if (!qual_bin_oper || !IS_EQUIVALENCE(qual_bin_oper->get_optype()))
       continue;
 
-    performPartitioningForQualifier(
-        qual_bin_oper, ra_exe_unit, co, eo, query_infos, column_cache, executor);
+    performPartitioningForQualifier(qual_bin_oper,
+                                    ra_exe_unit,
+                                    co,
+                                    eo,
+                                    query_infos,
+                                    column_cache,
+                                    executor,
+                                    row_set_mem_owner);
   }
 }

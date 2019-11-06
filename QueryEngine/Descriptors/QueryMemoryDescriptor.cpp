@@ -530,6 +530,32 @@ QueryMemoryDescriptor::QueryMemoryDescriptor(const QueryDescriptionType query_de
     , must_use_baseline_sort_(false)
     , force_4byte_float_(false) {}
 
+QueryMemoryDescriptor::QueryMemoryDescriptor(const QueryDescriptionType query_desc_type,
+                                             const Executor* executor,
+                                             const ColSlotContext& col_slot_context,
+                                             const size_t entry_count,
+                                             const bool output_columnar)
+    : executor_(executor)
+    , allow_multifrag_(false)
+    , query_desc_type_(query_desc_type)
+    , keyless_hash_(false)
+    , interleaved_bins_on_gpu_(false)
+    , idx_target_as_key_(false)
+    , group_col_compact_width_(0)
+    , entry_count_(entry_count)
+    , min_val_(0)
+    , max_val_(0)
+    , bucket_(0)
+    , has_nulls_(false)
+    , sharing_(GroupByMemSharing::Shared)
+    , output_columnar_(output_columnar)
+    , render_output_(false)
+    , must_use_baseline_sort_(false)
+    , force_4byte_float_(false)
+    , col_slot_context_(col_slot_context) {
+  col_slot_context_.validate();
+}
+
 bool QueryMemoryDescriptor::operator==(const QueryMemoryDescriptor& other) const {
   // Note that this method does not check ptr reference members (e.g. executor_) or
   // entry_count_

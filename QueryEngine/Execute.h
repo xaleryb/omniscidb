@@ -176,8 +176,8 @@ inline const ColumnDescriptor* get_column_descriptor_maybe(
   return table_id > 0 ? get_column_descriptor(col_id, table_id, cat) : nullptr;
 }
 
-inline const ResultSetPtr& get_temporary_table(const TemporaryTables* temporary_tables,
-                                               const int table_id) {
+inline const TemporaryTable& get_temporary_table(const TemporaryTables* temporary_tables,
+                                                 const int table_id) {
   CHECK_LT(table_id, 0);
   const auto it = temporary_tables->find(table_id);
   CHECK(it != temporary_tables->end());
@@ -195,7 +195,7 @@ inline const SQLTypeInfo get_column_type(const int col_id,
     return cd->columnType;
   }
   const auto& temp = get_temporary_table(temporary_tables, table_id);
-  return temp->getColType(col_id);
+  return temp.getColType(col_id);
 }
 
 template <typename PtrTy>

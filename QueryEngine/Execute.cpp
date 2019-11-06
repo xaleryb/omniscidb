@@ -2063,29 +2063,29 @@ Executor::FetchResult Executor::fetchChunks(
           plan_state_->columns_to_fetch_.end()) {
         memory_level_for_column = Data_Namespace::CPU_LEVEL;
       }
-      if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
-        frag_col_buffers[it->second] = column_fetcher.getResultSetColumn(
-            col_id.get(), memory_level_for_column, device_id);
+      // if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
+      //  frag_col_buffers[it->second] = column_fetcher.getResultSetColumn(
+      //      col_id.get(), memory_level_for_column, device_id);
+      //} else {
+      if (needFetchAllFragments(*col_id, ra_exe_unit, selected_fragments)) {
+        frag_col_buffers[it->second] =
+            column_fetcher.getAllTableColumnFragments(table_id,
+                                                      col_id->getColId(),
+                                                      all_tables_fragments,
+                                                      memory_level_for_column,
+                                                      device_id);
       } else {
-        if (needFetchAllFragments(*col_id, ra_exe_unit, selected_fragments)) {
-          frag_col_buffers[it->second] =
-              column_fetcher.getAllTableColumnFragments(table_id,
-                                                        col_id->getColId(),
-                                                        all_tables_fragments,
-                                                        memory_level_for_column,
-                                                        device_id);
-        } else {
-          frag_col_buffers[it->second] =
-              column_fetcher.getOneTableColumnFragment(table_id,
-                                                       frag_id,
-                                                       col_id->getColId(),
-                                                       all_tables_fragments,
-                                                       chunks,
-                                                       chunk_iterators,
-                                                       memory_level_for_column,
-                                                       device_id);
-        }
+        frag_col_buffers[it->second] =
+            column_fetcher.getOneTableColumnFragment(table_id,
+                                                     frag_id,
+                                                     col_id->getColId(),
+                                                     all_tables_fragments,
+                                                     chunks,
+                                                     chunk_iterators,
+                                                     memory_level_for_column,
+                                                     device_id);
       }
+      //}
     }
     all_frag_col_buffers.push_back(frag_col_buffers);
   }
