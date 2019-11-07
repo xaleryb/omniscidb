@@ -51,7 +51,8 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   // Collect payload columns for partitioning.
   for (auto& col : ra_exe_unit.input_col_descs) {
     if (col->getScanDesc().getTableId() == table_id &&
-        col->getScanDesc().getNestLevel() && !key_col_ids.count(col->getColId())) {
+        col->getScanDesc().getNestLevel() == scan_idx &&
+        !key_col_ids.count(col->getColId())) {
       payload.emplace_back(col->getColId(), table_id, scan_idx);
     }
   }
@@ -61,9 +62,15 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
 
   PartitioningOptions po;
   // TODO: pass this value through the option?
-  po.mask_bits = 7;
-  TablePartitioner partitioner(
-      ra_exe_unit, key, payload, table_info, column_cache, po, executor, row_set_mem_owner);
+  po.mask_bits = 3;
+  TablePartitioner partitioner(ra_exe_unit,
+                               key,
+                               payload,
+                               table_info,
+                               column_cache,
+                               po,
+                               executor,
+                               row_set_mem_owner);
   auto tmp_table = partitioner.runPartitioning();
 
   // Fix-up execution unit and query infos to use partitions

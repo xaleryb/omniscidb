@@ -18,6 +18,8 @@
 
 #include "ColumnFetcher.h"
 
+#include "ThriftSerializers.h"
+
 TablePartitioner::TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
                                    std::vector<InputColDescriptor> key_cols,
                                    std::vector<InputColDescriptor> payload_cols,
@@ -75,12 +77,6 @@ void TablePartitioner::fetchFragments(
 }
 
 TemporaryTable TablePartitioner::runPartitioning() {
-  // This vector holds write positions (in number of elements, not bytes)
-  // in partitions for each partitioned fragment.
-  // [fragment idx][partition id] -> offset in partition buffer.
-  std::vector<std::vector<size_t>> partition_offsets;
-  computePartitionSizesAndOffsets(partition_offsets);
-
   std::vector<const Analyzer::ColumnVar*> key_vars;
   std::vector<const Analyzer::ColumnVar*> payload_vars;
   // Prepare some aux structures for memory descriptors and result sets.
@@ -109,14 +105,19 @@ TemporaryTable TablePartitioner::runPartitioning() {
         TargetInfo{false, kMIN, col_var->get_type_info(), SQLTypeInfo(), false, false});
     col_vars.emplace_back(std::move(col_var));
   }
-  std::vector<ssize_t> dummy;
-  ColSlotContext slot_ctx(slots, dummy);
-  slot_ctx.setAllSlotsPaddedSizeToLogicalSize();
 
   // fetch column data - keys and payloads
   fetchFragments(key_vars, payload_vars);
 
-  // Now we can allocate parition's buffers.
+  // This vector holds write positions (in number of elements, not bytes)
+  // in partitions for each partitioned fragment.
+  // [fragment idx][partition id] -> offset in partition buffer.
+  std::vector<std::vector<size_t>> partition_offsets;
+  computePartitionSizesAndOffsets(partition_offsets);
+
+  std::vector<ssize_t> dummy;
+  ColSlotContext slot_ctx(slots, dummy);
+  slot_ctx.setAllSlotsPaddedSizeToLogicalSize();
   std::vector<ResultSetPtr> partitions;
   // [partition id][column idx] -> column buffer.
   std::vector<std::vector<int8_t*>> col_bufs;
@@ -148,6 +149,23 @@ TemporaryTable TablePartitioner::runPartitioning() {
     // run partitioning function
     doPartition(i, partition_offsets, col_bufs);
   }
+
+// TODO: remove debug prints
+#if 0
+  for (size_t pid = 0; pid < partitions.size(); ++pid) {
+    std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
+    for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
+      auto row = partitions[pid]->getRowAt(rid);
+      for (auto& val : row) {
+        auto scalar_r = boost::get<ScalarTargetValue>(&val);
+        CHECK(scalar_r);
+        std::cerr << *scalar_r << " ";
+      }
+      std::cerr << std::endl;
+    }
+    std::cerr << "=================================" << std::endl;
+  }
+#endif
 
   return TemporaryTable(partitions);
 }
@@ -207,26 +225,24 @@ void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histo
 void TablePartitioner::computePartitionSizesAndOffsets(
     std::vector<std::vector<size_t>>& partition_offsets) {
   auto pcnt = getPartitionsCount();
-  std::vector<std::vector<size_t>> histograms(info_.info.fragments.size());
+  std::vector<std::vector<size_t>> histograms(info_.info.fragments.size(),
+                                              std::vector<size_t>(pcnt, 0));
 
   // Run histogram collection.
   for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
     // run histogram collection function.
-    histograms[i].assign(pcnt, 0);
     collectHistogram(i, histograms[i]);
   }
 
-  for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
-    partition_offsets[i].assign(pcnt, 0);
-  }
-
   // Count partition sizes and offsets (in number of tuples).
+  partition_offsets.assign(info_.info.fragments.size(), std::vector<size_t>(pcnt, 0));
   for (size_t i = 0; i < (histograms.size() - 1); ++i) {
     for (size_t j = 0; j < pcnt; ++j) {
       partition_offsets[i + 1][j] = partition_offsets[i][j] + histograms[i][j];
     }
   }
 
+  partition_sizes_.resize(pcnt, 0);
   for (size_t j = 0; j < pcnt; ++j) {
     partition_sizes_[j] = partition_offsets.back()[j] + histograms.back()[j];
   }
