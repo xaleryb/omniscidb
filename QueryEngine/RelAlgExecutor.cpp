@@ -26,6 +26,7 @@
 #include "FromTableReordering.h"
 #include "InputMetadata.h"
 #include "JoinFilterPushDown.h"
+#include "Partitioning.h"
 #include "QueryPhysicalInputsCollector.h"
 #include "RangeTableIndexVisitor.h"
 #include "RexVisitor.h"
@@ -1951,10 +1952,13 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
     }
     return result;
   }
-  const auto table_infos = get_table_infos(work_unit.exe_unit, executor_);
 
+  auto ra_exe_unit_part = performTablesPartitioning(
+      work_unit.exe_unit, co, eo, column_cache, executor_, executor_->row_set_mem_owner_);
+
+  const auto table_infos = get_table_infos(ra_exe_unit_part, executor_);
   auto ra_exe_unit = decide_approx_count_distinct_implementation(
-      work_unit.exe_unit, table_infos, executor_, co.device_type_, target_exprs_owned_);
+      ra_exe_unit_part, table_infos, executor_, co.device_type_, target_exprs_owned_);
   auto max_groups_buffer_entry_guess = work_unit.max_groups_buffer_entry_guess;
   if (is_window_execution_unit(ra_exe_unit)) {
     CHECK_EQ(table_infos.size(), size_t(1));

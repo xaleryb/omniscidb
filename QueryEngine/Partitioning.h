@@ -31,17 +31,17 @@ struct PartitioningOptions {
     VALUE
   };
 
-  PartitioningKind kind;
-  int mask_bits;
-  int scale_bits;
+  PartitioningKind kind = HASH;
+  int mask_bits = 16;
+  int scale_bits = 16;
 };
 
-void performTablesPartitioning(RelAlgExecutionUnit& ra_exe_unit,
-                               const CompilationOptions& co,
-                               const ExecutionOptions& eo,
-                               const std::vector<InputTableInfo>& query_infos,
-                               ColumnCacheMap& column_cache,
-                               Executor* executor,
-                               std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner);
+RelAlgExecutionUnit performTablesPartitioning(
+    const RelAlgExecutionUnit& ra_exe_unit,
+    const CompilationOptions& co,
+    const ExecutionOptions& eo,
+    ColumnCacheMap& column_cache,
+    Executor* executor,
+    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner);
 
 #endif  // QUERYENGINE_PARTITIONING_H

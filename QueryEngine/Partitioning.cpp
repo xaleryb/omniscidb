@@ -21,14 +21,29 @@
 
 namespace {
 
-void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key_cols,
-                              RelAlgExecutionUnit& ra_exe_unit,
-                              const CompilationOptions& co,
-                              const ExecutionOptions& eo,
-                              const std::vector<InputTableInfo>& query_infos,
-                              ColumnCacheMap& column_cache,
-                              Executor* executor,
-                              std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner) {
+// Structure to describe input table replacement with
+// a temporary table (partitioned version).
+struct InputTableMap {
+  // Id of table to replace.
+  int table_id;
+  int scan_idx;
+  // Old col id -> new col id.
+  std::unordered_map<int, int> col_map;
+  // New table.
+  TemporaryTable table;
+};
+
+using InputTableMaps = std::unordered_map<InputDescriptor, InputTableMap>;
+
+InputTableMap performTablePartitioning(
+    const std::vector<const Analyzer::ColumnVar*>& key_cols,
+    const RelAlgExecutionUnit& ra_exe_unit,
+    const CompilationOptions& co,
+    const ExecutionOptions& eo,
+    const std::vector<InputTableInfo>& query_infos,
+    ColumnCacheMap& column_cache,
+    Executor* executor,
+    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner) {
   auto table_id = key_cols.front()->get_table_id();
   auto scan_idx = key_cols.front()->get_rte_idx();
 
@@ -38,13 +53,13 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   }
 
   // Collect keys columns for partitioning.
-  std::unordered_set<int64_t> key_col_ids;
   std::vector<InputColDescriptor> key;
   std::vector<InputColDescriptor> payload;
+  std::unordered_map<int, int> col_map;
   for (auto& key_col : key_cols) {
     CHECK_EQ(key_col->get_table_id(), table_id);
     CHECK_EQ(key_col->get_rte_idx(), scan_idx);
-    key_col_ids.insert(key_col->get_column_id());
+    col_map[key_col->get_column_id()] = key.size();
     key.emplace_back(key_col->get_column_id(), table_id, scan_idx);
   }
 
@@ -52,7 +67,8 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   for (auto& col : ra_exe_unit.input_col_descs) {
     if (col->getScanDesc().getTableId() == table_id &&
         col->getScanDesc().getNestLevel() == scan_idx &&
-        !key_col_ids.count(col->getColId())) {
+        !col_map.count(col->getColId())) {
+      col_map[col->getColId()] = key.size() + payload.size();
       payload.emplace_back(col->getColId(), table_id, scan_idx);
     }
   }
@@ -63,6 +79,7 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   PartitioningOptions po;
   // TODO: pass this value through the option?
   po.mask_bits = 3;
+  po.scale_bits = 0;
   TablePartitioner partitioner(ra_exe_unit,
                                key,
                                payload,
@@ -80,11 +97,12 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
 
   // TODO: register and cache partitions somewhere for
   // re-usage.
+  return {table_id, scan_idx, col_map, std::move(tmp_table)};
 }
 
-void performPartitioningForQualifier(
+RelAlgExecutionUnit performPartitioningForQualifier(
     const std::shared_ptr<Analyzer::BinOper>& qual_bin_oper,
-    RelAlgExecutionUnit& ra_exe_unit,
+    const RelAlgExecutionUnit& ra_exe_unit,
     const CompilationOptions& co,
     const ExecutionOptions& eo,
     const std::vector<InputTableInfo>& query_infos,
@@ -96,7 +114,7 @@ void performPartitioningForQualifier(
     inner_outer_pairs = normalize_column_pairs(
         qual_bin_oper.get(), *executor->getCatalog(), executor->getTemporaryTables());
   } catch (HashJoinFail&) {
-    return;
+    return ra_exe_unit;
   }
 
   std::vector<const Analyzer::ColumnVar*> inner_key;
@@ -127,22 +145,24 @@ void performPartitioningForQualifier(
                            column_cache,
                            executor,
                            row_set_mem_owner);
+
+  return ra_exe_unit;
 }
 
 }  // namespace
 
-void performTablesPartitioning(RelAlgExecutionUnit& ra_exe_unit,
-                               const CompilationOptions& co,
-                               const ExecutionOptions& eo,
-                               const std::vector<InputTableInfo>& query_infos,
-                               ColumnCacheMap& column_cache,
-                               Executor* executor,
-                               std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner) {
+RelAlgExecutionUnit performTablesPartitioning(
+    const RelAlgExecutionUnit& ra_exe_unit,
+    const CompilationOptions& co,
+    const ExecutionOptions& eo,
+    ColumnCacheMap& column_cache,
+    Executor* executor,
+    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner) {
   if (!g_force_radix_join)
-    return;
+    return ra_exe_unit;
 
   if (ra_exe_unit.join_quals.empty())
-    return;
+    return ra_exe_unit;
 
   if (ra_exe_unit.join_quals.size() > 1)
     throw std::runtime_error(
@@ -152,19 +172,22 @@ void performTablesPartitioning(RelAlgExecutionUnit& ra_exe_unit,
     throw std::runtime_error(
         "Hash join failed: radix hash join for GPU is not yet supported");
 
+  auto query_infos = get_table_infos(ra_exe_unit, executor);
   auto& join_condition = ra_exe_unit.join_quals.front();
   for (const auto& join_qual : join_condition.quals) {
     auto qual_bin_oper = std::dynamic_pointer_cast<Analyzer::BinOper>(join_qual);
     if (!qual_bin_oper || !IS_EQUIVALENCE(qual_bin_oper->get_optype()))
       continue;
 
-    performPartitioningForQualifier(qual_bin_oper,
-                                    ra_exe_unit,
-                                    co,
-                                    eo,
-                                    query_infos,
-                                    column_cache,
-                                    executor,
-                                    row_set_mem_owner);
+    return performPartitioningForQualifier(qual_bin_oper,
+                                           ra_exe_unit,
+                                           co,
+                                           eo,
+                                           query_infos,
+                                           column_cache,
+                                           executor,
+                                           row_set_mem_owner);
   }
+
+  return ra_exe_unit;
 }

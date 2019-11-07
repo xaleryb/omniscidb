@@ -20,6 +20,8 @@
 
 #include "ThriftSerializers.h"
 
+#define DEBUG_PRINT 0
+
 TablePartitioner::TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
                                    std::vector<InputColDescriptor> key_cols,
                                    std::vector<InputColDescriptor> payload_cols,
@@ -151,7 +153,7 @@ TemporaryTable TablePartitioner::runPartitioning() {
   }
 
 // TODO: remove debug prints
-#if 0
+#if DEBUG_PRINT
   for (size_t pid = 0; pid < partitions.size(); ++pid) {
     std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
     for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
@@ -195,6 +197,7 @@ uint32_t TablePartitioner::getHashValue(const int8_t* key,
     default:
       CHECK(false);
   }
+
   return HASH_BIT_MODULO(value, mask, shift);
 }
 
