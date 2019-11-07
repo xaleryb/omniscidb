@@ -22,6 +22,8 @@
 #include "InputMetadata.h"
 #include "RelAlgExecutionUnit.h"
 
+#define PARTITIONING_DEBUG_PRINT 0
+
 struct PartitioningOptions {
   enum PartitioningKind {
     // Compute hash value and use its bits to get partition ID.
@@ -42,6 +44,8 @@ RelAlgExecutionUnit performTablesPartitioning(
     const ExecutionOptions& eo,
     ColumnCacheMap& column_cache,
     Executor* executor,
-    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner);
+    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
+    TemporaryTables& temporary_tables,
+    Analyzer::ExpressionPtrVector& target_exprs_owned);
 
 #endif  // QUERYENGINE_PARTITIONING_H

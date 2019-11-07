@@ -112,10 +112,19 @@ class Expr : public std::enable_shared_from_this<Expr> {
    * the argument to AggExpr's.  Otherwise, they are included.
    * It does not make copies of the ColumnVar
    */
-  virtual void collect_column_var(
+  void collect_column_var(
       std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
           colvar_set,
-      bool include_agg) const {}
+      bool include_agg) const {
+    const_cast<Expr*>(this)->visit_column_var(
+        [&colvar_set](ColumnVar* var) { colvar_set.insert(var); }, include_agg);
+  }
+  /*
+   * @brief visit_column_var calls callback function f for all ColumnVar nodes in an
+   * expression If include_agg = false, it does not include to ColumnVar nodes inside the
+   * argument to AggExpr's.  Otherwise, they are included.
+   */
+  virtual void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {}
   /*
    * @brief rewrite_with_targetlist rewrite ColumnVar's in expression with entries in a
    * targetlist. targetlist expressions are expected to be only Var's or AggExpr's.
@@ -204,16 +213,13 @@ class ColumnVar : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     rte_idx_set.insert(rte_idx);
   }
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    f(this);
+  }
   static bool colvar_comp(const ColumnVar* l, const ColumnVar* r) {
     return l->get_table_id() < r->get_table_id() ||
            (l->get_table_id() == r->get_table_id() &&
             l->get_column_id() < r->get_column_id());
-  }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    colvar_set.insert(this);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
@@ -223,6 +229,11 @@ class ColumnVar : public Expr {
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
   bool operator==(const Expr& rhs) const override;
   std::string toString() const override;
+
+  void replace_with_col(int new_table_id, int new_column_id) {
+    table_id = new_table_id;
+    column_id = new_column_id;
+  }
 
  protected:
   int table_id;   // the global table id
@@ -372,11 +383,8 @@ class UOper : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     operand->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    operand->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    operand->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -460,12 +468,9 @@ class BinOper : public Expr {
     left_operand->collect_rte_idx(rte_idx_set);
     right_operand->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    left_operand->collect_column_var(colvar_set, include_agg);
-    right_operand->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    left_operand->visit_column_var(f, include_agg);
+    right_operand->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -533,10 +538,7 @@ class Subquery : public Expr {
     CHECK(false);
   }
   void collect_rte_idx(std::set<int>& rte_idx_set) const override { CHECK(false); }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
     CHECK(false);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
@@ -586,11 +588,8 @@ class InValues : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     arg->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
@@ -656,11 +655,8 @@ class CharLengthExpr : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     arg->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -704,11 +700,8 @@ class KeyForStringExpr : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     arg->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -746,11 +739,8 @@ class LowerExpr : public Expr {
     arg->collect_rte_idx(rte_idx_set);
   }
 
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
 
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
@@ -803,11 +793,8 @@ class CardinalityExpr : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     arg->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -861,11 +848,8 @@ class LikeExpr : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     arg->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -931,11 +915,8 @@ class RegexpExpr : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     arg->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -986,11 +967,8 @@ class LikelihoodExpr : public Expr {
   void collect_rte_idx(std::set<int>& rte_idx_set) const override {
     arg->collect_rte_idx(rte_idx_set);
   }
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
-    arg->collect_column_var(colvar_set, include_agg);
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
+    arg->visit_column_var(f, include_agg);
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override {
@@ -1052,12 +1030,9 @@ class AggExpr : public Expr {
       arg->collect_rte_idx(rte_idx_set);
     }
   };
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override {
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override {
     if (include_agg && arg != nullptr) {
-      arg->collect_column_var(colvar_set, include_agg);
+      arg->visit_column_var(f, include_agg);
     }
   }
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
@@ -1103,10 +1078,7 @@ class CaseExpr : public Expr {
                         std::list<const Expr*>& join_predicates,
                         std::list<const Expr*>& const_predicates) const override;
   void collect_rte_idx(std::set<int>& rte_idx_set) const override;
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override;
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_child_targetlist(
@@ -1149,10 +1121,7 @@ class ExtractExpr : public Expr {
                         std::list<const Expr*>& join_predicates,
                         std::list<const Expr*>& const_predicates) const override;
   void collect_rte_idx(std::set<int>& rte_idx_set) const override;
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override;
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_child_targetlist(
@@ -1190,10 +1159,7 @@ class DateaddExpr : public Expr {
                         std::list<const Expr*>& join_predicates,
                         std::list<const Expr*>& const_predicates) const override;
   void collect_rte_idx(std::set<int>& rte_idx_set) const override;
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override;
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_child_targetlist(
@@ -1232,10 +1198,7 @@ class DatediffExpr : public Expr {
                         std::list<const Expr*>& join_predicates,
                         std::list<const Expr*>& const_predicates) const override;
   void collect_rte_idx(std::set<int>& rte_idx_set) const override;
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override;
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_child_targetlist(
@@ -1274,10 +1237,7 @@ class DatetruncExpr : public Expr {
                         std::list<const Expr*>& join_predicates,
                         std::list<const Expr*>& const_predicates) const override;
   void collect_rte_idx(std::set<int>& rte_idx_set) const override;
-  void collect_column_var(
-      std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>&
-          colvar_set,
-      bool include_agg) const override;
+  void visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_targetlist(
       const std::vector<std::shared_ptr<TargetEntry>>& tlist) const override;
   std::shared_ptr<Analyzer::Expr> rewrite_with_child_targetlist(

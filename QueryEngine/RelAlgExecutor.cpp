@@ -1953,8 +1953,14 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
     return result;
   }
 
-  auto ra_exe_unit_part = performTablesPartitioning(
-      work_unit.exe_unit, co, eo, column_cache, executor_, executor_->row_set_mem_owner_);
+  auto ra_exe_unit_part = performTablesPartitioning(work_unit.exe_unit,
+                                                    co,
+                                                    eo,
+                                                    column_cache,
+                                                    executor_,
+                                                    executor_->row_set_mem_owner_,
+                                                    temporary_tables_,
+                                                    target_exprs_owned_);
 
   const auto table_infos = get_table_infos(ra_exe_unit_part, executor_);
   auto ra_exe_unit = decide_approx_count_distinct_implementation(

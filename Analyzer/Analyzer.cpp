@@ -2837,42 +2837,33 @@ void DatetruncExpr::collect_rte_idx(std::set<int>& rte_idx_set) const {
   from_expr_->collect_rte_idx(rte_idx_set);
 }
 
-void CaseExpr::collect_column_var(
-    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
-    bool include_agg) const {
+void CaseExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
   for (auto p : expr_pair_list) {
-    p.first->collect_column_var(colvar_set, include_agg);
-    p.second->collect_column_var(colvar_set, include_agg);
+    p.first->visit_column_var(f, include_agg);
+    p.second->visit_column_var(f, include_agg);
   }
   if (else_expr != nullptr) {
-    else_expr->collect_column_var(colvar_set, include_agg);
+    else_expr->visit_column_var(f, include_agg);
   }
 }
 
-void ExtractExpr::collect_column_var(
-    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
-    bool include_agg) const {
-  from_expr_->collect_column_var(colvar_set, include_agg);
+void ExtractExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
+  from_expr_->visit_column_var(f, include_agg);
 }
 
-void DateaddExpr::collect_column_var(
-    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
-    bool include_agg) const {
-  number_->collect_column_var(colvar_set, include_agg);
-  datetime_->collect_column_var(colvar_set, include_agg);
+void DateaddExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
+  number_->visit_column_var(f, include_agg);
+  datetime_->visit_column_var(f, include_agg);
 }
 
-void DatediffExpr::collect_column_var(
-    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
-    bool include_agg) const {
-  start_->collect_column_var(colvar_set, include_agg);
-  end_->collect_column_var(colvar_set, include_agg);
+void DatediffExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
+  start_->visit_column_var(f, include_agg);
+  end_->visit_column_var(f, include_agg);
 }
 
-void DatetruncExpr::collect_column_var(
-    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
-    bool include_agg) const {
-  from_expr_->collect_column_var(colvar_set, include_agg);
+void DatetruncExpr::visit_column_var(std::function<void(ColumnVar*)> f,
+                                     bool include_agg) {
+  from_expr_->visit_column_var(f, include_agg);
 }
 
 void CaseExpr::check_group_by(
