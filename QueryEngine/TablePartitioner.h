@@ -28,6 +28,7 @@ class TablePartitioner {
                    std::vector<InputColDescriptor> key_cols,
                    std::vector<InputColDescriptor> payload_cols,
                    const InputTableInfo& info,
+                   ColumnCacheMap& column_cache,
                    PartitioningOptions po,
                    Executor* executor,
                    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner);
@@ -37,15 +38,27 @@ class TablePartitioner {
   size_t getPartitionsCount() const;
 
  private:
-  void fetchFragments();
+  void fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
+                     size_t frag_num,
+                     std::vector<const Analyzer::ColumnVar*>& vars,
+                     std::vector<const int8_t*>& output);
+  void fetchFragments(std::vector<const Analyzer::ColumnVar*>& key_vars,
+                      std::vector<const Analyzer::ColumnVar*>& payload_vars);
   void computePartitionSizesAndOffsets(
       std::vector<std::vector<size_t>>& partition_offsets);
   void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
+  uint32_t getHashValue(const int8_t* key, int size, int mask, int shift);
+  void doPartition(int frag_idx, std::vector<std::vector<int8_t*>>& col_bufs);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
   std::vector<InputColDescriptor> key_cols_;
   std::vector<InputColDescriptor> payload_cols_;
+  std::vector<std::vector<const int8_t*>> key_data_;
+  std::vector<std::vector<const int8_t*>> payload_data_;
+  std::vector<size_t> key_sizes_;
+  std::vector<size_t> payload_sizes_;
   const InputTableInfo& info_;
+  ColumnCacheMap& column_cache_;
   PartitioningOptions po_;
   Executor* executor_;
   const RelAlgExecutionUnit& ra_exe_unit_;

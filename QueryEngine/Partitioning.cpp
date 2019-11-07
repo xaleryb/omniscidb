@@ -60,8 +60,10 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   const auto& table_info = get_inner_query_info(table_id, query_infos);
 
   PartitioningOptions po;
+  // TODO: pass this value through the option?
+  po.mask_bits = 7;
   TablePartitioner partitioner(
-      ra_exe_unit, key, payload, table_info, po, executor, row_set_mem_owner);
+      ra_exe_unit, key, payload, table_info, column_cache, po, executor, row_set_mem_owner);
   auto tmp_table = partitioner.runPartitioning();
 
   // Fix-up execution unit and query infos to use partitions
@@ -99,6 +101,7 @@ void performPartitioningForQualifier(
       throw std::runtime_error(
           "Hash join failed: cannot use radix hash join for given expression");
     }
+    outer_key.push_back(outer_col);
   }
 
   performTablePartitioning(inner_key,
