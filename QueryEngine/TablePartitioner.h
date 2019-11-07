@@ -65,6 +65,7 @@ class TablePartitioner {
   Executor* executor_;
   const RelAlgExecutionUnit& ra_exe_unit_;
   std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
+  std::vector<std::shared_ptr<Chunk_NS::Chunk>> chunks_owner_;
   // Maps partition ID to a number of tuples in this partition.
   std::vector<size_t> partition_sizes_;
   //

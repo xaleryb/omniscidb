@@ -39,7 +39,6 @@ void TablePartitioner::fetchFragment(const Fragmenter_Namespace::FragmentInfo& f
                                      size_t frag_num,
                                      std::vector<const Analyzer::ColumnVar*>& vars,
                                      std::vector<const int8_t*>& output) {
-  std::vector<std::shared_ptr<Chunk_NS::Chunk>> chunks_owner;
   const int8_t* col_frag = nullptr;
   size_t elem_count = 0;
   for (auto var : vars) {
@@ -49,7 +48,7 @@ void TablePartitioner::fetchFragment(const Fragmenter_Namespace::FragmentInfo& f
                                             frag,
                                             Data_Namespace::CPU_LEVEL,
                                             0,
-                                            chunks_owner,
+                                            chunks_owner_,
                                             column_cache_);
     if (col_frag == nullptr) {
       continue;
@@ -64,7 +63,6 @@ void TablePartitioner::fetchFragments(
     std::vector<const Analyzer::ColumnVar*>& payload_vars) {
   // get all fragments for columns separately
   // so far only one key column is considered
-  std::vector<std::shared_ptr<Chunk_NS::Chunk>> chunks_owner;
   std::vector<const int8_t*> empty;
   key_data_.assign(info_.info.fragments.size(), empty);
   payload_data_.assign(info_.info.fragments.size(), empty);
@@ -191,7 +189,8 @@ void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histo
   // FIXME: only one key column for now!
   auto key_size = key_sizes_.at(0);
   for (i = 0; i < fragment_size; ++i) {
-    uint32_t idx = getHashValue(&(fragment[i * key_size]), key_size, fanOut - 1, 0);
+    uint32_t idx =
+        getHashValue(&(fragment[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
     histogram[idx]++;
   }
 
@@ -237,36 +236,27 @@ void TablePartitioner::doPartition(int frag_idx,
                                    std::vector<std::vector<size_t>>& partition_offsets,
                                    std::vector<std::vector<int8_t*>>& col_bufs) {
   const uint32_t fanOut = getPartitionsCount();
-  // init offsets for payloads
-  std::vector<std::vector<size_t>> payload_offsets(fanOut);
-  if (payload_cols_.size() > 0) {
-    for (int idx = 0; idx < fanOut; ++idx) {
-      for (int j = 0; j < payload_cols_.size(); j++)
-        payload_offsets[idx].push_back(partition_offsets[frag_idx][idx]);
-    }
-  }
   // FIXME: only one key column for now!
   auto key_size = key_sizes_.at(0);
   auto keys = key_data_.at(frag_idx).at(0);
   auto fragment_size = info_.info.fragments.at(frag_idx).getNumTuples();
   for (uint64_t i = 0; i < fragment_size; ++i) {
-    uint32_t idx = getHashValue(&(keys[i * key_size]), key_size, fanOut - 1, 0);
-    // fill partition - first key than payload(s) if needed
+    uint32_t idx =
+        getHashValue(&(keys[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
+    // fill partition - first key, then payload(s) if needed
     auto key_pos = partition_offsets[frag_idx][idx];
     // FIXME: only one key column for now!
-    memcpy(&(col_bufs[idx][0][key_pos]), &(keys[i * key_size]), key_size);
-    partition_offsets[frag_idx][idx] += key_size;
+    memcpy(&(col_bufs[idx][0][key_pos * key_size]), &(keys[i * key_size]), key_size);
     if (payload_cols_.size() > 0) {
       int payload_idx = 0;
       for (auto payload : payload_data_[frag_idx]) {
         auto payload_size = payload_sizes_.at(payload_idx);
-        auto payload_pos = payload_offsets[idx][payload_idx];
-        memcpy(&(col_bufs[idx][payload_idx + key_cols_.size()][payload_pos]),
+        memcpy(&(col_bufs[idx][payload_idx + key_cols_.size()][key_pos * payload_size]),
                &(payload[i * payload_size]),
                payload_size);
-        payload_offsets[idx][payload_idx++] += payload_size;
       }
     }
+    partition_offsets[frag_idx][idx]++;
   }
 }
 
