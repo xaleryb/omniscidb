@@ -148,7 +148,7 @@ TemporaryTable TablePartitioner::runPartitioning() {
 
   for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
     // run partitioning function
-    doPartition(i, col_bufs);
+    doPartition(i, partition_offsets, col_bufs);
   }
 
   return TemporaryTable(partitions);
@@ -217,6 +217,10 @@ void TablePartitioner::computePartitionSizesAndOffsets(
     collectHistogram(i, histograms[i]);
   }
 
+  for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
+    partition_offsets[i].assign(pcnt, 0);
+  }
+
   // Count partition sizes and offsets (in number of tuples).
   for (size_t i = 0; i < (histograms.size() - 1); ++i) {
     for (size_t j = 0; j < pcnt; ++j) {
@@ -230,9 +234,17 @@ void TablePartitioner::computePartitionSizesAndOffsets(
 }
 
 void TablePartitioner::doPartition(int frag_idx,
+                                   std::vector<std::vector<size_t>>& partition_offsets,
                                    std::vector<std::vector<int8_t*>>& col_bufs) {
   const uint32_t fanOut = getPartitionsCount();
-  std::vector<size_t> positions(payload_cols_.size() + key_cols_.size());
+  // init offsets for payloads
+  std::vector<std::vector<size_t>> payload_offsets(fanOut);
+  if (payload_cols_.size() > 0) {
+    for (int idx = 0; idx < fanOut; ++idx) {
+      for (int j = 0; j < payload_cols_.size(); j++)
+        payload_offsets[idx].push_back(partition_offsets[frag_idx][idx]);
+    }
+  }
   // FIXME: only one key column for now!
   auto key_size = key_sizes_.at(0);
   auto keys = key_data_.at(frag_idx).at(0);
@@ -240,20 +252,19 @@ void TablePartitioner::doPartition(int frag_idx,
   for (uint64_t i = 0; i < fragment_size; ++i) {
     uint32_t idx = getHashValue(&(keys[i * key_size]), key_size, fanOut - 1, 0);
     // fill partition - first key than payload(s) if needed
+    auto key_pos = partition_offsets[frag_idx][idx];
     // FIXME: only one key column for now!
-    memcpy(&(col_bufs[idx][0][positions[0]]), &(keys[i * key_size]), key_size);
-    positions[0] += key_size;
+    memcpy(&(col_bufs[idx][0][key_pos]), &(keys[i * key_size]), key_size);
+    partition_offsets[frag_idx][idx] += key_size;
     if (payload_cols_.size() > 0) {
-      // payload start pos in col_bufs inner vector
-      int payload_num = key_cols_.size();
       int payload_idx = 0;
       for (auto payload : payload_data_[frag_idx]) {
         auto payload_size = payload_sizes_.at(payload_idx);
-        auto pos = positions[payload_num + payload_idx];
-        memcpy(&(col_bufs[idx][payload_num++][pos]),
+        auto payload_pos = payload_offsets[idx][payload_idx];
+        memcpy(&(col_bufs[idx][payload_idx + key_cols_.size()][payload_pos]),
                &(payload[i * payload_size]),
                payload_size);
-        positions[payload_num + payload_idx] += payload_size;
+        payload_offsets[idx][payload_idx++] += payload_size;
       }
     }
   }

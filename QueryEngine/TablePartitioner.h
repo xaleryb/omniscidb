@@ -48,7 +48,9 @@ class TablePartitioner {
       std::vector<std::vector<size_t>>& partition_offsets);
   void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
   uint32_t getHashValue(const int8_t* key, int size, int mask, int shift);
-  void doPartition(int frag_idx, std::vector<std::vector<int8_t*>>& col_bufs);
+  void doPartition(int frag_idx,
+                   std::vector<std::vector<size_t>>& partition_offsets,
+                   std::vector<std::vector<int8_t*>>& col_bufs);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
   std::vector<InputColDescriptor> key_cols_;
