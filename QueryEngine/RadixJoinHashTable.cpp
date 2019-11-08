@@ -52,10 +52,46 @@ RadixJoinHashTable::RadixJoinHashTable(
     , memory_level_(memory_level)
     , layout_(preferred_hash_type)
     , column_cache_(column_cache)
-    , executor_(executor) {
-  auto inner_outer_pairs_ = normalize_column_pairs(
-      qual_bin_oper.get(), *executor->getCatalog(), executor->getTemporaryTables());
+    , executor_(executor)) {
+  inner_outer_pairs_ = normalize_column_pairs(
+      qual_bin_oper.get(), *(executor->getCatalog()), executor->getTemporaryTables());
   CHECK(!inner_outer_pairs_.empty());
+  const auto& query_info = get_inner_query_info(getInnerTableId(), query_infos).info;
+  // create "partitions" for performing hash building
+  for (auto frag : query_info.fragments) {
+    std::vector<InputTableInfo> q;
+    Fragmenter_Namespace::TableInfo ti;
+    ti.chunkKeyPrefix = query_info.chunkKeyPrefix;
+    ti.fragments.emplace_back(frag);
+    InputTableInfo iti;
+    iti.table_id = getInnerTableId();
+    iti.info = ti;
+    q.emplace_back(iti);
+    new_query_info_.push_back(q);
+  }
+  int part_count = 0;
+  // construct hash tables for those "partitions"
+  for (auto frag : query_info.fragments) {
+    const auto total_entries = 2 * frag.getNumTuples();
+    const auto shard_count = memory_level == Data_Namespace::GPU_LEVEL
+                                 ? BaselineJoinHashTable::getShardCountForCondition(
+                                       qual_bin_oper.get(), executor, inner_outer_pairs_)
+                                 : 0;
+    const auto entries_per_device =
+        get_entries_per_device(total_entries, shard_count, device_count, memory_level);
+    part_tables_.emplace(
+        std::make_pair(part_count,
+                       std::shared_ptr<BaselineJoinHashTable>(
+                           new BaselineJoinHashTable(qual_bin_oper,
+                                                     new_query_info_.at(part_count),
+                                                     memory_level,
+                                                     preferred_hash_type,
+                                                     entries_per_device,
+                                                     column_cache,
+                                                     executor,
+                                                     inner_outer_pairs_))));
+    part_count++;
+  }
 }
 
 int64_t RadixJoinHashTable::getJoinHashBuffer(const ExecutorDeviceType device_type,
@@ -151,10 +187,16 @@ size_t RadixJoinHashTable::payloadBufferOff(const int partition_id) const noexce
 
 void RadixJoinHashTable::reify(const int device_count) {
   // Currently all base hash tables share the same layout
-  layout_ = HashType::OneToMany;
+  auto layout = layout_ = HashType::OneToMany;
 
-  // TODO: partitioning
   // TODO: check for paritions cache
   // TODO: check for hash table cache
-  // TODO: build sub-tables
+
+  for (auto pr : part_tables_) {
+    auto table = pr.second.get();
+    if (auto base_line = dynamic_cast<BaselineJoinHashTable*>(table)) {
+      base_line->layout_ = layout;
+      base_line->reify(device_count);
+    }
+  }
 }

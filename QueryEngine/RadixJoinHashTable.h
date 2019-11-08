@@ -22,6 +22,7 @@
 #include "../Chunk/Chunk.h"
 #include "../Shared/ExperimentalTypeUtilities.h"
 #include "Allocators/ThrustAllocator.h"
+#include "BaselineJoinHashTable.h"
 #include "ColumnarResults.h"
 #include "Descriptors/InputDescriptors.h"
 #include "Descriptors/RowSetMemoryOwner.h"
@@ -114,6 +115,7 @@ class RadixJoinHashTable : public JoinHashTableInterface {
   Executor* executor_;
   std::vector<InnerOuter> inner_outer_pairs_;
   std::unordered_map<int, std::shared_ptr<JoinHashTableInterface>> part_tables_;
+  std::vector<std::vector<InputTableInfo>> new_query_info_;
 };
 
 #endif  // QUERYENGINE_RADIXJOINHASHTABLE_H

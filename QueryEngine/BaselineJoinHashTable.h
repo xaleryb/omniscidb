@@ -115,6 +115,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
   size_t getComponentBufferSize() const noexcept;
 
  protected:
+  friend class RadixJoinHashTable;
+
   BaselineJoinHashTable(const std::shared_ptr<Analyzer::BinOper> condition,
                         const std::vector<InputTableInfo>& query_infos,
                         const Data_Namespace::MemoryLevel memory_level,
