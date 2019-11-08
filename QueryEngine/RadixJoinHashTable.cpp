@@ -52,7 +52,7 @@ RadixJoinHashTable::RadixJoinHashTable(
     , memory_level_(memory_level)
     , layout_(preferred_hash_type)
     , column_cache_(column_cache)
-    , executor_(executor)) {
+    , executor_(executor) {
   inner_outer_pairs_ = normalize_column_pairs(
       qual_bin_oper.get(), *(executor->getCatalog()), executor->getTemporaryTables());
   CHECK(!inner_outer_pairs_.empty());
