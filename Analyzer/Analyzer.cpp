@@ -1731,6 +1731,17 @@ std::shared_ptr<Analyzer::Expr> ColumnVar::rewrite_agg_to_var(
       "Internal error: cannot find ColumnVar from having clause in targetlist.");
 }
 
+std::shared_ptr<Analyzer::Expr> ColumnVar::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  auto it = col_map.find(toTuple());
+  if (it != col_map.end())
+    return makeExpr<ColumnVar>(type_info,
+                               std::get<0>(it->second),
+                               std::get<1>(it->second),
+                               std::get<2>(it->second));
+  return deep_copy();
+}
+
 std::shared_ptr<Analyzer::Expr> Var::rewrite_agg_to_var(
     const std::vector<std::shared_ptr<TargetEntry>>& tlist) const {
   int varno = 1;
@@ -1743,6 +1754,19 @@ std::shared_ptr<Analyzer::Expr> Var::rewrite_agg_to_var(
   }
   throw std::runtime_error(
       "Internal error: cannot find Var from having clause in targetlist.");
+}
+
+std::shared_ptr<Analyzer::Expr> Var::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  auto it = col_map.find(toTuple());
+  if (it != col_map.end())
+    return makeExpr<Var>(type_info,
+                         std::get<0>(it->second),
+                         std::get<1>(it->second),
+                         std::get<2>(it->second),
+                         which_row,
+                         varno);
+  return deep_copy();
 }
 
 std::shared_ptr<Analyzer::Expr> InValues::rewrite_with_targetlist(
@@ -1770,6 +1794,15 @@ std::shared_ptr<Analyzer::Expr> InValues::rewrite_agg_to_var(
     new_value_list.push_back(v->rewrite_agg_to_var(tlist));
   }
   return makeExpr<InValues>(arg->rewrite_agg_to_var(tlist), new_value_list);
+}
+
+std::shared_ptr<Analyzer::Expr> InValues::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  std::list<std::shared_ptr<Analyzer::Expr>> new_value_list;
+  for (auto v : value_list) {
+    new_value_list.push_back(v->rewrite_var_to_var(col_map));
+  }
+  return makeExpr<InValues>(arg->rewrite_var_to_var(col_map), new_value_list);
 }
 
 std::shared_ptr<Analyzer::Expr> AggExpr::rewrite_with_targetlist(
@@ -1810,6 +1843,15 @@ std::shared_ptr<Analyzer::Expr> AggExpr::rewrite_agg_to_var(
   }
   throw std::runtime_error(
       "Internal error: cannot find AggExpr from having clause in targetlist.");
+}
+
+std::shared_ptr<Analyzer::Expr> AggExpr::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  return makeExpr<AggExpr>(type_info,
+                           aggtype,
+                           arg ? arg->rewrite_var_to_var(col_map) : nullptr,
+                           is_distinct,
+                           error_rate);
 }
 
 std::shared_ptr<Analyzer::Expr> CaseExpr::rewrite_with_targetlist(
@@ -1938,6 +1980,48 @@ std::shared_ptr<Analyzer::Expr> DatetruncExpr::rewrite_agg_to_var(
     const std::vector<std::shared_ptr<TargetEntry>>& tlist) const {
   return makeExpr<DatetruncExpr>(
       type_info, contains_agg, field_, from_expr_->rewrite_agg_to_var(tlist));
+}
+
+std::shared_ptr<Analyzer::Expr> CaseExpr::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  std::list<std::pair<std::shared_ptr<Analyzer::Expr>, std::shared_ptr<Analyzer::Expr>>>
+      epair_list;
+  for (auto p : expr_pair_list) {
+    epair_list.emplace_back(p.first->rewrite_var_to_var(col_map),
+                            p.second->rewrite_var_to_var(col_map));
+  }
+  return makeExpr<CaseExpr>(type_info,
+                            contains_agg,
+                            epair_list,
+                            else_expr ? else_expr->rewrite_var_to_var(col_map) : nullptr);
+}
+
+std::shared_ptr<Analyzer::Expr> ExtractExpr::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  return makeExpr<ExtractExpr>(
+      type_info, contains_agg, field_, from_expr_->rewrite_var_to_var(col_map));
+}
+
+std::shared_ptr<Analyzer::Expr> DateaddExpr::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  return makeExpr<DateaddExpr>(type_info,
+                               field_,
+                               number_->rewrite_var_to_var(col_map),
+                               datetime_->rewrite_var_to_var(col_map));
+}
+
+std::shared_ptr<Analyzer::Expr> DatediffExpr::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  return makeExpr<DatediffExpr>(type_info,
+                                field_,
+                                start_->rewrite_var_to_var(col_map),
+                                end_->rewrite_var_to_var(col_map));
+}
+
+std::shared_ptr<Analyzer::Expr> DatetruncExpr::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  return makeExpr<DatetruncExpr>(
+      type_info, contains_agg, field_, from_expr_->rewrite_var_to_var(col_map));
 }
 
 bool ColumnVar::operator==(const Expr& rhs) const {
@@ -2837,33 +2921,42 @@ void DatetruncExpr::collect_rte_idx(std::set<int>& rte_idx_set) const {
   from_expr_->collect_rte_idx(rte_idx_set);
 }
 
-void CaseExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
+void CaseExpr::collect_column_var(
+    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
+    bool include_agg) const {
   for (auto p : expr_pair_list) {
-    p.first->visit_column_var(f, include_agg);
-    p.second->visit_column_var(f, include_agg);
+    p.first->collect_column_var(colvar_set, include_agg);
+    p.second->collect_column_var(colvar_set, include_agg);
   }
   if (else_expr != nullptr) {
-    else_expr->visit_column_var(f, include_agg);
+    else_expr->collect_column_var(colvar_set, include_agg);
   }
 }
 
-void ExtractExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
-  from_expr_->visit_column_var(f, include_agg);
+void ExtractExpr::collect_column_var(
+    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
+    bool include_agg) const {
+  from_expr_->collect_column_var(colvar_set, include_agg);
 }
 
-void DateaddExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
-  number_->visit_column_var(f, include_agg);
-  datetime_->visit_column_var(f, include_agg);
+void DateaddExpr::collect_column_var(
+    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
+    bool include_agg) const {
+  number_->collect_column_var(colvar_set, include_agg);
+  datetime_->collect_column_var(colvar_set, include_agg);
 }
 
-void DatediffExpr::visit_column_var(std::function<void(ColumnVar*)> f, bool include_agg) {
-  start_->visit_column_var(f, include_agg);
-  end_->visit_column_var(f, include_agg);
+void DatediffExpr::collect_column_var(
+    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
+    bool include_agg) const {
+  start_->collect_column_var(colvar_set, include_agg);
+  end_->collect_column_var(colvar_set, include_agg);
 }
 
-void DatetruncExpr::visit_column_var(std::function<void(ColumnVar*)> f,
-                                     bool include_agg) {
-  from_expr_->visit_column_var(f, include_agg);
+void DatetruncExpr::collect_column_var(
+    std::set<const ColumnVar*, bool (*)(const ColumnVar*, const ColumnVar*)>& colvar_set,
+    bool include_agg) const {
+  from_expr_->collect_column_var(colvar_set, include_agg);
 }
 
 void CaseExpr::check_group_by(

@@ -70,55 +70,44 @@ std::list<std::shared_ptr<const InputColDescriptor>> replaceInputColDescriptors(
   return res;
 }
 
-std::shared_ptr<Analyzer::Expr> replaceInputInExpr(Analyzer::Expr* expr,
-                                                   const InputTableMaps& input_maps) {
+std::shared_ptr<Analyzer::Expr> replaceInputInExpr(
+    Analyzer::Expr* expr,
+    const Analyzer::ColumnVarMap& col_map) {
   if (!expr)
     return nullptr;
-
-  auto res = expr->deep_copy();
-  res->visit_column_var(
-      [&input_maps](Analyzer::ColumnVar* var) {
-        auto it = input_maps.find({var->get_table_id(), var->get_rte_idx()});
-        if (it != input_maps.end()) {
-          CHECK(it->second.col_map.count(var->get_column_id()));
-          var->replace_with_col(it->second.new_table_id,
-                                it->second.col_map.at(var->get_column_id()));
-        }
-      },
-      true);
-  return res;
+  return expr->rewrite_var_to_var(col_map);
 }
 
 std::list<std::shared_ptr<Analyzer::Expr>> replaceInputInExprList(
     const std::list<std::shared_ptr<Analyzer::Expr>>& exprs,
-    const InputTableMaps& input_maps) {
+    const Analyzer::ColumnVarMap& col_map) {
   std::list<std::shared_ptr<Analyzer::Expr>> res;
   for (auto& expr : exprs)
-    res.push_back(replaceInputInExpr(expr.get(), input_maps));
+    res.push_back(replaceInputInExpr(expr.get(), col_map));
   return res;
 }
 
 JoinCondition replaceInputInJoinCondition(const JoinCondition& cond,
-                                          const InputTableMaps& input_maps) {
-  return {replaceInputInExprList(cond.quals, input_maps), cond.type};
+                                          const Analyzer::ColumnVarMap& col_map) {
+  return {replaceInputInExprList(cond.quals, col_map), cond.type};
 }
 
 JoinQualsPerNestingLevel replaceInputInJoinConditions(
     const JoinQualsPerNestingLevel& join_quals,
-    const InputTableMaps& input_maps) {
+    const Analyzer::ColumnVarMap& col_map) {
   JoinQualsPerNestingLevel res;
   for (auto& cond : join_quals)
-    res.push_back(replaceInputInJoinCondition(cond, input_maps));
+    res.push_back(replaceInputInJoinCondition(cond, col_map));
   return res;
 }
 
 std::vector<Analyzer::Expr*> replaceInputInTargetExprs(
     const std::vector<Analyzer::Expr*>& target_exprs,
-    const InputTableMaps& input_maps,
+    const Analyzer::ColumnVarMap& col_map,
     Analyzer::ExpressionPtrVector& target_exprs_owned) {
   std::vector<Analyzer::Expr*> res;
   for (auto& target_expr : target_exprs) {
-    auto new_target_expr = replaceInputInExpr(target_expr, input_maps);
+    auto new_target_expr = replaceInputInExpr(target_expr, col_map);
     target_exprs_owned.push_back(new_target_expr);
     res.push_back(new_target_expr.get());
   }
@@ -127,9 +116,9 @@ std::vector<Analyzer::Expr*> replaceInputInTargetExprs(
 
 std::shared_ptr<Analyzer::Estimator> replaceInputInEstimator(
     std::shared_ptr<Analyzer::Estimator> estimator,
-    const InputTableMaps& input_maps) {
+    const Analyzer::ColumnVarMap& col_map) {
   if (estimator) {
-    auto arg = replaceInputInExprList(estimator->getArgument(), input_maps);
+    auto arg = replaceInputInExprList(estimator->getArgument(), col_map);
     if (dynamic_cast<Analyzer::NDVEstimator*>(estimator.get())) {
       return std::make_shared<Analyzer::NDVEstimator>(arg);
     } else {
@@ -212,15 +201,26 @@ RelAlgExecutionUnit replaceInputInUnit(
   std::cerr << "===================================================" << std::endl;
 #endif
 
+  Analyzer::ColumnVarMap col_map;
+  for (auto& pr : input_maps) {
+    for (auto& cols : pr.second.col_map) {
+      auto orig_tuple =
+          std::make_tuple(pr.second.table_id, cols.first, pr.second.scan_idx);
+      auto new_tuple =
+          std::make_tuple(pr.second.new_table_id, cols.second, pr.second.scan_idx);
+      col_map[orig_tuple] = new_tuple;
+    }
+  }
+
   RelAlgExecutionUnit res{
       replaceInputDescriptors(ra_exe_unit.input_descs, input_maps),
       replaceInputColDescriptors(ra_exe_unit.input_col_descs, input_maps),
-      replaceInputInExprList(ra_exe_unit.simple_quals, input_maps),
-      replaceInputInExprList(ra_exe_unit.quals, input_maps),
-      replaceInputInJoinConditions(ra_exe_unit.join_quals, input_maps),
-      replaceInputInExprList(ra_exe_unit.groupby_exprs, input_maps),
-      replaceInputInTargetExprs(ra_exe_unit.target_exprs, input_maps, target_exprs_owned),
-      replaceInputInEstimator(ra_exe_unit.estimator, input_maps),
+      replaceInputInExprList(ra_exe_unit.simple_quals, col_map),
+      replaceInputInExprList(ra_exe_unit.quals, col_map),
+      replaceInputInJoinConditions(ra_exe_unit.join_quals, col_map),
+      replaceInputInExprList(ra_exe_unit.groupby_exprs, col_map),
+      replaceInputInTargetExprs(ra_exe_unit.target_exprs, col_map, target_exprs_owned),
+      replaceInputInEstimator(ra_exe_unit.estimator, col_map),
       ra_exe_unit.sort_info,
       ra_exe_unit.scan_limit,
       ra_exe_unit.query_features,
