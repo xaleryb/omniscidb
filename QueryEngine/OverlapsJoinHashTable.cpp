@@ -143,9 +143,9 @@ std::shared_ptr<OverlapsJoinHashTable> OverlapsJoinHashTable::getSyntheticInstan
       op, query_infos, memory_level, device_count, column_cache, executor);
 }
 
-void OverlapsJoinHashTable::reifyWithLayout(
-    const int device_count,
-    const JoinHashTableInterface::HashType layout) {
+void OverlapsJoinHashTable::reifyWithLayout(const int device_count,
+                                            const JoinHashTableInterface::HashType layout,
+                                            int element_count) {
   CHECK(layout == JoinHashTableInterface::HashType::OneToMany);
   layout_ = layout;
   const auto& query_info = get_inner_query_info(getInnerTableId(), query_infos_).info;

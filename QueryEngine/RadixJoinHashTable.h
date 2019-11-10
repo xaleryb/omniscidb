@@ -59,6 +59,8 @@ class RadixJoinHashTable : public JoinHashTableInterface {
       ColumnCacheMap& column_cache,
       Executor* executor);
 
+  size_t shardCount() const;
+
   int64_t getJoinHashBuffer(const ExecutorDeviceType device_type,
                             const int device_id,
                             const int partition_id) const noexcept override;
@@ -116,6 +118,7 @@ class RadixJoinHashTable : public JoinHashTableInterface {
   std::vector<InnerOuter> inner_outer_pairs_;
   std::unordered_map<int, std::shared_ptr<JoinHashTableInterface>> part_tables_;
   std::vector<std::vector<InputTableInfo>> new_query_info_;
+  size_t unified_size_ = 0;
 };
 
 #endif  // QUERYENGINE_RADIXJOINHASHTABLE_H

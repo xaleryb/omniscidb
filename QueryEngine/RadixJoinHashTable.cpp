@@ -90,8 +90,25 @@ RadixJoinHashTable::RadixJoinHashTable(
                                                      column_cache,
                                                      executor,
                                                      inner_outer_pairs_))));
+    // At the moment we need to unify hash tables sizes
+    // to get single one codegen for them
+    auto table = part_tables_[part_count].get();
+    if (const auto base_line = dynamic_cast<BaselineJoinHashTable*>(table)) {
+      std::vector<BaselineJoinHashTable::ColumnsForDevice> columns_per_device;
+      auto shard_count = base_line->getColumns(device_count, columns_per_device);
+      unified_size_ =
+          std::max(base_line->getOneToManyElements(device_count, shard_count, columns_per_device), unified_size_);
+    }
     part_count++;
   }
+}
+
+size_t RadixJoinHashTable::shardCount() const {
+  if (memory_level_ != Data_Namespace::GPU_LEVEL) {
+    return 0;
+  }
+  return BaselineJoinHashTable::getShardCountForCondition(
+      qual_bin_oper_.get(), executor_, inner_outer_pairs_);
 }
 
 int64_t RadixJoinHashTable::getJoinHashBuffer(const ExecutorDeviceType device_type,
@@ -196,7 +213,7 @@ void RadixJoinHashTable::reify(const int device_count) {
     auto table = pr.second.get();
     if (auto base_line = dynamic_cast<BaselineJoinHashTable*>(table)) {
       base_line->layout_ = layout;
-      base_line->reify(device_count);
+      base_line->reify(device_count, unified_size_);
     }
   }
 }

@@ -335,7 +335,7 @@ BaselineJoinHashTable::CompositeKeyInfo BaselineJoinHashTable::getCompositeKeyIn
   return {sd_inner_proxy_per_key, sd_outer_proxy_per_key, cache_key_chunks};
 }
 
-void BaselineJoinHashTable::reify(const int device_count) {
+void BaselineJoinHashTable::reify(const int device_count, int element_count) {
   CHECK_LT(0, device_count);
 #ifdef HAVE_CUDA
   gpu_hash_table_buff_.resize(device_count);
@@ -346,7 +346,8 @@ void BaselineJoinHashTable::reify(const int device_count) {
 
   if (condition_->is_overlaps_oper()) {
     try {
-      reifyWithLayout(device_count, JoinHashTableInterface::HashType::OneToMany);
+      reifyWithLayout(
+          device_count, JoinHashTableInterface::HashType::OneToMany, element_count);
       return;
     } catch (const std::exception& e) {
       VLOG(1) << "Caught exception while building overlaps baseline hash table: "
@@ -366,33 +367,23 @@ void BaselineJoinHashTable::reify(const int device_count) {
   }
 }
 
-void BaselineJoinHashTable::reifyWithLayout(
-    const int device_count,
-    const JoinHashTableInterface::HashType layout) {
+void BaselineJoinHashTable::reifyWithLayout(const int device_count,
+                                            const JoinHashTableInterface::HashType layout,
+                                            int element_count) {
   layout_ = layout;
   const auto& query_info = get_inner_query_info(getInnerTableId(), query_infos_).info;
   if (query_info.fragments.empty()) {
     return;
   }
   std::vector<BaselineJoinHashTable::ColumnsForDevice> columns_per_device;
-  const auto shard_count = shardCount();
-  for (int device_id = 0; device_id < device_count; ++device_id) {
-    const auto fragments =
-        shard_count
-            ? only_shards_for_device(query_info.fragments, device_id, device_count)
-            : query_info.fragments;
-    const auto columns_for_device = fetchColumnsForDevice(fragments, device_id);
-    columns_per_device.push_back(columns_for_device);
-  }
+  const auto shard_count = getColumns(device_count, columns_per_device);
   if (layout == JoinHashTableInterface::HashType::OneToMany) {
     CHECK(!columns_per_device.front().join_columns.empty());
     emitted_keys_count_ = columns_per_device.front().join_columns.front().num_elems;
-    size_t tuple_count;
-    std::tie(tuple_count, std::ignore) = approximateTupleCount(columns_per_device);
-    const auto entry_count = 2 * std::max(tuple_count, size_t(1));
-
-    entry_count_ =
-        get_entries_per_device(entry_count, shard_count, device_count, memory_level_);
+    if (element_count == -1) {
+      entry_count_ = getOneToManyElements(device_count, shard_count, columns_per_device);
+    } else
+      entry_count_ = element_count;
   }
   std::vector<std::future<void>> init_threads;
   for (int device_id = 0; device_id < device_count; ++device_id) {
@@ -415,6 +406,35 @@ void BaselineJoinHashTable::reifyWithLayout(
   }
 }
 
+size_t BaselineJoinHashTable::getColumns(
+    const int device_count,
+    std::vector<BaselineJoinHashTable::ColumnsForDevice>& columns_per_device) {
+  const auto shard_count = shardCount();
+  const auto& query_info = get_inner_query_info(getInnerTableId(), query_infos_).info;
+  if (query_info.fragments.empty()) {
+    return shard_count;
+  }
+  for (int device_id = 0; device_id < device_count; ++device_id) {
+    const auto fragments =
+        shard_count
+            ? only_shards_for_device(query_info.fragments, device_id, device_count)
+            : query_info.fragments;
+    const auto columns_for_device = fetchColumnsForDevice(fragments, device_id);
+    columns_per_device.push_back(columns_for_device);
+  }
+  return shard_count;
+}
+
+size_t BaselineJoinHashTable::getOneToManyElements(
+    const int device_count,
+    const int shard_count,
+    std::vector<BaselineJoinHashTable::ColumnsForDevice>& columns_per_device) const {
+  size_t tuple_count;
+  std::tie(tuple_count, std::ignore) = approximateTupleCount(columns_per_device);
+  const auto entry_count = 2 * std::max(tuple_count, size_t(1));
+
+  return get_entries_per_device(entry_count, shard_count, device_count, memory_level_);
+}
 std::pair<size_t, size_t> BaselineJoinHashTable::approximateTupleCount(
     const std::vector<ColumnsForDevice>& columns_per_device) const {
   const auto effective_memory_level = getEffectiveMemoryLevel(inner_outer_pairs_);
