@@ -67,9 +67,8 @@ RadixJoinHashTable::RadixJoinHashTable(
     iti.table_id = getInnerTableId();
     iti.info = ti;
     q.emplace_back(iti);
-    new_query_info_.push_back(q);
+    new_query_info_.emplace(std::make_pair(frag.fragmentId, q));
   }
-  int part_count = 0;
   // construct hash tables for those "partitions"
   for (auto frag : query_info.fragments) {
     const auto total_entries = 2 * frag.getNumTuples();
@@ -80,26 +79,27 @@ RadixJoinHashTable::RadixJoinHashTable(
     const auto entries_per_device =
         get_entries_per_device(total_entries, shard_count, device_count, memory_level);
     part_tables_.emplace(
-        std::make_pair(part_count,
-                       std::shared_ptr<BaselineJoinHashTable>(
-                           new BaselineJoinHashTable(qual_bin_oper,
-                                                     new_query_info_.at(part_count),
-                                                     memory_level,
-                                                     preferred_hash_type,
-                                                     entries_per_device,
-                                                     column_cache,
-                                                     executor,
-                                                     inner_outer_pairs_))));
+        std::make_pair(frag.fragmentId,
+                       std::shared_ptr<BaselineJoinHashTable>(new BaselineJoinHashTable(
+                           qual_bin_oper,
+                           new_query_info_.at(frag.fragmentId),
+                           memory_level,
+                           // Currently all base hash tables share the same layout
+                           HashType::OneToMany /*preferred_hash_type*/,
+                           entries_per_device,
+                           column_cache,
+                           executor,
+                           inner_outer_pairs_))));
     // At the moment we need to unify hash tables sizes
     // to get single one codegen for them
-    auto table = part_tables_[part_count].get();
+    auto table = part_tables_[frag.fragmentId].get();
     if (const auto base_line = dynamic_cast<BaselineJoinHashTable*>(table)) {
       std::vector<BaselineJoinHashTable::ColumnsForDevice> columns_per_device;
       auto shard_count = base_line->getColumns(device_count, columns_per_device);
-      unified_size_ =
-          std::max(base_line->getOneToManyElements(device_count, shard_count, columns_per_device), unified_size_);
+      unified_size_ = std::max(
+          base_line->getOneToManyElements(device_count, shard_count, columns_per_device),
+          unified_size_);
     }
-    part_count++;
   }
 }
 
@@ -203,16 +203,12 @@ size_t RadixJoinHashTable::payloadBufferOff(const int partition_id) const noexce
 }
 
 void RadixJoinHashTable::reify(const int device_count) {
-  // Currently all base hash tables share the same layout
-  auto layout = layout_ = HashType::OneToMany;
-
   // TODO: check for paritions cache
   // TODO: check for hash table cache
 
   for (auto pr : part_tables_) {
     auto table = pr.second.get();
     if (auto base_line = dynamic_cast<BaselineJoinHashTable*>(table)) {
-      base_line->layout_ = layout;
       base_line->reify(device_count, unified_size_);
     }
   }

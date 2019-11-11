@@ -117,7 +117,7 @@ class RadixJoinHashTable : public JoinHashTableInterface {
   Executor* executor_;
   std::vector<InnerOuter> inner_outer_pairs_;
   std::unordered_map<int, std::shared_ptr<JoinHashTableInterface>> part_tables_;
-  std::vector<std::vector<InputTableInfo>> new_query_info_;
+  std::unordered_map<int, std::vector<InputTableInfo>> new_query_info_;
   size_t unified_size_ = 0;
 };
 
