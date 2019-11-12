@@ -30,9 +30,14 @@ class Executor;
 
 class TemporaryTable {
  public:
-  TemporaryTable(const ResultSetPtr& rs) { results_.push_back(rs); }
-  TemporaryTable(const std::vector<ResultSetPtr>& results) : results_(results) {}
-  TemporaryTable(std::vector<ResultSetPtr>&& results) : results_(results) {}
+  TemporaryTable(const ResultSetPtr& rs, bool partitioned = false)
+      : partitioned_(partitioned) {
+    results_.push_back(rs);
+  }
+  TemporaryTable(const std::vector<ResultSetPtr>& results, bool partitioned = false)
+      : results_(results), partitioned_(partitioned) {}
+  TemporaryTable(std::vector<ResultSetPtr>&& results, bool partitioned = false)
+      : results_(results), partitioned_(partitioned) {}
 
   TemporaryTable(const TemporaryTable& other) = default;
   TemporaryTable(TemporaryTable&& other) = default;
@@ -48,10 +53,13 @@ class TemporaryTable {
   size_t rowCount() const;
   size_t colCount() const;
 
+  bool isPartitioned() const { return partitioned_; }
+
   SQLTypeInfo getColType(const size_t col_idx) const;
 
  private:
   std::vector<ResultSetPtr> results_;
+  bool partitioned_;
 };
 
 // using TemporaryTables = std::unordered_map<int, const ResultSetPtr&>;

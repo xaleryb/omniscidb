@@ -172,7 +172,7 @@ TemporaryTable TablePartitioner::runPartitioning() {
   }
 #endif
 
-  return TemporaryTable(partitions);
+  return TemporaryTable(partitions, true);
 }
 
 size_t TablePartitioner::getPartitionsCount() const {

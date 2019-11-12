@@ -1819,6 +1819,18 @@ std::vector<size_t> Executor::getTableFragmentIndices(
     const std::unordered_map<int, const Analyzer::BinOper*>&
         inner_table_id_to_join_condition) {
   const int table_id = ra_exe_unit.input_descs[table_idx].getTableId();
+
+  if (ra_exe_unit.input_descs[table_idx].getSourceType() == InputSourceType::RESULT) {
+    auto it = temporary_tables_->find(table_id);
+    CHECK(it != temporary_tables_->end());
+    if (it->second.isPartitioned()) {
+      if (it->second.getResultSet(outer_frag_idx))
+        return {};
+      else
+        return {outer_frag_idx};
+    }
+  }
+
   auto table_frags_it = selected_tables_fragments.find(table_id);
   CHECK(table_frags_it != selected_tables_fragments.end());
   const auto& outer_input_desc = ra_exe_unit.input_descs[0];
