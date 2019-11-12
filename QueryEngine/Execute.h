@@ -742,6 +742,7 @@ class Executor {
                                  const int64_t limit,
                                  const uint32_t start_rowid,
                                  const uint32_t num_tables,
+                                 const int frag_id,
                                  RenderInfo* render_info);
   int32_t executePlanWithoutGroupBy(
       const RelAlgExecutionUnit& ra_exe_unit,
@@ -758,7 +759,7 @@ class Executor {
       const int device_id,
       const uint32_t start_rowid,
       const uint32_t num_tables,
-      const uint32_t frag_id,
+      const int frag_id,
       RenderInfo* render_info);
 
  public:  // Temporary, ask saman about this

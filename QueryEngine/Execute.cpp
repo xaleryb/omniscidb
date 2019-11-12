@@ -1820,14 +1820,15 @@ std::vector<size_t> Executor::getTableFragmentIndices(
         inner_table_id_to_join_condition) {
   const int table_id = ra_exe_unit.input_descs[table_idx].getTableId();
 
+  // For partitioned tables get only partition with the same id as the outer one has.
   if (ra_exe_unit.input_descs[table_idx].getSourceType() == InputSourceType::RESULT) {
     auto it = temporary_tables_->find(table_id);
     CHECK(it != temporary_tables_->end());
     if (it->second.isPartitioned()) {
       if (it->second.getResultSet(outer_frag_idx))
-        return {};
-      else
         return {outer_frag_idx};
+      else
+        return {};
     }
   }
 
@@ -2279,7 +2280,7 @@ int32_t Executor::executePlanWithoutGroupBy(
     const int device_id,
     const uint32_t start_rowid,
     const uint32_t num_tables,
-    const uint32_t frag_id,
+    const int frag_id,
     RenderInfo* render_info) {
   INJECT_TIMER(executePlanWithoutGroupBy);
   CHECK(!results);
@@ -2423,6 +2424,7 @@ int32_t Executor::executePlanWithGroupBy(
     const int64_t scan_limit,
     const uint32_t start_rowid,
     const uint32_t num_tables,
+    const int frag_id,
     RenderInfo* render_info) {
   INJECT_TIMER(executePlanWithGroupBy);
   CHECK(!results);
@@ -2436,7 +2438,7 @@ int32_t Executor::executePlanWithGroupBy(
   // 3. Optimize runtime.
   auto hoist_buf = serializeLiterals(compilation_result.literal_values, device_id);
   int32_t error_code = device_type == ExecutorDeviceType::GPU ? 0 : start_rowid;
-  const auto join_hash_table_ptrs = getJoinHashTablePtrs(device_type, device_id);
+  const auto join_hash_table_ptrs = getJoinHashTablePtrs(device_type, device_id, frag_id);
   if (g_enable_dynamic_watchdog && interrupted_) {
     return ERR_INTERRUPTED;
   }
@@ -2532,7 +2534,8 @@ std::vector<int64_t> Executor::getJoinHashTablePtrs(const ExecutorDeviceType dev
     bool isPart = hash_table->isPartitioned();
     table_ptrs.push_back(hash_table->getJoinHashBuffer(
         device_type,
-        device_type == ExecutorDeviceType::GPU ? device_id : 0, isPart ? frag_id : -1));
+        device_type == ExecutorDeviceType::GPU ? device_id : 0,
+        isPart ? frag_id : -1));
   }
   return table_ptrs;
 }
@@ -2914,7 +2917,7 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
     return {nullptr, "Overlaps hash join disabled, attempting to fall back to loop join"};
   }
   try {
-    if (true || g_force_radix_join) {
+    if (g_force_radix_join) {
       join_hash_table = RadixJoinHashTable::getInstance(qual_bin_oper,
                                                         query_infos,
                                                         memory_level,
