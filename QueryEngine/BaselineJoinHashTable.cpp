@@ -37,7 +37,7 @@ size_t dumpBufferContent(T* buf,
   for (size_t i = 0; i < limit; ++i) {
     auto col = i % 10;
     if (col == 0) {
-      std::cerr << std::setw(4) << std::setfill('0') << std::left << i << ":";
+      std::cerr << std::setw(4) << std::setfill('0') << std::right << i << ":";
     } else {
       std::cerr << " |";
     }
