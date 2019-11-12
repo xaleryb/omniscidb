@@ -212,7 +212,7 @@ Fragmenter_Namespace::TableInfo synthesize_table_info(const TemporaryTable& tabl
   for (int frag_id = 0; frag_id < table.getFragCount(); ++frag_id) {
     result.emplace_back();
     auto& fragment = result.back();
-    fragment.fragmentId = 0;
+    fragment.fragmentId = frag_id;
     fragment.deviceIds.resize(3);
     fragment.resultSet = table.getResultSet(frag_id).get();
     fragment.resultSetMutex.reset(new std::mutex());

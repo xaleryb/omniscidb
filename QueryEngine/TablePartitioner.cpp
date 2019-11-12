@@ -123,6 +123,11 @@ TemporaryTable TablePartitioner::runPartitioning() {
   std::vector<std::vector<int8_t*>> col_bufs;
   col_bufs.resize(partition_sizes_.size());
   for (size_t frag_id = 0; frag_id < partition_sizes_.size(); ++frag_id) {
+    if (!partition_sizes_[frag_id]) {
+      partitions.push_back(nullptr);
+      continue;
+    }
+
     QueryMemoryDescriptor mem_desc(QueryDescriptionType::Projection,
                                    executor_,
                                    slot_ctx,

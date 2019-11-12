@@ -18,6 +18,16 @@
 #include "Execute.h"
 #include "JoinHashTable.h"
 
+namespace {
+
+void dumpRange(int first, int last, const std::string& prefix) {
+  std::cerr << prefix << first;
+  if (first != last)
+    std::cerr << "-" << last;
+}
+
+}  // namespace
+
 std::shared_ptr<RadixJoinHashTable> RadixJoinHashTable::getInstance(
     const std::shared_ptr<Analyzer::BinOper> qual_bin_oper,
     const std::vector<InputTableInfo>& query_infos,
@@ -50,7 +60,7 @@ RadixJoinHashTable::RadixJoinHashTable(
     : qual_bin_oper_(qual_bin_oper)
     , query_infos_(query_infos)
     , memory_level_(memory_level)
-    , layout_(preferred_hash_type)
+    , layout_(HashType::OneToMany /*preferred_hash_type*/)
     , column_cache_(column_cache)
     , executor_(executor) {
   inner_outer_pairs_ = normalize_column_pairs(
@@ -212,4 +222,48 @@ void RadixJoinHashTable::reify(const int device_count) {
       base_line->reify(device_count, unified_size_);
     }
   }
+}
+
+size_t RadixJoinHashTable::dump(size_t entry_limit) const {
+  std::set<int> ids;
+  for (auto& pr : part_tables_)
+    ids.insert(pr.first);
+
+  size_t res = 0;
+  for (auto it = ids.begin(); it != ids.end(); ++it) {
+    if (res >= entry_limit) {
+      std::cerr << "Partitions out of rows limit:";
+      int first = *(it++);
+      int last = first;
+      while (it != ids.end()) {
+        if (*it == last + 1)
+          ++last;
+        else {
+          dumpRange(first, last, " ");
+          first = *it;
+          last = first;
+        }
+      }
+      dumpRange(first, last, " ");
+      std::cerr << std::endl;
+      break;
+    }
+
+    res += dumpPartition(*it, entry_limit - res);
+  }
+
+  return res;
+}
+
+size_t RadixJoinHashTable::dumpPartition(size_t partition_id, size_t entry_limit) const {
+  auto it = part_tables_.find(partition_id);
+  if (it == part_tables_.end()) {
+    std::cerr << "Partition #" << partition_id << " doesn't exist" << std::endl;
+    return 0;
+  }
+
+  std::cerr << "========== Dump for radix join table part #" << partition_id
+            << " ==========" << std::endl;
+  auto table = part_tables_.at(partition_id);
+  return table->dump(entry_limit);
 }

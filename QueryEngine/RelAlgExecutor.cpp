@@ -1981,7 +1981,7 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
         ra_exe_unit.scan_limit = 0;
         ra_exe_unit.use_bump_allocator = true;
       } else if (!eo.just_explain) {
-        const auto filter_count_all = getFilteredCountAll(work_unit, true, co, eo);
+        const auto filter_count_all = getFilteredCountAll(ra_exe_unit_part, true, co, eo);
         if (filter_count_all >= 0) {
           ra_exe_unit.scan_limit = std::max(filter_count_all, ssize_t(1));
         }
@@ -2037,7 +2037,7 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
   } catch (const CardinalityEstimationRequired&) {
     const auto estimated_groups_buffer_entry_guess =
         2 * std::min(groups_approx_upper_bound(table_infos),
-                     getNDVEstimation(work_unit, is_agg, co, eo));
+                     getNDVEstimation(ra_exe_unit_part, is_agg, co, eo));
     CHECK_GT(estimated_groups_buffer_entry_guess, size_t(0));
     result = execute_and_handle_errors(estimated_groups_buffer_entry_guess, true);
   }
@@ -2045,7 +2045,7 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
   result.setQueueTime(queue_time_ms);
   if (render_info) {
     build_render_targets(
-        *render_info, work_unit.exe_unit.target_exprs, target_exprs_owned_, targets_meta);
+        *render_info, ra_exe_unit_part.target_exprs, target_exprs_owned_, targets_meta);
     if (render_info->isPotentialInSituRender()) {
       // return an empty result (with the same queue time, and zero render time)
       return {
@@ -2056,7 +2056,7 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
   return result;
 }
 
-ssize_t RelAlgExecutor::getFilteredCountAll(const WorkUnit& work_unit,
+ssize_t RelAlgExecutor::getFilteredCountAll(const RelAlgExecutionUnit& ra_exe_unit,
                                             const bool is_agg,
                                             const CompilationOptions& co,
                                             const ExecutionOptions& eo) {
@@ -2066,24 +2066,22 @@ ssize_t RelAlgExecutor::getFilteredCountAll(const WorkUnit& work_unit,
                                   nullptr,
                                   false,
                                   nullptr);
-  const auto count_all_exe_unit =
-      create_count_all_execution_unit(work_unit.exe_unit, count);
+  const auto count_all_exe_unit = create_count_all_execution_unit(ra_exe_unit, count);
   size_t one{1};
   ResultSetPtr count_all_result;
   try {
     ColumnCacheMap column_cache;
-    count_all_result =
-        executor_->executeWorkUnit(one,
-                                   is_agg,
-                                   get_table_infos(work_unit.exe_unit, executor_),
-                                   count_all_exe_unit,
-                                   co,
-                                   eo,
-                                   cat_,
-                                   executor_->row_set_mem_owner_,
-                                   nullptr,
-                                   false,
-                                   column_cache);
+    count_all_result = executor_->executeWorkUnit(one,
+                                                  is_agg,
+                                                  get_table_infos(ra_exe_unit, executor_),
+                                                  count_all_exe_unit,
+                                                  co,
+                                                  eo,
+                                                  cat_,
+                                                  executor_->row_set_mem_owner_,
+                                                  nullptr,
+                                                  false,
+                                                  column_cache);
   } catch (const std::exception& e) {
     LOG(WARNING) << "Failed to run pre-flight filtered count with error " << e.what();
     return -1;

@@ -33,18 +33,18 @@ size_t ResultSet::getNDVEstimator() const {
   return -static_cast<double>(total_bits) * log(ratio);
 }
 
-size_t RelAlgExecutor::getNDVEstimation(const WorkUnit& work_unit,
+size_t RelAlgExecutor::getNDVEstimation(const RelAlgExecutionUnit& ra_exe_unit,
                                         const bool is_agg,
                                         const CompilationOptions& co,
                                         const ExecutionOptions& eo) {
-  const auto estimator_exe_unit = create_ndv_execution_unit(work_unit.exe_unit);
+  const auto estimator_exe_unit = create_ndv_execution_unit(ra_exe_unit);
   size_t one{1};
   ColumnCacheMap column_cache;
   try {
     const auto estimator_result =
         executor_->executeWorkUnit(one,
                                    is_agg,
-                                   get_table_infos(work_unit.exe_unit, executor_),
+                                   get_table_infos(ra_exe_unit, executor_),
                                    estimator_exe_unit,
                                    co,
                                    eo,

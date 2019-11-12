@@ -225,7 +225,6 @@ inline const ColumnarResults* columnarize_result(
     const ResultSetPtr& result,
     const int frag_id) {
   INJECT_TIMER(columnarize_result);
-  CHECK_EQ(0, frag_id);
   return rows_to_columnar_results(row_set_mem_owner, result, result->colCount());
 }
 

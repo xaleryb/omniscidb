@@ -24,6 +24,70 @@
 
 #include <future>
 
+namespace {
+
+template <typename T>
+size_t dumpBufferContent(T* buf,
+                         size_t entry_cnt,
+                         size_t elem_cnt,
+                         size_t payload_elem_cnt,
+                         size_t entry_limit) {
+  size_t limit = std::min(entry_cnt, entry_limit);
+  T* cur_elem = buf;
+  for (size_t i = 0; i < limit; ++i) {
+    auto col = i % 10;
+    if (col == 0) {
+      std::cerr << std::setw(4) << std::setfill('0') << std::left << i << ":";
+    } else {
+      std::cerr << " |";
+    }
+    for (size_t j = 0; j < elem_cnt; ++j) {
+      std::cerr << " " << *(cur_elem++);
+    }
+    if (payload_elem_cnt) {
+      std::cerr << " ->";
+      for (size_t j = 0; j < payload_elem_cnt; ++j) {
+        std::cerr << " " << *(cur_elem++);
+      }
+    }
+    if (col == 9)
+      std::cerr << std::endl;
+  }
+  if (limit < entry_cnt) {
+    std::cerr << " ... (" << (entry_cnt - limit)
+              << " more entries are out of output limit)" << std::endl;
+  } else if (limit % 10) {
+    std::cerr << std::endl;
+  }
+  return limit;
+}
+
+size_t dumpBufferContent(int8_t* buf,
+                         size_t entry_cnt,
+                         size_t elem_width,
+                         size_t elem_cnt,
+                         size_t payload_elem_cnt,
+                         size_t entry_limit) {
+  if (elem_width == 4) {
+    return dumpBufferContent(reinterpret_cast<int32_t*>(buf),
+                             entry_cnt,
+                             elem_cnt,
+                             payload_elem_cnt,
+                             entry_limit);
+  } else if (elem_width == 8) {
+    return dumpBufferContent(reinterpret_cast<int32_t*>(buf),
+                             entry_cnt,
+                             elem_cnt,
+                             payload_elem_cnt,
+                             entry_limit);
+  } else {
+    CHECK(false) << "Unsupported hash entry component width";
+  }
+  return 0;
+}
+
+}  // namespace
+
 std::vector<std::pair<BaselineJoinHashTable::HashTableCacheKey,
                       BaselineJoinHashTable::HashTableCacheValue>>
     BaselineJoinHashTable::hash_table_cache_;
@@ -1367,6 +1431,61 @@ void BaselineJoinHashTable::freeHashBufferGpuMemory() {
 
 void BaselineJoinHashTable::freeHashBufferCpuMemory() {
   cpu_hash_table_buff_.reset();
+}
+
+size_t BaselineJoinHashTable::dump(size_t entry_limit) const {
+  size_t key_width = getKeyComponentWidth();
+  size_t key_count = getKeyComponentCount();
+  size_t res = 0;
+  std::cerr << "BaselineHash type=" << layout_ << " entries=" << entry_count_
+            << " key_width=" << key_width << " key_count=" << key_count << std::endl;
+  if (cpu_hash_table_buff_) {
+    if (layout_ == HashType::OneToOne) {
+      std::cerr << "Buffer content:" << std::endl;
+      res += dumpBufferContent(cpu_hash_table_buff_->data(),
+                               entry_count_,
+                               key_width,
+                               key_count,
+                               1,
+                               entry_limit);
+    } else {
+      CHECK(layout_ == HashType::OneToMany);
+      std::cerr << "Key buffer content:" << std::endl;
+      res += dumpBufferContent(cpu_hash_table_buff_->data(),
+                               entry_count_,
+                               key_width,
+                               key_count,
+                               0,
+                               entry_limit);
+      std::cerr << "Offset buffer conten:" << std::endl;
+      dumpBufferContent(cpu_hash_table_buff_->data() + offsetBufferOff(),
+                        entry_count_,
+                        sizeof(int32_t),
+                        1,
+                        0,
+                        entry_limit);
+      std::cerr << "Count buffer content:" << std::endl;
+      dumpBufferContent(cpu_hash_table_buff_->data() + countBufferOff(),
+                        entry_count_,
+                        sizeof(int32_t),
+                        1,
+                        0,
+                        entry_limit);
+      std::cerr << "Payload buffer content:" << std::endl;
+      size_t payload_count =
+          (cpu_hash_table_buff_->size() - payloadBufferOff()) / sizeof(int32_t);
+      dumpBufferContent(cpu_hash_table_buff_->data() + payloadBufferOff(),
+                        payload_count,
+                        sizeof(int32_t),
+                        1,
+                        0,
+                        entry_limit);
+    }
+    // dumpOneToOneBuffer(cpu_hash_table_buff_, entry_count, key_width, key_count)
+  } else {
+    std::cerr << "(buffer in not allocated)" << std::endl;
+  }
+  return res;
 }
 
 std::map<std::vector<ChunkKey>, JoinHashTableInterface::HashType>

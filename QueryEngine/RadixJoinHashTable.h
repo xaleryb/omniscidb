@@ -98,6 +98,9 @@ class RadixJoinHashTable : public JoinHashTableInterface {
 
   virtual ~RadixJoinHashTable() {}
 
+  size_t dump(size_t entry_limit = 200) const override;
+  size_t dumpPartition(size_t partition_id, size_t entry_limit = 200) const;
+
  private:
   RadixJoinHashTable(const std::shared_ptr<Analyzer::BinOper> qual_bin_oper,
                      const std::vector<InputTableInfo>& query_infos,

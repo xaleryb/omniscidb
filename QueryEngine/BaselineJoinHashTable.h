@@ -111,6 +111,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
 
   virtual ~BaselineJoinHashTable() {}
 
+  size_t dump(size_t rows_limit = 200) const override;
+
  private:
   size_t getComponentBufferSize() const noexcept;
 

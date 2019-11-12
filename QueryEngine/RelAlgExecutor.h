@@ -238,12 +238,12 @@ class RelAlgExecutor : private StorageIOFacility<RelAlgExecutorTraits> {
                                   const int64_t queue_time_ms,
                                   const ssize_t previous_count = -1);
 
-  size_t getNDVEstimation(const WorkUnit& work_unit,
+  size_t getNDVEstimation(const RelAlgExecutionUnit& work_unit,
                           const bool is_agg,
                           const CompilationOptions& co,
                           const ExecutionOptions& eo);
 
-  ssize_t getFilteredCountAll(const WorkUnit& work_unit,
+  ssize_t getFilteredCountAll(const RelAlgExecutionUnit& ra_exe_unit,
                               const bool is_agg,
                               const CompilationOptions& co,
                               const ExecutionOptions& eo);

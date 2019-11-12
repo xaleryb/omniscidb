@@ -118,6 +118,8 @@ class JoinHashTableInterface {
   virtual size_t countBufferOff(const int partition_id = -1) const noexcept = 0;
 
   virtual size_t payloadBufferOff(const int partition_id = -1) const noexcept = 0;
+
+  virtual size_t dump(size_t entry_limit = 200) const { return 0; }
 };
 
 std::string decodeJoinHashBufferToString(
@@ -142,5 +144,15 @@ std::set<DecodedJoinHashBufferEntry> decodeJoinHashBuffer(
     const int8_t* ptr3,          // counts
     const int8_t* ptr4,          // payloads (rowids)
     size_t buffer_size);
+
+inline std::ostream& operator<<(std::ostream& os, JoinHashTableInterface::HashType type) {
+  if (type == JoinHashTableInterface::HashType::OneToOne)
+    os << "OneToOne";
+  else if (type == JoinHashTableInterface::HashType::OneToMany)
+    os << "OneToMany";
+  else
+    CHECK(false) << "Unknown join hash table type (" << (int)type << ")";
+  return os;
+}
 
 #endif  // QUERYENGINE_JOINHASHTABLEINTERFACE_H
