@@ -199,7 +199,7 @@ void Executor::ExecutionDispatch::runImpl(
         start_rowid,
         ra_exe_unit_.input_descs.size(),
         // for radix case so far choose specific frag_id
-        frag_list.size() == 2 ? frag_list[0].fragment_ids[0] : -1,
+        frag_list.size() == 2 && (frag_list[1].fragment_ids.size() > 0) ? frag_list[1].fragment_ids[0] : -1,
         do_render ? render_info_ : nullptr);
   } else {
     err = executor_->executePlanWithGroupBy(ra_exe_unit_,

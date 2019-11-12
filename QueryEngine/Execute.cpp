@@ -2914,7 +2914,7 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
     return {nullptr, "Overlaps hash join disabled, attempting to fall back to loop join"};
   }
   try {
-    if (g_force_radix_join) {
+    if (true || g_force_radix_join) {
       join_hash_table = RadixJoinHashTable::getInstance(qual_bin_oper,
                                                         query_infos,
                                                         memory_level,
