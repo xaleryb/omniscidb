@@ -183,21 +183,24 @@ void Executor::ExecutionDispatch::runImpl(
 
   ResultSetPtr device_results;
   if (ra_exe_unit_.groupby_exprs.empty()) {
-    err = executor_->executePlanWithoutGroupBy(ra_exe_unit_,
-                                               compilation_result,
-                                               query_comp_desc.hoistLiterals(),
-                                               device_results,
-                                               ra_exe_unit_.target_exprs,
-                                               chosen_device_type,
-                                               fetch_result.col_buffers,
-                                               query_exe_context,
-                                               fetch_result.num_rows,
-                                               fetch_result.frag_offsets,
-                                               &cat_.getDataMgr(),
-                                               chosen_device_id,
-                                               start_rowid,
-                                               ra_exe_unit_.input_descs.size(),
-                                               do_render ? render_info_ : nullptr);
+    err = executor_->executePlanWithoutGroupBy(
+        ra_exe_unit_,
+        compilation_result,
+        query_comp_desc.hoistLiterals(),
+        device_results,
+        ra_exe_unit_.target_exprs,
+        chosen_device_type,
+        fetch_result.col_buffers,
+        query_exe_context,
+        fetch_result.num_rows,
+        fetch_result.frag_offsets,
+        &cat_.getDataMgr(),
+        chosen_device_id,
+        start_rowid,
+        ra_exe_unit_.input_descs.size(),
+        // for radix case so far choose specific frag_id
+        frag_list.size() == 2 ? frag_list[0].fragment_ids[0] : -1,
+        do_render ? render_info_ : nullptr);
   } else {
     err = executor_->executePlanWithGroupBy(ra_exe_unit_,
                                             compilation_result,

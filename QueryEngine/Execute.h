@@ -758,6 +758,7 @@ class Executor {
       const int device_id,
       const uint32_t start_rowid,
       const uint32_t num_tables,
+      const uint32_t frag_id,
       RenderInfo* render_info);
 
  public:  // Temporary, ask saman about this
@@ -778,7 +779,8 @@ class Executor {
  private:
   ResultSetPtr resultsUnion(ExecutionDispatch& execution_dispatch);
   std::vector<int64_t> getJoinHashTablePtrs(const ExecutorDeviceType device_type,
-                                            const int device_id);
+                                            const int device_id,
+                                            const int frag_id = -1);
   ResultSetPtr reduceMultiDeviceResults(
       const RelAlgExecutionUnit&,
       std::vector<std::pair<ResultSetPtr, std::vector<size_t>>>& all_fragment_results,
