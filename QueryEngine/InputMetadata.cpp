@@ -217,6 +217,7 @@ Fragmenter_Namespace::TableInfo synthesize_table_info(const TemporaryTable& tabl
       fragment.deviceIds.resize(3);
       fragment.resultSet = table.getResultSet(frag_id).get();
       fragment.resultSetMutex.reset(new std::mutex());
+      fragment.setPhysicalNumTuples(fragment.resultSet->entryCount());
     }
   }
   Fragmenter_Namespace::TableInfo table_info;

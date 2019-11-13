@@ -2015,6 +2015,9 @@ bool Executor::needFetchAllFragments(const InputColDescriptor& inner_col_desc,
     return false;
   }
   const int table_id = inner_col_desc.getScanDesc().getTableId();
+  // For partitioned tables we should pass single partitions.
+  if (isTablePartitioned(table_id))
+    return false;
   CHECK_LT(static_cast<size_t>(nest_level), selected_fragments.size());
   CHECK_EQ(table_id, selected_fragments[nest_level].table_id);
   const auto& fragments = selected_fragments[nest_level].fragment_ids;
@@ -2111,7 +2114,9 @@ Executor::FetchResult Executor::fetchChunks(
 std::vector<size_t> Executor::getFragmentCount(const FragmentsList& selected_fragments,
                                                const size_t scan_idx,
                                                const RelAlgExecutionUnit& ra_exe_unit) {
-  if ((ra_exe_unit.input_descs.size() > size_t(2) || !ra_exe_unit.join_quals.empty()) &&
+  int table_id = ra_exe_unit.input_descs[scan_idx].getTableId();
+  if (!isTablePartitioned(table_id) &&
+      (ra_exe_unit.input_descs.size() > size_t(2) || !ra_exe_unit.join_quals.empty()) &&
       scan_idx > 0 &&
       !plan_state_->join_info_.sharded_range_table_indices_.count(scan_idx) &&
       !selected_fragments[scan_idx].fragment_ids.empty()) {

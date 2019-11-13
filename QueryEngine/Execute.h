@@ -972,6 +972,15 @@ class Executor {
     return off;
   }
 
+  bool isTablePartitioned(int table_id) const {
+    if (table_id < 0) {
+      auto it = temporary_tables_->find(table_id);
+      CHECK(it != temporary_tables_->end());
+      return it->second.isPartitioned();
+    }
+    return false;
+  }
+
   std::unique_ptr<CgenState> cgen_state_;
 
   class FetchCacheAnchor {
