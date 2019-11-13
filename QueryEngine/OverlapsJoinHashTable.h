@@ -69,7 +69,7 @@ class OverlapsJoinHashTable : public BaselineJoinHashTable {
  protected:
   void reifyWithLayout(const int device_count,
                        const JoinHashTableInterface::HashType layout,
-                       int element_count = -1) override;
+                       size_t forced_size = 0) override;
 
   std::pair<size_t, size_t> calculateCounts(
       size_t shard_count,

@@ -132,7 +132,7 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
 
   virtual void reifyWithLayout(const int device_count,
                                const JoinHashTableInterface::HashType layout,
-                               int element_count = -1);
+                               size_t forced_size = 0);
 
   struct ColumnsForDevice {
     const std::vector<JoinColumn> join_columns;
@@ -185,7 +185,7 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
 
   CompositeKeyInfo getCompositeKeyInfo() const;
 
-  void reify(const int device_count, int element_count = -1);
+  void reify(const int device_count, size_t forced_size = 0);
 
   JoinColumn fetchColumn(const Analyzer::ColumnVar* inner_col,
                          const Data_Namespace::MemoryLevel& effective_memory_level,
