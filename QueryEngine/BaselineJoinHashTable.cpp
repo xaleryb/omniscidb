@@ -378,6 +378,11 @@ BaselineJoinHashTable::CompositeKeyInfo BaselineJoinHashTable::getCompositeKeyIn
     ChunkKey cache_key_chunks_for_column{catalog_->getCurrentDB().dbId,
                                          inner_col->get_table_id(),
                                          inner_col->get_column_id()};
+    // In the case of hash table building for single fragment - let's add it 
+    // to the key as well.
+    // Probably the condition could be simplified
+    if (query_infos_.size() == 1 && query_infos_.front().info.fragments.size() == 1)
+       cache_key_chunks_for_column.push_back(query_infos_.front().info.fragments.front().fragmentId);
     if (inner_ti.is_string()) {
       CHECK(outer_ti.is_string());
       CHECK(inner_ti.get_compression() == kENCODING_DICT &&
