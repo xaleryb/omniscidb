@@ -310,6 +310,7 @@ class MapDProgramOptions {
    */
   int max_session_duration = kMinsPerMonth;
   std::string udf_file_name = {""};
+  std::string radix_type = {"hash"};
   std::vector<std::string> llvm_opts;
 
   void fillOptions();
@@ -723,6 +724,18 @@ void MapDProgramOptions::fillAdvancedOptions() {
                                    ->default_value(g_force_radix_join)
                                    ->implicit_value(true),
                                "Force all joins to use radix join algorithm.");
+  developer_desc.add_options()(
+      "radix-bits-count",
+      po::value<size_t>(&g_radix_bits_count)->default_value(g_radix_bits_count),
+      "Specifies amount of bits that are used in radix table partition.");
+  developer_desc.add_options()(
+      "radix-bits-scale",
+      po::value<size_t>(&g_radix_bits_scale)->default_value(g_radix_bits_scale),
+      "Specifies the position for masking during radix partitioning.");
+  developer_desc.add_options()("radix-type",
+                               po::value<std::string>(&radix_type),
+                               "Specifies radix object - key value or key hash, possible "
+                               "values: \"value\" or \"hash\" (default)");
 }
 
 namespace {
@@ -1008,6 +1021,17 @@ boost::optional<int> MapDProgramOptions::parse_command_line(int argc,
     }
 
     LOG(INFO) << " User provided extension functions loaded from " << udf_file_name;
+  }
+
+  if (vm.count("radix-type")) {
+    if (radix_type == "hash")
+      g_radix_type = PartitioningOptions::PartitioningKind::HASH;
+    else if (radix_type == "value")
+      g_radix_type = PartitioningOptions::PartitioningKind::VALUE;
+    else {
+      LOG(ERROR) << "Radix type could be \"hash\" or \"value\"";
+      return 1;
+    }
   }
 
   if (enable_runtime_udf) {
