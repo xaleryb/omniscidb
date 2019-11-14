@@ -32,7 +32,6 @@
 #include "JsonAccessors.h"
 #include "OutputBufferInitialization.h"
 #include "OverlapsJoinHashTable.h"
-#include "Partitioning.h"
 #include "QueryRewrite.h"
 #include "QueryTemplateGenerator.h"
 #include "RadixJoinHashTable.h"
@@ -105,6 +104,10 @@ bool g_enable_direct_columnarization{true};
 extern bool g_enable_experimental_string_functions;
 bool g_force_radix_join{false};
 bool g_enable_zero_copy_columnarization{true};
+size_t g_radix_bits_count{5};
+size_t g_radix_bits_scale{0};
+PartitioningOptions::PartitioningKind g_radix_type{
+    PartitioningOptions::PartitioningKind::HASH};
 
 int const Executor::max_gpu_count;
 

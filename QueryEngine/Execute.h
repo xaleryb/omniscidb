@@ -28,6 +28,7 @@
 #include "JoinHashTable.h"
 #include "LoopControlFlow/JoinLoop.h"
 #include "NvidiaKernel.h"
+#include "Partitioning.h"
 #include "PlanState.h"
 #include "RelAlgExecutionUnit.h"
 #include "RelAlgTranslator.h"
@@ -92,6 +93,9 @@ extern double g_bump_allocator_step_reduction;
 extern bool g_enable_direct_columnarization;
 extern bool g_force_radix_join;
 extern bool g_enable_zero_copy_columnarization;
+extern size_t g_radix_bits_count;
+extern size_t g_radix_bits_scale;
+extern PartitioningOptions::PartitioningKind g_radix_type;
 
 class QueryCompilationDescriptor;
 using QueryCompilationDescriptorOwned = std::unique_ptr<QueryCompilationDescriptor>;

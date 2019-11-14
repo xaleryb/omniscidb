@@ -277,9 +277,9 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   const auto& table_info = get_inner_query_info(table_id, query_infos);
 
   PartitioningOptions po;
-  // TODO: pass this value through the option?
-  po.mask_bits = 3;
-  po.scale_bits = 0;
+  po.mask_bits = g_radix_bits_count;
+  po.scale_bits = g_radix_bits_scale;
+  po.kind = g_radix_type;
   TablePartitioner partitioner(ra_exe_unit,
                                key,
                                payload,
