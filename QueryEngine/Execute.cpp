@@ -103,6 +103,7 @@ double g_bump_allocator_step_reduction{0.75};
 bool g_enable_direct_columnarization{true};
 extern bool g_enable_experimental_string_functions;
 bool g_force_radix_join{false};
+bool g_radix_use_swcb{false};
 size_t g_radix_bits_count{5};
 size_t g_radix_bits_scale{0};
 PartitioningOptions::PartitioningKind g_radix_type{

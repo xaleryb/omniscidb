@@ -92,6 +92,7 @@ extern size_t g_max_memory_allocation_size;
 extern double g_bump_allocator_step_reduction;
 extern bool g_enable_direct_columnarization;
 extern bool g_force_radix_join;
+extern bool g_radix_use_swcb;
 extern size_t g_radix_bits_count;
 extern size_t g_radix_bits_scale;
 extern PartitioningOptions::PartitioningKind g_radix_type;

@@ -35,7 +35,10 @@ TablePartitioner::TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
     , po_(std::move(po))
     , executor_(executor)
     , ra_exe_unit_(ra_exe_unit)
-    , row_set_mem_owner_(row_set_mem_owner) {}
+    , row_set_mem_owner_(row_set_mem_owner) {
+  auto pcnt = getPartitionsCount();
+  histograms_.resize(info_.info.fragments.size(), std::vector<size_t>(pcnt, 0));
+}
 
 void TablePartitioner::fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
                                      size_t frag_num,
@@ -231,26 +234,92 @@ void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histo
 void TablePartitioner::computePartitionSizesAndOffsets(
     std::vector<std::vector<size_t>>& partition_offsets) {
   auto pcnt = getPartitionsCount();
-  std::vector<std::vector<size_t>> histograms(info_.info.fragments.size(),
-                                              std::vector<size_t>(pcnt, 0));
 
   // Run histogram collection.
   for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
     // run histogram collection function.
-    collectHistogram(i, histograms[i]);
+    collectHistogram(i, histograms_[i]);
   }
 
   // Count partition sizes and offsets (in number of tuples).
   partition_offsets.assign(info_.info.fragments.size(), std::vector<size_t>(pcnt, 0));
-  for (size_t i = 0; i < (histograms.size() - 1); ++i) {
+  for (size_t i = 0; i < (histograms_.size() - 1); ++i) {
     for (size_t j = 0; j < pcnt; ++j) {
-      partition_offsets[i + 1][j] = partition_offsets[i][j] + histograms[i][j];
+      partition_offsets[i + 1][j] = partition_offsets[i][j] + histograms_[i][j];
     }
   }
 
   partition_sizes_.resize(pcnt, 0);
   for (size_t j = 0; j < pcnt; ++j) {
-    partition_sizes_[j] = partition_offsets.back()[j] + histograms.back()[j];
+    partition_sizes_[j] = partition_offsets.back()[j] + histograms_.back()[j];
+  }
+}
+
+#define CACHE_LINE_SIZE 64
+
+void TablePartitioner::nonTempStore(int8_t* dst, const int8_t* src, size_t size) {
+  if (size != 64) {
+    memcpy(dst, src, size);
+    return;
+  }
+
+#ifdef __AVX__
+  register __m256i* d1 = (__m256i*)dst;
+  register __m256i s1 = *((__m256i*)src);
+  register __m256i* d2 = d1 + 1;
+  register __m256i s2 = *(((__m256i*)src) + 1);
+
+  _mm256_stream_si256(d1, s1);
+  _mm256_stream_si256(d2, s2);
+
+#elif defined(__SSE2__)
+
+  register __m128i* d1 = (__m128i*)dst;
+  register __m128i* d2 = d1 + 1;
+  register __m128i* d3 = d1 + 2;
+  register __m128i* d4 = d1 + 3;
+  register __m128i s1 = *(__m128i*)src;
+  register __m128i s2 = *((__m128i*)src + 1);
+  register __m128i s3 = *((__m128i*)src + 2);
+  register __m128i s4 = *((__m128i*)src + 3);
+
+  _mm_stream_si128(d1, s1);
+  _mm_stream_si128(d2, s2);
+  _mm_stream_si128(d3, s3);
+  _mm_stream_si128(d4, s4);
+
+#else
+  // Regular memcpy
+  memcpy(dst, src, size);
+#endif
+}
+
+// If enabled, use software-write-combined-buffer technique to fill partitions
+void TablePartitioner::copyWithSWCB(int8_t* swcb_buf,
+                                    size_t swcb_buf_size,
+                                    int8_t* real_dst,
+                                    const int8_t* src,
+                                    size_t elem_size) {
+  auto swcb_limit = CACHE_LINE_SIZE / elem_size - 1;
+  auto pos = swcb_buf_size & swcb_limit;
+  memcpy(swcb_buf + pos * elem_size, src, elem_size);
+  // drop buffer in a partition when it is full
+  if (swcb_buf_size == swcb_limit) {
+    nonTempStore(real_dst - swcb_limit * elem_size, swcb_buf, CACHE_LINE_SIZE);
+  }
+}
+
+void TablePartitioner::remainderCopyWithSWCB(int8_t* swcb_buf,
+                                             size_t swcb_buf_size,
+                                             int8_t* real_dst,
+                                             size_t elem_size) {
+  auto swcb_limit = CACHE_LINE_SIZE / elem_size - 1;
+  auto rem_size = swcb_buf_size & swcb_limit;
+  real_dst -= rem_size * elem_size;
+  for (uint32_t j = 0; j < rem_size; ++j) {
+    memcpy(real_dst, swcb_buf, elem_size);
+    real_dst += elem_size;
+    swcb_buf += elem_size;
   }
 }
 
@@ -258,6 +327,29 @@ void TablePartitioner::doPartition(int frag_idx,
                                    std::vector<std::vector<size_t>>& partition_offsets,
                                    std::vector<std::vector<int8_t*>>& col_bufs) {
   const uint32_t fanOut = getPartitionsCount();
+  // Software combine buffers
+  std::vector<std::vector<int8_t*>> swcb_bufs;
+  // this will held info about number of elements in key's or payload's swcb buffers
+  std::vector<size_t> swcb_sizes;
+  if (g_radix_use_swcb) {
+    // Fill initial information about swcb buffers and allocate them
+    swcb_sizes.resize(fanOut, 0);
+    swcb_bufs.resize(fanOut);
+    for (uint32_t i = 0; i < fanOut; ++i) {
+      // swcb_sizes[i] = partition_offsets[frag_idx][i];
+      for (uint32_t j = 0; j < key_sizes_.size(); j++) {
+        if (histograms_[frag_idx][i] > 0)
+          swcb_bufs[i].push_back((int8_t*)aligned_alloc(
+              CACHE_LINE_SIZE, key_sizes_[j] * (CACHE_LINE_SIZE / key_sizes_[j])));
+      }
+      for (uint32_t j = 0; j < payload_sizes_.size(); ++j) {
+        if (histograms_[frag_idx][i] > 0)
+          swcb_bufs[i].push_back((int8_t*)aligned_alloc(
+              CACHE_LINE_SIZE,
+              payload_sizes_[j] * (CACHE_LINE_SIZE / payload_sizes_[j])));
+      }
+    }
+  }
   // FIXME: only one key column for now!
   auto key_size = key_sizes_.at(0);
   auto keys = key_data_.at(frag_idx).at(0);
@@ -266,19 +358,74 @@ void TablePartitioner::doPartition(int frag_idx,
     uint32_t idx =
         getHashValue(&(keys[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
     // fill partition - first key, then payload(s) if needed
-    auto key_pos = partition_offsets[frag_idx][idx];
+    auto curr_off = partition_offsets[frag_idx][idx];
     // FIXME: only one key column for now!
-    memcpy(&(col_bufs[idx][0][key_pos * key_size]), &(keys[i * key_size]), key_size);
+    if (g_radix_use_swcb) {
+      auto size = swcb_sizes[idx];
+      // size_t pos = size & swcb_limit;
+      copyWithSWCB(&(swcb_bufs[idx][0][0]),
+                   size,
+                   &(col_bufs[idx][0][(size + curr_off) * key_size]),
+                   &(keys[i * key_size]),
+                   key_size);
+    } else
+      memcpy(&(col_bufs[idx][0][curr_off * key_size]), &(keys[i * key_size]), key_size);
     if (payload_cols_.size() > 0) {
-      int payload_idx = 0;
+      int payload_num = 0;
       for (auto payload : payload_data_[frag_idx]) {
-        auto payload_size = payload_sizes_.at(payload_idx);
-        memcpy(&(col_bufs[idx][payload_idx + key_cols_.size()][key_pos * payload_size]),
-               &(payload[i * payload_size]),
-               payload_size);
+        auto payload_size = payload_sizes_.at(payload_num);
+        auto payload_idx = payload_num + key_cols_.size();
+        if (g_radix_use_swcb) {
+          auto size = swcb_sizes[idx];
+          // size_t pos = size & swcb_limit;
+          copyWithSWCB(&(swcb_bufs[idx][payload_idx][0]),
+                       size,
+                       &(col_bufs[idx][payload_idx][(size + curr_off) * payload_size]),
+                       &(payload[i * payload_size]),
+                       payload_size);
+        } else
+          memcpy(&(col_bufs[idx][payload_idx][curr_off * payload_size]),
+                 &(payload[i * payload_size]),
+                 payload_size);
+        payload_num++;
       }
     }
-    partition_offsets[frag_idx][idx]++;
+    if (!g_radix_use_swcb)
+      partition_offsets[frag_idx][idx]++;
+    else
+      swcb_sizes[idx]++;
+  }
+  // Write remainder in case of SWCB usage
+  if (g_radix_use_swcb) {
+    for (uint32_t idx = 0; idx < fanOut; ++idx) {
+      // FIXME: only one key column for now!
+      auto key_size = key_sizes_.at(0);
+      auto off = partition_offsets[frag_idx][idx];
+      int size = swcb_sizes[idx]; /* + partition_offsets[frag_idx][idx]*/
+      if (size > 0) {
+        remainderCopyWithSWCB(&(swcb_bufs[idx][0][0]),
+                              size,
+                              &(col_bufs[idx][0][(off + size) * key_size]),
+                              key_size);
+        if (payload_cols_.size() > 0) {
+          int payload_idx = key_cols_.size();
+          for (uint32_t payload_num = 0; payload_num < payload_data_[frag_idx].size();
+               ++payload_num) {
+            auto payload_size = payload_sizes_.at(payload_num);
+            remainderCopyWithSWCB(&(swcb_bufs[idx][payload_idx][0]),
+                                  size,
+                                  &(col_bufs[idx][payload_idx][(off + size) * key_size]),
+                                  payload_size);
+            payload_idx++;
+          }
+        }
+      }
+    }
+    for (uint32_t i = 0; i < fanOut; ++i) {
+      for (uint32_t j = 0; j < swcb_bufs[i].size(); j++) {
+        free(swcb_bufs[i][j]);
+      }
+    }
   }
 }
 

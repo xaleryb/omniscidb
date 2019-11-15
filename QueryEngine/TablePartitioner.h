@@ -48,6 +48,16 @@ class TablePartitioner {
       std::vector<std::vector<size_t>>& partition_offsets);
   void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
   uint32_t getHashValue(const int8_t* key, int size, int mask, int shift);
+  void nonTempStore(int8_t* dst, const int8_t* src, size_t size);
+  void copyWithSWCB(int8_t* swcb_buf,
+                    size_t swcb_buf_size,
+                    int8_t* real_dst,
+                    const int8_t* src,
+                    size_t elem_size);
+  void remainderCopyWithSWCB(int8_t* swcb_buf,
+                             size_t swcb_buf_size,
+                             int8_t* real_dst,
+                             size_t elem_size);
   void doPartition(int frag_idx,
                    std::vector<std::vector<size_t>>& partition_offsets,
                    std::vector<std::vector<int8_t*>>& col_bufs);
@@ -68,6 +78,7 @@ class TablePartitioner {
   std::vector<std::shared_ptr<Chunk_NS::Chunk>> chunks_owner_;
   // Maps partition ID to a number of tuples in this partition.
   std::vector<size_t> partition_sizes_;
+  std::vector<std::vector<size_t>> histograms_;
   //
 };
 

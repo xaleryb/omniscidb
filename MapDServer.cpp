@@ -725,6 +725,12 @@ void MapDProgramOptions::fillAdvancedOptions() {
                                    ->implicit_value(true),
                                "Force all joins to use radix join algorithm.");
   developer_desc.add_options()(
+      "radix-use-swcb",
+      po::value<bool>(&g_radix_use_swcb)
+          ->default_value(g_radix_use_swcb)
+          ->implicit_value(true),
+      "Use software-write-combined buffer techinque in radix partitioning.");
+  developer_desc.add_options()(
       "radix-bits-count",
       po::value<size_t>(&g_radix_bits_count)->default_value(g_radix_bits_count),
       "Specifies amount of bits that are used in radix table partition.");
