@@ -58,6 +58,16 @@ class TablePartitioner {
                              size_t swcb_buf_size,
                              int8_t* real_dst,
                              size_t elem_size);
+  void initSWCBuffers(int frag_idx,
+                      const uint32_t fanOut,
+                      std::vector<std::vector<int8_t*>>& swcb_bufs,
+                      std::vector<size_t>& swcb_sizes);
+  void finalizeSWCBuffers(int frag_idx,
+                          const uint32_t fanOut,
+                          std::vector<std::vector<size_t>>& partition_offsets,
+                          std::vector<std::vector<int8_t*>>& col_bufs,
+                          std::vector<std::vector<int8_t*>>& swcb_bufs,
+                          std::vector<size_t>& swcb_sizes);
   void doPartition(int frag_idx,
                    std::vector<std::vector<size_t>>& partition_offsets,
                    std::vector<std::vector<int8_t*>>& col_bufs);
