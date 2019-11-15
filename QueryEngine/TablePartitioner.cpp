@@ -362,7 +362,6 @@ void TablePartitioner::doPartition(int frag_idx,
     // FIXME: only one key column for now!
     if (g_radix_use_swcb) {
       auto size = swcb_sizes[idx];
-      // size_t pos = size & swcb_limit;
       copyWithSWCB(&(swcb_bufs[idx][0][0]),
                    size,
                    &(col_bufs[idx][0][(size + curr_off) * key_size]),
@@ -377,7 +376,6 @@ void TablePartitioner::doPartition(int frag_idx,
         auto payload_idx = payload_num + key_cols_.size();
         if (g_radix_use_swcb) {
           auto size = swcb_sizes[idx];
-          // size_t pos = size & swcb_limit;
           copyWithSWCB(&(swcb_bufs[idx][payload_idx][0]),
                        size,
                        &(col_bufs[idx][payload_idx][(size + curr_off) * payload_size]),
@@ -401,7 +399,7 @@ void TablePartitioner::doPartition(int frag_idx,
       // FIXME: only one key column for now!
       auto key_size = key_sizes_.at(0);
       auto off = partition_offsets[frag_idx][idx];
-      int size = swcb_sizes[idx]; /* + partition_offsets[frag_idx][idx]*/
+      int size = swcb_sizes[idx];
       if (size > 0) {
         remainderCopyWithSWCB(&(swcb_bufs[idx][0][0]),
                               size,
