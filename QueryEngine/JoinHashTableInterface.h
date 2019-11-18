@@ -86,6 +86,14 @@ class JoinHashTableInterface {
   // table descriptors rather than plain buffer pointers.
   virtual bool useDescriptors() const noexcept { return false; }
 
+  virtual bool isLazyReify() const { return false; }
+
+  virtual void doLazyReify(const ExecutorDeviceType device_type,
+                           const int device_id,
+                           const int partition_id = -1) {
+    CHECK(false) << "Lazy hash table reify is not supported";
+  }
+
   virtual int64_t getJoinHashBuffer(const ExecutorDeviceType device_type,
                                     const int device_id,
                                     const int partition_id = -1) const noexcept = 0;

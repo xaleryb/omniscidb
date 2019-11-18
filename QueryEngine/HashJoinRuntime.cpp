@@ -1702,7 +1702,7 @@ void fill_one_to_many_baseline_hash_table(
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
     if (join_buckets_per_key.size() > 0) {
       counter_threads.push_back(
-          std::async(std::launch::async,
+          std::async(cpu_thread_count == 1 ? std::launch::deferred : std::launch::async,
                      [count_buff,
                       composite_key_dict,
                       &hash_entry_count,
@@ -1724,7 +1724,7 @@ void fill_one_to_many_baseline_hash_table(
                      }));
     } else {
       counter_threads.push_back(std::async(
-          std::launch::async,
+          cpu_thread_count == 1 ? std::launch::deferred : std::launch::async,
           [count_buff,
            composite_key_dict,
            &key_component_count,
@@ -1764,7 +1764,7 @@ void fill_one_to_many_baseline_hash_table(
   std::vector<std::future<void>> pos_threads;
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
     pos_threads.push_back(std::async(
-        std::launch::async,
+        cpu_thread_count == 1 ? std::launch::deferred : std::launch::async,
         [&](const int thread_idx) {
           for (size_t i = thread_idx; i < hash_entry_count; i += cpu_thread_count) {
             if (count_buff[i]) {
@@ -1783,7 +1783,7 @@ void fill_one_to_many_baseline_hash_table(
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
     if (join_buckets_per_key.size() > 0) {
       rowid_threads.push_back(
-          std::async(std::launch::async,
+          std::async(cpu_thread_count == 1 ? std::launch::deferred : std::launch::async,
                      [buff,
                       composite_key_dict,
                       hash_entry_count,
@@ -1807,35 +1807,35 @@ void fill_one_to_many_baseline_hash_table(
                         cpu_thread_count);
                      }));
     } else {
-      rowid_threads.push_back(std::async(std::launch::async,
-                                         [buff,
-                                          composite_key_dict,
-                                          hash_entry_count,
-                                          invalid_slot_val,
-                                          key_component_count,
-                                          &join_column_per_key,
-                                          &type_info_per_key,
-                                          &sd_inner_proxy_per_key,
-                                          &sd_outer_proxy_per_key,
-                                          cpu_thread_idx,
-                                          cpu_thread_count] {
-                                           const auto key_handler = GenericKeyHandler(
-                                               key_component_count,
-                                               true,
-                                               &join_column_per_key[0],
-                                               &type_info_per_key[0],
-                                               &sd_inner_proxy_per_key[0],
-                                               &sd_outer_proxy_per_key[0]);
-                                           SUFFIX(fill_row_ids_baseline)
-                                           (buff,
-                                            composite_key_dict,
-                                            hash_entry_count,
-                                            invalid_slot_val,
-                                            &key_handler,
-                                            join_column_per_key[0].num_elems,
-                                            cpu_thread_idx,
-                                            cpu_thread_count);
-                                         }));
+      rowid_threads.push_back(std::async(
+          cpu_thread_count == 1 ? std::launch::deferred : std::launch::async,
+          [buff,
+           composite_key_dict,
+           hash_entry_count,
+           invalid_slot_val,
+           key_component_count,
+           &join_column_per_key,
+           &type_info_per_key,
+           &sd_inner_proxy_per_key,
+           &sd_outer_proxy_per_key,
+           cpu_thread_idx,
+           cpu_thread_count] {
+            const auto key_handler = GenericKeyHandler(key_component_count,
+                                                       true,
+                                                       &join_column_per_key[0],
+                                                       &type_info_per_key[0],
+                                                       &sd_inner_proxy_per_key[0],
+                                                       &sd_outer_proxy_per_key[0]);
+            SUFFIX(fill_row_ids_baseline)
+            (buff,
+             composite_key_dict,
+             hash_entry_count,
+             invalid_slot_val,
+             &key_handler,
+             join_column_per_key[0].num_elems,
+             cpu_thread_idx,
+             cpu_thread_count);
+          }));
     }
   }
 
@@ -1906,7 +1906,7 @@ void approximate_distinct_tuples(uint8_t* hll_buffer_all_cpus,
   std::vector<std::future<void>> approx_distinct_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
     approx_distinct_threads.push_back(std::async(
-        std::launch::async,
+        thread_count == 1 ? std::launch::deferred : std::launch::async,
         [&join_column_per_key,
          &type_info_per_key,
          b,
@@ -1952,7 +1952,7 @@ void approximate_distinct_tuples_overlaps(
   std::vector<std::future<void>> approx_distinct_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
     approx_distinct_threads.push_back(std::async(
-        std::launch::async,
+        thread_count == 1 ? std::launch::deferred : std::launch::async,
         [&join_column_per_key,
          &join_buckets_per_key,
          &row_counts,

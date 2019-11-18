@@ -44,7 +44,8 @@ std::shared_ptr<RadixJoinHashTable> RadixJoinHashTable::getInstance(
                                                                  device_count,
                                                                  column_cache,
                                                                  executor));
-  join_hash_table->reify(device_count);
+  if (!join_hash_table->isLazyReify())
+    join_hash_table->reify(device_count);
 
   return join_hash_table;
 }
@@ -60,6 +61,7 @@ RadixJoinHashTable::RadixJoinHashTable(
     : qual_bin_oper_(qual_bin_oper)
     , query_infos_(query_infos)
     , memory_level_(memory_level)
+    , device_count_(device_count)
     , layout_(HashType::OneToMany /*preferred_hash_type*/)
     , column_cache_(column_cache)
     , executor_(executor) {
@@ -204,6 +206,20 @@ size_t RadixJoinHashTable::payloadBufferOff(const int partition_id) const noexce
 void RadixJoinHashTable::reify(const int device_count) {
   for (auto pr : part_tables_)
     dynamic_cast<BaselineJoinHashTable*>(pr.second.get())->reify(device_count);
+}
+
+void RadixJoinHashTable::doLazyReify(const ExecutorDeviceType device_type,
+                                     const int device_id,
+                                     const int partition_id) {
+  CHECK(device_type == ExecutorDeviceType::CPU) << "Lazy reify is supported for CPU only";
+  CHECK(memory_level_ == Data_Namespace::MemoryLevel::CPU_LEVEL)
+      << "Lazy reify is supported for CPU only";
+  CHECK_EQ(device_id, 0);
+  CHECK(partition_id != -1)
+      << "Radix join hash table should be lazily reified by partitions";
+  auto it = part_tables_.find(partition_id);
+  if (it != part_tables_.end())
+    dynamic_cast<BaselineJoinHashTable*>(it->second.get())->reify(device_count_);
 }
 
 size_t RadixJoinHashTable::dump(size_t entry_limit) const {
