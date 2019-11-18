@@ -35,15 +35,12 @@ TablePartitioner::TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
     , po_(std::move(po))
     , executor_(executor)
     , ra_exe_unit_(ra_exe_unit)
-    , row_set_mem_owner_(row_set_mem_owner) {
-  auto pcnt = getPartitionsCount();
-  histograms_.resize(info_.info.fragments.size(), std::vector<size_t>(pcnt, 0));
-}
+    , row_set_mem_owner_(row_set_mem_owner) {}
 
 void TablePartitioner::fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
                                      size_t frag_num,
                                      std::vector<const Analyzer::ColumnVar*>& vars,
-                                     std::vector<const int8_t*>& output) {
+                                     std::vector<int8_t*>& output) {
   const int8_t* col_frag = nullptr;
   size_t elem_count = 0;
   for (auto var : vars) {
@@ -59,23 +56,64 @@ void TablePartitioner::fetchFragment(const Fragmenter_Namespace::FragmentInfo& f
       continue;
     }
     CHECK_NE(elem_count, size_t(0));
-    output.push_back(col_frag);
+    output.push_back((int8_t*)col_frag);
   }
 }
 
 void TablePartitioner::fetchFragments(
     std::vector<const Analyzer::ColumnVar*>& key_vars,
-    std::vector<const Analyzer::ColumnVar*>& payload_vars) {
+    std::vector<const Analyzer::ColumnVar*>& payload_vars,
+    std::vector<size_t>& fragment_sizes) {
   // get all fragments for columns separately
   // so far only one key column is considered
-  std::vector<const int8_t*> empty;
-  key_data_.assign(info_.info.fragments.size(), empty);
-  payload_data_.assign(info_.info.fragments.size(), empty);
+  std::vector<int8_t*> empty;
+  pass_key_data_.assign(info_.info.fragments.size(), empty);
+  pass_payload_data_.assign(info_.info.fragments.size(), empty);
   size_t frag_idx = 0;
   for (auto& frag : info_.info.fragments) {
-    fetchFragment(frag, frag_idx, key_vars, key_data_[frag_idx]);
-    fetchFragment(frag, frag_idx, payload_vars, payload_data_[frag_idx]);
+    fetchFragment(frag, frag_idx, key_vars, pass_key_data_[frag_idx]);
+    fetchFragment(frag, frag_idx, payload_vars, pass_payload_data_[frag_idx]);
+    fragment_sizes.push_back(frag.getNumTuples());
     frag_idx++;
+  }
+}
+
+void TablePartitioner::fetchOrCreateFragments(
+    std::vector<const Analyzer::ColumnVar*>& key_vars,
+    std::vector<const Analyzer::ColumnVar*>& payload_vars,
+    // info from previous partitioning
+    size_t previous_size,
+    std::vector<std::vector<size_t>>& fragment_sizes) {
+  if (previous_size == 0) {
+    // initial case
+    std::vector<size_t> tmp_sizes;
+    fetchFragments(key_vars, payload_vars, tmp_sizes);
+    fragment_sizes.emplace_back(tmp_sizes);
+  } else {
+    // second and later passes need to properly
+    // prepare fragments for partitioning. Here we fill only
+    // size information. Data is filled later
+    fragment_sizes.resize(previous_size);
+    for (size_t i = 0; i < previous_size; ++i) {
+      fragment_sizes[i].push_back(1);
+    }
+  }
+}
+
+void TablePartitioner::createDataForPartition(ResultSetPtr partition) {
+  auto rs = partition.get();
+  auto mem_desc = rs->getQueryMemDesc();
+  auto storage = rs->getStorage();
+  size_t col_idx = 0;
+  for (size_t col_idx = 0; col_idx < key_sizes_.size(); ++col_idx) {
+    size_t col_offs = mem_desc.getColOffInBytes(col_idx);
+    int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
+    pass_key_data_[0][col_idx] = col_buf;
+  }
+  for (; col_idx < key_sizes_.size() + payload_sizes_.size(); ++col_idx) {
+    size_t col_offs = mem_desc.getColOffInBytes(col_idx);
+    int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
+    pass_payload_data_[0][col_idx] = col_buf;
   }
 }
 
@@ -109,77 +147,108 @@ TemporaryTable TablePartitioner::runPartitioning() {
     col_vars.emplace_back(std::move(col_var));
   }
 
-  // fetch column data - keys and payloads
-  fetchFragments(key_vars, payload_vars);
+  size_t pass_num = 0;
+  // Partition result storage
+  std::vector<std::vector<ResultSetPtr>> partitions;
+  partitions.resize(g_radix_pass_num);
 
-  // This vector holds write positions (in number of elements, not bytes)
-  // in partitions for each partitioned fragment.
-  // [fragment idx][partition id] -> offset in partition buffer.
-  std::vector<std::vector<size_t>> partition_offsets;
-  computePartitionSizesAndOffsets(partition_offsets);
+  // Start multipass partititioning
+  do {
+    // information about sizes of each fragment
+    std::vector<std::vector<size_t>> fragment_sizes;
+    // fetch data - keys and payloads - for first pass or
+    // get size information based on previous passes
+    fetchOrCreateFragments(key_vars,
+                           payload_vars,
+                           // We need to use info from previous partition pass
+                           pass_num == 0 ? pass_num : partitions[pass_num - 1].size(),
+                           fragment_sizes);
+    for (size_t tab_num = 0; tab_num < fragment_sizes.size(); ++tab_num) {
+      // [partition id][column idx] -> column buffer.
+      std::vector<std::vector<int8_t*>> col_bufs;
+      pass_fanout_ = getPartitionsCount(pass_num + 1);
+      pass_histograms_.resize(fragment_sizes[tab_num].size(),
+                              std::vector<size_t>(pass_fanout_, 0));
 
-  std::vector<ssize_t> dummy;
-  ColSlotContext slot_ctx(slots, dummy);
-  slot_ctx.setAllSlotsPaddedSizeToLogicalSize();
-  std::vector<ResultSetPtr> partitions;
-  // [partition id][column idx] -> column buffer.
-  std::vector<std::vector<int8_t*>> col_bufs;
-  col_bufs.resize(partition_sizes_.size());
-  for (size_t frag_id = 0; frag_id < partition_sizes_.size(); ++frag_id) {
-    if (!partition_sizes_[frag_id]) {
-      partitions.push_back(nullptr);
-      continue;
-    }
+      if (pass_num > 0) {
+        // we need to obtain proper fragment for partitioning
+        // Now we don't split result of previous partition
+        CHECK_EQ(fragment_sizes[tab_num].size(), size_t(1));
+        createDataForPartition(partitions[pass_num - 1][tab_num]);
+      }
 
-    QueryMemoryDescriptor mem_desc(QueryDescriptionType::Projection,
-                                   executor_,
-                                   slot_ctx,
-                                   partition_sizes_[frag_id],
-                                   true);
-    auto rs = std::make_shared<ResultSet>(
-        targets, ExecutorDeviceType::CPU, mem_desc, row_set_mem_owner_, executor_);
-    rs->setCachedRowCount(partition_sizes_[frag_id]);
-    col_bufs[frag_id].resize(targets.size(), nullptr);
+      // This vector holds write positions (in number of elements, not bytes)
+      // in partitions for each partitioned fragment.
+      // [fragment idx][partition id] -> offset in partition buffer.
+      std::vector<std::vector<size_t>> partition_offsets;
+      computePartitionSizesAndOffsets(partition_offsets, fragment_sizes[tab_num]);
 
-    // Init storage for non-empty partitions only.
-    if (partition_sizes_[frag_id]) {
-      auto* storage = rs->allocateStorage();
-      for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
-        size_t col_offs = mem_desc.getColOffInBytes(col_idx);
-        int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
-        col_bufs[frag_id][col_idx] = col_buf;
+      std::vector<ssize_t> dummy;
+      ColSlotContext slot_ctx(slots, dummy);
+      slot_ctx.setAllSlotsPaddedSizeToLogicalSize();
+      col_bufs.resize(pass_partition_sizes_.size());
+      for (size_t part_id = 0; part_id < pass_partition_sizes_.size(); ++part_id) {
+        if (!pass_partition_sizes_[part_id]) {
+          partitions[pass_num].push_back(nullptr);
+          continue;
+        }
+
+        QueryMemoryDescriptor mem_desc(QueryDescriptionType::Projection,
+                                       executor_,
+                                       slot_ctx,
+                                       pass_partition_sizes_[part_id],
+                                       true);
+        auto rs = std::make_shared<ResultSet>(
+            targets, ExecutorDeviceType::CPU, mem_desc, row_set_mem_owner_, executor_);
+        rs->setCachedRowCount(pass_partition_sizes_[part_id]);
+        col_bufs[part_id].resize(targets.size(), nullptr);
+
+        // Init storage for non-empty partitions only.
+        if (pass_partition_sizes_[part_id]) {
+          auto* storage = rs->allocateStorage();
+          for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
+            size_t col_offs = mem_desc.getColOffInBytes(col_idx);
+            int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
+            col_bufs[part_id][col_idx] = col_buf;
+          }
+        }
+        partitions[pass_num].push_back(rs);
+      }
+
+      for (size_t i = 0; i < fragment_sizes[tab_num].size(); ++i) {
+        // run partitioning function
+        doPartition(i, partition_offsets, col_bufs, fragment_sizes[tab_num][i]);
       }
     }
-    partitions.push_back(rs);
-  }
-
-  for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
-    // run partitioning function
-    doPartition(i, partition_offsets, col_bufs);
-  }
 
 // TODO: remove debug prints
 #if PARTITIONING_DEBUG_PRINT
-  for (size_t pid = 0; pid < partitions.size(); ++pid) {
-    std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
-    for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
-      auto row = partitions[pid]->getRowAt(rid);
-      for (auto& val : row) {
-        auto scalar_r = boost::get<ScalarTargetValue>(&val);
-        CHECK(scalar_r);
-        std::cerr << *scalar_r << " ";
+    for (size_t pid = 0; pid < partitions.size(); ++pid) {
+      std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
+      for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
+        auto row = partitions[pid]->getRowAt(rid);
+        for (auto& val : row) {
+          auto scalar_r = boost::get<ScalarTargetValue>(&val);
+          CHECK(scalar_r);
+          std::cerr << *scalar_r << " ";
+        }
+        std::cerr << std::endl;
       }
-      std::cerr << std::endl;
+      std::cerr << "=================================" << std::endl;
     }
-    std::cerr << "=================================" << std::endl;
-  }
 #endif
+    // Clear partition for pass_num-2 stage?
+  } while (pass_num++ < g_radix_pass_num - 1);
 
-  return TemporaryTable(partitions, true);
+  // remove unneeded partition results
+  for (size_t i = 0; i < partitions.size() - 1; ++i)
+    partitions[i].clear();
+
+  return TemporaryTable(partitions.back(), true);
 }
 
-size_t TablePartitioner::getPartitionsCount() const {
-  return 1 << po_.mask_bits;
+size_t TablePartitioner::getPartitionsCount(size_t pass_num) const {
+  return 1 << po_.mask_bits / pass_num;
 }
 
 #define HASH_BIT_MODULO(K, MASK, NBITS) (((K)&MASK) >> NBITS)
@@ -207,17 +276,17 @@ uint32_t TablePartitioner::getHashValue(const int8_t* key,
   return HASH_BIT_MODULO(value, mask, shift);
 }
 
-void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histogram) {
+void TablePartitioner::collectHistogram(int frag_idx,
+                                        std::vector<size_t>& histogram,
+                                        size_t fragment_size) {
   uint64_t i;
-  const uint32_t fanOut = getPartitionsCount();
   // FIXME: only one key column for now!
-  auto fragment = key_data_[frag_idx].at(0);
-  auto fragment_size = info_.info.fragments[frag_idx].getNumTuples();
+  auto fragment = pass_key_data_[frag_idx].at(0);
   // FIXME: only one key column for now!
   auto key_size = key_sizes_.at(0);
   for (i = 0; i < fragment_size; ++i) {
-    uint32_t idx =
-        getHashValue(&(fragment[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
+    uint32_t idx = getHashValue(
+        &(fragment[i * key_size]), key_size, pass_fanout_ - 1, po_.scale_bits);
     histogram[idx]++;
   }
 
@@ -232,26 +301,26 @@ void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histo
 }
 
 void TablePartitioner::computePartitionSizesAndOffsets(
-    std::vector<std::vector<size_t>>& partition_offsets) {
-  auto pcnt = getPartitionsCount();
-
+    std::vector<std::vector<size_t>>& partition_offsets,
+    std::vector<size_t>& fragment_sizes) {
+  auto fragments_num = fragment_sizes.size();
   // Run histogram collection.
-  for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
+  for (size_t i = 0; i < fragments_num; ++i) {
     // run histogram collection function.
-    collectHistogram(i, histograms_[i]);
+    collectHistogram(i, pass_histograms_[i], fragment_sizes[i]);
   }
 
   // Count partition sizes and offsets (in number of tuples).
-  partition_offsets.assign(info_.info.fragments.size(), std::vector<size_t>(pcnt, 0));
-  for (size_t i = 0; i < (histograms_.size() - 1); ++i) {
-    for (size_t j = 0; j < pcnt; ++j) {
-      partition_offsets[i + 1][j] = partition_offsets[i][j] + histograms_[i][j];
+  partition_offsets.assign(fragments_num, std::vector<size_t>(pass_fanout_, 0));
+  for (size_t i = 0; i < (pass_histograms_.size() - 1); ++i) {
+    for (size_t j = 0; j < pass_fanout_; ++j) {
+      partition_offsets[i + 1][j] = partition_offsets[i][j] + pass_histograms_[i][j];
     }
   }
 
-  partition_sizes_.resize(pcnt, 0);
-  for (size_t j = 0; j < pcnt; ++j) {
-    partition_sizes_[j] = partition_offsets.back()[j] + histograms_.back()[j];
+  pass_partition_sizes_.resize(pass_fanout_, 0);
+  for (size_t j = 0; j < pass_fanout_; ++j) {
+    pass_partition_sizes_[j] = partition_offsets.back()[j] + pass_histograms_.back()[j];
   }
 }
 
@@ -333,12 +402,12 @@ void TablePartitioner::initSWCBuffers(int frag_idx,
   for (uint32_t i = 0; i < fanOut; ++i) {
     // swcb_sizes[i] = partition_offsets[frag_idx][i];
     for (uint32_t j = 0; j < key_sizes_.size(); j++) {
-      if (histograms_[frag_idx][i] > 0)
+      if (pass_histograms_[frag_idx][i] > 0)
         swcb_bufs[i].push_back((int8_t*)aligned_alloc(
             CACHE_LINE_SIZE, key_sizes_[j] * (CACHE_LINE_SIZE / key_sizes_[j])));
     }
     for (uint32_t j = 0; j < payload_sizes_.size(); ++j) {
-      if (histograms_[frag_idx][i] > 0)
+      if (pass_histograms_[frag_idx][i] > 0)
         swcb_bufs[i].push_back((int8_t*)aligned_alloc(
             CACHE_LINE_SIZE, payload_sizes_[j] * (CACHE_LINE_SIZE / payload_sizes_[j])));
     }
@@ -364,7 +433,7 @@ void TablePartitioner::finalizeSWCBuffers(
                             key_size);
       if (payload_cols_.size() > 0) {
         int payload_idx = key_cols_.size();
-        for (uint32_t payload_num = 0; payload_num < payload_data_[frag_idx].size();
+        for (uint32_t payload_num = 0; payload_num < pass_payload_data_[frag_idx].size();
              ++payload_num) {
           auto payload_size = payload_sizes_.at(payload_num);
           remainderCopyWithSWCB(&(swcb_bufs[idx][payload_idx][0]),
@@ -385,22 +454,23 @@ void TablePartitioner::finalizeSWCBuffers(
 
 void TablePartitioner::doPartition(int frag_idx,
                                    std::vector<std::vector<size_t>>& partition_offsets,
-                                   std::vector<std::vector<int8_t*>>& col_bufs) {
-  const uint32_t fanOut = getPartitionsCount();
+                                   std::vector<std::vector<int8_t*>>& col_bufs,
+                                   size_t fragment_size) {
+  // const uint32_t fanOut = getPartitionsCount();
   // Software combine buffers
   std::vector<std::vector<int8_t*>> swcb_bufs;
   // this will held info about number of elements in key's or payload's swcb buffers
   std::vector<size_t> swcb_sizes;
   if (g_radix_use_swcb) {
-    initSWCBuffers(frag_idx, fanOut, swcb_bufs, swcb_sizes);
+    initSWCBuffers(frag_idx, pass_fanout_, swcb_bufs, swcb_sizes);
   }
   // FIXME: only one key column for now!
   auto key_size = key_sizes_.at(0);
-  auto keys = key_data_.at(frag_idx).at(0);
-  auto fragment_size = info_.info.fragments.at(frag_idx).getNumTuples();
+  auto keys = pass_key_data_.at(frag_idx).at(0);
+  // auto fragment_size = info_.info.fragments.at(frag_idx).getNumTuples();
   for (uint64_t i = 0; i < fragment_size; ++i) {
     uint32_t idx =
-        getHashValue(&(keys[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
+        getHashValue(&(keys[i * key_size]), key_size, pass_fanout_ - 1, po_.scale_bits);
     // fill partition - first key, then payload(s) if needed
     auto curr_off = partition_offsets[frag_idx][idx];
     // FIXME: only one key column for now!
@@ -415,7 +485,7 @@ void TablePartitioner::doPartition(int frag_idx,
       memcpy(&(col_bufs[idx][0][curr_off * key_size]), &(keys[i * key_size]), key_size);
     if (payload_cols_.size() > 0) {
       int payload_num = 0;
-      for (auto payload : payload_data_[frag_idx]) {
+      for (auto payload : pass_payload_data_[frag_idx]) {
         auto payload_size = payload_sizes_.at(payload_num);
         auto payload_idx = payload_num + key_cols_.size();
         if (g_radix_use_swcb) {
@@ -440,7 +510,7 @@ void TablePartitioner::doPartition(int frag_idx,
   // Write remainder in case of SWCB usage
   if (g_radix_use_swcb) {
     finalizeSWCBuffers(
-        frag_idx, fanOut, partition_offsets, col_bufs, swcb_bufs, swcb_sizes);
+        frag_idx, pass_fanout_, partition_offsets, col_bufs, swcb_bufs, swcb_sizes);
   }
 }
 

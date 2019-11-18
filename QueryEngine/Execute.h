@@ -95,6 +95,7 @@ extern bool g_force_radix_join;
 extern bool g_radix_use_swcb;
 extern size_t g_radix_bits_count;
 extern size_t g_radix_bits_scale;
+extern size_t g_radix_pass_num;
 extern PartitioningOptions::PartitioningKind g_radix_type;
 
 class QueryCompilationDescriptor;

@@ -35,18 +35,27 @@ class TablePartitioner {
 
   TemporaryTable runPartitioning();
 
-  size_t getPartitionsCount() const;
+  size_t getPartitionsCount(size_t pass_num) const;
 
  private:
   void fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
                      size_t frag_num,
                      std::vector<const Analyzer::ColumnVar*>& vars,
-                     std::vector<const int8_t*>& output);
+                     std::vector<int8_t*>& output);
   void fetchFragments(std::vector<const Analyzer::ColumnVar*>& key_vars,
-                      std::vector<const Analyzer::ColumnVar*>& payload_vars);
+                      std::vector<const Analyzer::ColumnVar*>& payload_vars,
+                      std::vector<size_t>& fragment_sizes);
+  void fetchOrCreateFragments(std::vector<const Analyzer::ColumnVar*>& key_vars,
+                              std::vector<const Analyzer::ColumnVar*>& payload_vars,
+                              size_t previous_size,
+                              std::vector<std::vector<size_t>>& fragment_sizes);
+  void createDataForPartition(ResultSetPtr partition);
   void computePartitionSizesAndOffsets(
-      std::vector<std::vector<size_t>>& partition_offsets);
-  void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
+      std::vector<std::vector<size_t>>& partition_offsets,
+      std::vector<size_t>& fragment_sizes);
+  void collectHistogram(int frag_idx,
+                        std::vector<size_t>& histogram,
+                        size_t fragment_size);
   uint32_t getHashValue(const int8_t* key, int size, int mask, int shift);
   void nonTempStore(int8_t* dst, const int8_t* src, size_t size);
   void copyWithSWCB(int8_t* swcb_buf,
@@ -70,13 +79,14 @@ class TablePartitioner {
                           std::vector<size_t>& swcb_sizes);
   void doPartition(int frag_idx,
                    std::vector<std::vector<size_t>>& partition_offsets,
-                   std::vector<std::vector<int8_t*>>& col_bufs);
+                   std::vector<std::vector<int8_t*>>& col_bufs,
+                   size_t fragment_size);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
   std::vector<InputColDescriptor> key_cols_;
   std::vector<InputColDescriptor> payload_cols_;
-  std::vector<std::vector<const int8_t*>> key_data_;
-  std::vector<std::vector<const int8_t*>> payload_data_;
+  std::vector<std::vector<int8_t*>> pass_key_data_;
+  std::vector<std::vector<int8_t*>> pass_payload_data_;
   std::vector<size_t> key_sizes_;
   std::vector<size_t> payload_sizes_;
   const InputTableInfo& info_;
@@ -87,8 +97,9 @@ class TablePartitioner {
   std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
   std::vector<std::shared_ptr<Chunk_NS::Chunk>> chunks_owner_;
   // Maps partition ID to a number of tuples in this partition.
-  std::vector<size_t> partition_sizes_;
-  std::vector<std::vector<size_t>> histograms_;
+  std::vector<size_t> pass_partition_sizes_;
+  std::vector<std::vector<size_t>> pass_histograms_;
+  size_t pass_fanout_;
   //
 };
 

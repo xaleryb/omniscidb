@@ -106,6 +106,7 @@ bool g_force_radix_join{false};
 bool g_radix_use_swcb{false};
 size_t g_radix_bits_count{5};
 size_t g_radix_bits_scale{0};
+size_t g_radix_pass_num{1};
 PartitioningOptions::PartitioningKind g_radix_type{
     PartitioningOptions::PartitioningKind::HASH};
 
