@@ -1044,6 +1044,14 @@ boost::optional<int> MapDProgramOptions::parse_command_line(int argc,
     }
   }
 
+  if (vm.count("radix-pass-number")) {
+    if (g_radix_pass_num <= 0) {
+      LOG(ERROR)
+          << "Invalid value for radix partitioning pass number. Value should be > 0.";
+      return 1;
+    }
+  }
+
   if (enable_runtime_udf) {
     LOG(INFO) << " Runtime user defined extension functions enabled globally.";
   }

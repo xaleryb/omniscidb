@@ -35,7 +35,7 @@ class TablePartitioner {
 
   TemporaryTable runPartitioning();
 
-  size_t getPartitionsCount(size_t pass_num) const;
+  size_t getPartitionsCount() const;
 
  private:
   void fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
@@ -47,11 +47,12 @@ class TablePartitioner {
                       std::vector<size_t>& fragment_sizes);
   void fetchOrCreateFragments(std::vector<const Analyzer::ColumnVar*>& key_vars,
                               std::vector<const Analyzer::ColumnVar*>& payload_vars,
-                              size_t previous_size,
+                              std::vector<ResultSetPtr>& prev_partititon,
                               std::vector<std::vector<size_t>>& fragment_sizes);
   void createDataForPartition(ResultSetPtr partition);
   void computePartitionSizesAndOffsets(
       std::vector<std::vector<size_t>>& partition_offsets,
+      std::vector<std::vector<size_t>>& pass_histograms,
       std::vector<size_t>& fragment_sizes);
   void collectHistogram(int frag_idx,
                         std::vector<size_t>& histogram,
@@ -70,6 +71,7 @@ class TablePartitioner {
   void initSWCBuffers(int frag_idx,
                       const uint32_t fanOut,
                       std::vector<std::vector<int8_t*>>& swcb_bufs,
+                      std::vector<std::vector<size_t>>& pass_histograms,
                       std::vector<size_t>& swcb_sizes);
   void finalizeSWCBuffers(int frag_idx,
                           const uint32_t fanOut,
@@ -80,6 +82,7 @@ class TablePartitioner {
   void doPartition(int frag_idx,
                    std::vector<std::vector<size_t>>& partition_offsets,
                    std::vector<std::vector<int8_t*>>& col_bufs,
+                   std::vector<std::vector<size_t>>& pass_histograms,
                    size_t fragment_size);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
@@ -98,8 +101,9 @@ class TablePartitioner {
   std::vector<std::shared_ptr<Chunk_NS::Chunk>> chunks_owner_;
   // Maps partition ID to a number of tuples in this partition.
   std::vector<size_t> pass_partition_sizes_;
-  std::vector<std::vector<size_t>> pass_histograms_;
   size_t pass_fanout_;
+  // current pass number
+  size_t pass_num_;
   //
 };
 

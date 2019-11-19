@@ -82,30 +82,35 @@ void TablePartitioner::fetchOrCreateFragments(
     std::vector<const Analyzer::ColumnVar*>& key_vars,
     std::vector<const Analyzer::ColumnVar*>& payload_vars,
     // info from previous partitioning
-    size_t previous_size,
+    std::vector<ResultSetPtr>& prev_partititon,
     std::vector<std::vector<size_t>>& fragment_sizes) {
+  size_t previous_size = prev_partititon.size();
   if (previous_size == 0) {
-    // initial case
+    // initial case we treat set of fragments as single point
+    // for partitioning
     std::vector<size_t> tmp_sizes;
     fetchFragments(key_vars, payload_vars, tmp_sizes);
     fragment_sizes.emplace_back(tmp_sizes);
   } else {
     // second and later passes need to properly
-    // prepare fragments for partitioning. Here we fill only
-    // size information. Data is filled later
+    // prepare fragments for partitioning. For now each partitition element
+    // is a subject for further partition, no splitting is made.
+    // Here we fill only size information. Data is filled later
     fragment_sizes.resize(previous_size);
     for (size_t i = 0; i < previous_size; ++i) {
-      fragment_sizes[i].push_back(1);
+      fragment_sizes[i].push_back(prev_partititon[i]->entryCount());
     }
   }
 }
 
+// for now we don't split results of previous partitition hence
+// only 0 element is filled
 void TablePartitioner::createDataForPartition(ResultSetPtr partition) {
   auto rs = partition.get();
   auto mem_desc = rs->getQueryMemDesc();
   auto storage = rs->getStorage();
   size_t col_idx = 0;
-  for (size_t col_idx = 0; col_idx < key_sizes_.size(); ++col_idx) {
+  for (col_idx = 0; col_idx < key_sizes_.size(); ++col_idx) {
     size_t col_offs = mem_desc.getColOffInBytes(col_idx);
     int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
     pass_key_data_[0][col_idx] = col_buf;
@@ -113,7 +118,7 @@ void TablePartitioner::createDataForPartition(ResultSetPtr partition) {
   for (; col_idx < key_sizes_.size() + payload_sizes_.size(); ++col_idx) {
     size_t col_offs = mem_desc.getColOffInBytes(col_idx);
     int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
-    pass_payload_data_[0][col_idx] = col_buf;
+    pass_payload_data_[0][col_idx - key_sizes_.size()] = col_buf;
   }
 }
 
@@ -147,10 +152,11 @@ TemporaryTable TablePartitioner::runPartitioning() {
     col_vars.emplace_back(std::move(col_var));
   }
 
-  size_t pass_num = 0;
+  pass_num_ = 0;
   // Partition result storage
   std::vector<std::vector<ResultSetPtr>> partitions;
   partitions.resize(g_radix_pass_num);
+  std::vector<ResultSetPtr> dummy;
 
   // Start multipass partititioning
   do {
@@ -161,27 +167,29 @@ TemporaryTable TablePartitioner::runPartitioning() {
     fetchOrCreateFragments(key_vars,
                            payload_vars,
                            // We need to use info from previous partition pass
-                           pass_num == 0 ? pass_num : partitions[pass_num - 1].size(),
+                           pass_num_ == 0 ? dummy : partitions[pass_num_ - 1],
                            fragment_sizes);
     for (size_t tab_num = 0; tab_num < fragment_sizes.size(); ++tab_num) {
       // [partition id][column idx] -> column buffer.
       std::vector<std::vector<int8_t*>> col_bufs;
-      pass_fanout_ = getPartitionsCount(pass_num + 1);
-      pass_histograms_.resize(fragment_sizes[tab_num].size(),
-                              std::vector<size_t>(pass_fanout_, 0));
+      pass_fanout_ = getPartitionsCount();
+      std::vector<std::vector<size_t>> pass_histograms;
+      pass_histograms.resize(fragment_sizes[tab_num].size(),
+                             std::vector<size_t>(pass_fanout_, 0));
 
-      if (pass_num > 0) {
+      if (pass_num_ > 0) {
         // we need to obtain proper fragment for partitioning
-        // Now we don't split result of previous partition
+        // Now we don't anyhow plit result of previous partition
         CHECK_EQ(fragment_sizes[tab_num].size(), size_t(1));
-        createDataForPartition(partitions[pass_num - 1][tab_num]);
+        createDataForPartition(partitions[pass_num_ - 1][tab_num]);
       }
 
       // This vector holds write positions (in number of elements, not bytes)
       // in partitions for each partitioned fragment.
       // [fragment idx][partition id] -> offset in partition buffer.
       std::vector<std::vector<size_t>> partition_offsets;
-      computePartitionSizesAndOffsets(partition_offsets, fragment_sizes[tab_num]);
+      computePartitionSizesAndOffsets(
+          partition_offsets, pass_histograms, fragment_sizes[tab_num]);
 
       std::vector<ssize_t> dummy;
       ColSlotContext slot_ctx(slots, dummy);
@@ -189,7 +197,6 @@ TemporaryTable TablePartitioner::runPartitioning() {
       col_bufs.resize(pass_partition_sizes_.size());
       for (size_t part_id = 0; part_id < pass_partition_sizes_.size(); ++part_id) {
         if (!pass_partition_sizes_[part_id]) {
-          partitions[pass_num].push_back(nullptr);
           continue;
         }
 
@@ -204,29 +211,32 @@ TemporaryTable TablePartitioner::runPartitioning() {
         col_bufs[part_id].resize(targets.size(), nullptr);
 
         // Init storage for non-empty partitions only.
-        if (pass_partition_sizes_[part_id]) {
-          auto* storage = rs->allocateStorage();
-          for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
-            size_t col_offs = mem_desc.getColOffInBytes(col_idx);
-            int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
-            col_bufs[part_id][col_idx] = col_buf;
-          }
+        auto* storage = rs->allocateStorage();
+        for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
+          size_t col_offs = mem_desc.getColOffInBytes(col_idx);
+          int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
+          col_bufs[part_id][col_idx] = col_buf;
         }
-        partitions[pass_num].push_back(rs);
+        partitions[pass_num_].push_back(rs);
       }
 
       for (size_t i = 0; i < fragment_sizes[tab_num].size(); ++i) {
         // run partitioning function
-        doPartition(i, partition_offsets, col_bufs, fragment_sizes[tab_num][i]);
+        doPartition(
+            i, partition_offsets, col_bufs, pass_histograms, fragment_sizes[tab_num][i]);
       }
     }
 
 // TODO: remove debug prints
 #if PARTITIONING_DEBUG_PRINT
-    for (size_t pid = 0; pid < partitions.size(); ++pid) {
+    for (size_t pid = 0; pid < partitions[pass_num_].size(); ++pid) {
       std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
-      for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
-        auto row = partitions[pid]->getRowAt(rid);
+      if (!partitions[pass_num_][pid]) {
+        std::cerr << "empty" << std::endl;
+        continue;
+      }
+      for (size_t rid = 0; rid < partitions[pass_num_][pid]->entryCount(); ++rid) {
+        auto row = partitions[pass_num_][pid]->getRowAt(rid);
         for (auto& val : row) {
           auto scalar_r = boost::get<ScalarTargetValue>(&val);
           CHECK(scalar_r);
@@ -237,18 +247,17 @@ TemporaryTable TablePartitioner::runPartitioning() {
       std::cerr << "=================================" << std::endl;
     }
 #endif
-    // Clear partition for pass_num-2 stage?
-  } while (pass_num++ < g_radix_pass_num - 1);
+    // Clear partition for pass_num-1 stage
+    if (pass_num_ > 0)
+      partitions[pass_num_ - 1].clear();
+  } while (pass_num_++ < g_radix_pass_num - 1);
 
-  // remove unneeded partition results
-  for (size_t i = 0; i < partitions.size() - 1; ++i)
-    partitions[i].clear();
-
+  // Always use partitioning of latest pass
   return TemporaryTable(partitions.back(), true);
 }
 
-size_t TablePartitioner::getPartitionsCount(size_t pass_num) const {
-  return 1 << po_.mask_bits / pass_num;
+size_t TablePartitioner::getPartitionsCount() const {
+  return 1 << po_.mask_bits;
 }
 
 #define HASH_BIT_MODULO(K, MASK, NBITS) (((K)&MASK) >> NBITS)
@@ -273,7 +282,9 @@ uint32_t TablePartitioner::getHashValue(const int8_t* key,
       CHECK(false);
   }
 
-  return HASH_BIT_MODULO(value, mask, shift);
+  mask = mask << shift * pass_num_;
+
+  return HASH_BIT_MODULO(value, mask, shift * pass_num_);
 }
 
 void TablePartitioner::collectHistogram(int frag_idx,
@@ -302,25 +313,26 @@ void TablePartitioner::collectHistogram(int frag_idx,
 
 void TablePartitioner::computePartitionSizesAndOffsets(
     std::vector<std::vector<size_t>>& partition_offsets,
+    std::vector<std::vector<size_t>>& pass_histograms,
     std::vector<size_t>& fragment_sizes) {
   auto fragments_num = fragment_sizes.size();
   // Run histogram collection.
   for (size_t i = 0; i < fragments_num; ++i) {
     // run histogram collection function.
-    collectHistogram(i, pass_histograms_[i], fragment_sizes[i]);
+    collectHistogram(i, pass_histograms[i], fragment_sizes[i]);
   }
 
   // Count partition sizes and offsets (in number of tuples).
   partition_offsets.assign(fragments_num, std::vector<size_t>(pass_fanout_, 0));
-  for (size_t i = 0; i < (pass_histograms_.size() - 1); ++i) {
+  for (size_t i = 0; i < (pass_histograms.size() - 1); ++i) {
     for (size_t j = 0; j < pass_fanout_; ++j) {
-      partition_offsets[i + 1][j] = partition_offsets[i][j] + pass_histograms_[i][j];
+      partition_offsets[i + 1][j] = partition_offsets[i][j] + pass_histograms[i][j];
     }
   }
 
   pass_partition_sizes_.resize(pass_fanout_, 0);
   for (size_t j = 0; j < pass_fanout_; ++j) {
-    pass_partition_sizes_[j] = partition_offsets.back()[j] + pass_histograms_.back()[j];
+    pass_partition_sizes_[j] = partition_offsets.back()[j] + pass_histograms.back()[j];
   }
 }
 
@@ -395,6 +407,7 @@ void TablePartitioner::remainderCopyWithSWCB(int8_t* swcb_buf,
 void TablePartitioner::initSWCBuffers(int frag_idx,
                                       const uint32_t fanOut,
                                       std::vector<std::vector<int8_t*>>& swcb_bufs,
+                                      std::vector<std::vector<size_t>>& pass_histograms,
                                       std::vector<size_t>& swcb_sizes) {
   // Fill initial information about swcb buffers and allocate them
   swcb_sizes.resize(fanOut, 0);
@@ -402,12 +415,12 @@ void TablePartitioner::initSWCBuffers(int frag_idx,
   for (uint32_t i = 0; i < fanOut; ++i) {
     // swcb_sizes[i] = partition_offsets[frag_idx][i];
     for (uint32_t j = 0; j < key_sizes_.size(); j++) {
-      if (pass_histograms_[frag_idx][i] > 0)
+      if (pass_histograms[frag_idx][i] > 0)
         swcb_bufs[i].push_back((int8_t*)aligned_alloc(
             CACHE_LINE_SIZE, key_sizes_[j] * (CACHE_LINE_SIZE / key_sizes_[j])));
     }
     for (uint32_t j = 0; j < payload_sizes_.size(); ++j) {
-      if (pass_histograms_[frag_idx][i] > 0)
+      if (pass_histograms[frag_idx][i] > 0)
         swcb_bufs[i].push_back((int8_t*)aligned_alloc(
             CACHE_LINE_SIZE, payload_sizes_[j] * (CACHE_LINE_SIZE / payload_sizes_[j])));
     }
@@ -455,6 +468,7 @@ void TablePartitioner::finalizeSWCBuffers(
 void TablePartitioner::doPartition(int frag_idx,
                                    std::vector<std::vector<size_t>>& partition_offsets,
                                    std::vector<std::vector<int8_t*>>& col_bufs,
+                                   std::vector<std::vector<size_t>>& pass_histograms,
                                    size_t fragment_size) {
   // const uint32_t fanOut = getPartitionsCount();
   // Software combine buffers
@@ -462,7 +476,7 @@ void TablePartitioner::doPartition(int frag_idx,
   // this will held info about number of elements in key's or payload's swcb buffers
   std::vector<size_t> swcb_sizes;
   if (g_radix_use_swcb) {
-    initSWCBuffers(frag_idx, pass_fanout_, swcb_bufs, swcb_sizes);
+    initSWCBuffers(frag_idx, pass_fanout_, swcb_bufs, pass_histograms, swcb_sizes);
   }
   // FIXME: only one key column for now!
   auto key_size = key_sizes_.at(0);
