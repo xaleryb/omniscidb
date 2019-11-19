@@ -69,7 +69,13 @@ class RadixJoinHashTable : public JoinHashTableInterface {
                                const int device_id,
                                const int partition_id) const noexcept override;
 
+  int64_t getJoinHashDescriptorPtr(const ExecutorDeviceType device_type,
+                                   const int device_id,
+                                   const int partition_id = -1) const noexcept override;
+
   bool isPartitioned() const noexcept override { return true; }
+
+  bool useDescriptors() const noexcept override { return true; }
 
   std::string toString(const ExecutorDeviceType device_type,
                        const int device_id,
@@ -96,6 +102,16 @@ class RadixJoinHashTable : public JoinHashTableInterface {
 
   size_t payloadBufferOff(const int partition_id) const noexcept override;
 
+  // We use lazy reify to better utilize CPU caches. So use it for CPU
+  // memory level only.
+  bool isLazyReify() const override {
+    return memory_level_ == Data_Namespace::MemoryLevel::CPU_LEVEL;
+  }
+
+  void doLazyReify(const ExecutorDeviceType device_type,
+                   const int device_id,
+                   const int partition_id) override;
+
   virtual ~RadixJoinHashTable() {}
 
   size_t dump(size_t entry_limit = 200) const override;
@@ -115,13 +131,13 @@ class RadixJoinHashTable : public JoinHashTableInterface {
   const std::shared_ptr<Analyzer::BinOper> qual_bin_oper_;
   const std::vector<InputTableInfo>& query_infos_;
   const Data_Namespace::MemoryLevel memory_level_;
+  const int device_count_;
   HashType layout_;
   ColumnCacheMap& column_cache_;
   Executor* executor_;
   std::vector<InnerOuter> inner_outer_pairs_;
   std::unordered_map<int, std::shared_ptr<JoinHashTableInterface>> part_tables_;
-  std::unordered_map<int, std::vector<InputTableInfo>> new_query_info_;
-  size_t unified_size_ = 0;
+  std::deque<std::vector<InputTableInfo>> part_query_infos_;
 };
 
 #endif  // QUERYENGINE_RADIXJOINHASHTABLE_H

@@ -97,6 +97,7 @@ extern size_t g_radix_bits_count;
 extern size_t g_radix_bits_scale;
 extern size_t g_radix_pass_num;
 extern PartitioningOptions::PartitioningKind g_radix_type;
+extern bool g_enable_zero_copy_columnarization;
 
 class QueryCompilationDescriptor;
 using QueryCompilationDescriptorOwned = std::unique_ptr<QueryCompilationDescriptor>;
@@ -785,6 +786,9 @@ class Executor {
 
  private:
   ResultSetPtr resultsUnion(ExecutionDispatch& execution_dispatch);
+  void doLazyJoinHashTableReify(const ExecutorDeviceType device_type,
+                                const int device_id,
+                                const int frag_id = -1);
   std::vector<int64_t> getJoinHashTablePtrs(const ExecutorDeviceType device_type,
                                             const int device_id,
                                             const int frag_id = -1);

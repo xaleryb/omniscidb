@@ -746,6 +746,12 @@ void MapDProgramOptions::fillAdvancedOptions() {
                                po::value<std::string>(&radix_type),
                                "Specifies radix object - key value or key hash, possible "
                                "values: \"value\" or \"hash\" (default)");
+  developer_desc.add_options()("enable-zero-copy-columnarization",
+                               po::value<bool>(&g_enable_zero_copy_columnarization)
+                                   ->default_value(g_enable_zero_copy_columnarization)
+                                   ->implicit_value(true),
+                               "Enables/disables a zero-copy columnarization method "
+                               "for partitioned data in radix join.");
 }
 
 namespace {

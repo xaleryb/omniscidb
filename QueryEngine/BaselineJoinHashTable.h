@@ -50,7 +50,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
       const HashType preferred_hash_type,
       const int device_count,
       ColumnCacheMap& column_cache,
-      Executor* executor);
+      Executor* executor,
+      bool size_agnostic = false);
 
   //! Make hash table from named tables and columns (such as for testing).
   static std::shared_ptr<BaselineJoinHashTable> getSyntheticInstance(
@@ -76,6 +77,12 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
   size_t getJoinHashBufferSize(const ExecutorDeviceType device_type,
                                const int device_id,
                                const int partition_id = -1) const noexcept override;
+
+  bool useDescriptors() const noexcept override;
+
+  int64_t getJoinHashDescriptorPtr(const ExecutorDeviceType device_type,
+                                   const int device_id,
+                                   const int partition_id = -1) const noexcept override;
 
   std::string toString(const ExecutorDeviceType device_type,
                        const int device_id,
@@ -126,13 +133,17 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
                         const size_t entry_count,
                         ColumnCacheMap& column_cache,
                         Executor* executor,
-                        const std::vector<InnerOuter>& inner_outer_pairs);
+                        const std::vector<InnerOuter>& inner_outer_pairs,
+                        bool size_agnostic);
+
+  int64_t getJoinHashBufferImpl(const ExecutorDeviceType device_type,
+                                const int device_id) const noexcept;
 
   static int getInnerTableId(const std::vector<InnerOuter>& inner_outer_pairs);
 
   virtual void reifyWithLayout(const int device_count,
                                const JoinHashTableInterface::HashType layout,
-                               size_t forced_size = 0);
+                               bool sync);
 
   struct ColumnsForDevice {
     const std::vector<JoinColumn> join_columns;
@@ -146,7 +157,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
       const int device_id);
 
   virtual std::pair<size_t, size_t> approximateTupleCount(
-      const std::vector<ColumnsForDevice>&) const;
+      const std::vector<ColumnsForDevice>&,
+      const bool) const;
 
   virtual size_t getKeyComponentWidth() const;
 
@@ -155,7 +167,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
   virtual int initHashTableOnCpu(const std::vector<JoinColumn>& join_columns,
                                  const std::vector<JoinColumnTypeInfo>& join_column_types,
                                  const std::vector<JoinBucketInfo>& join_bucket_info,
-                                 const JoinHashTableInterface::HashType layout);
+                                 const JoinHashTableInterface::HashType layout,
+                                 bool sync);
 
   virtual int initHashTableOnGpu(const std::vector<JoinColumn>& join_columns,
                                  const std::vector<JoinColumnTypeInfo>& join_column_types,
@@ -185,7 +198,7 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
 
   CompositeKeyInfo getCompositeKeyInfo() const;
 
-  void reify(const int device_count, size_t forced_size = 0);
+  void reify(const int device_count, bool sync = false);
 
   JoinColumn fetchColumn(const Analyzer::ColumnVar* inner_col,
                          const Data_Namespace::MemoryLevel& effective_memory_level,
@@ -195,7 +208,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
 
   void reifyForDevice(const ColumnsForDevice& columns_for_device,
                       const JoinHashTableInterface::HashType layout,
-                      const int device_id);
+                      const int device_id,
+                      bool sync);
 
   void checkHashJoinReplicationConstraint(const int table_id) const;
 
@@ -204,7 +218,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
                              const std::vector<JoinBucketInfo>& join_buckets,
                              const JoinHashTableInterface::HashType layout,
                              const Data_Namespace::MemoryLevel effective_memory_level,
-                             const int device_id);
+                             const int device_id,
+                             bool sync);
 
   llvm::Value* hashPtr(const size_t index);
 
@@ -255,7 +270,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
   size_t getOneToManyElements(
       const int device_count,
       const int shard_count,
-      std::vector<BaselineJoinHashTable::ColumnsForDevice>& columns_per_device) const;
+      std::vector<BaselineJoinHashTable::ColumnsForDevice>& columns_per_device,
+      const bool sync) const;
 
   std::pair<ssize_t, size_t> getApproximateTupleCountFromCache(
       const HashTableCacheKey&) const;
@@ -276,6 +292,8 @@ class BaselineJoinHashTable : public JoinHashTableInterface {
   ColumnCacheMap& column_cache_;
   std::shared_ptr<std::vector<int8_t>> cpu_hash_table_buff_;
   std::mutex cpu_hash_table_buff_mutex_;
+  const bool use_descriptors_;
+  mutable std::map<std::pair<ExecutorDeviceType, int>, Descriptor> descriptors_;
 #ifdef HAVE_CUDA
   std::vector<Data_Namespace::AbstractBuffer*> gpu_hash_table_buff_;
 #endif

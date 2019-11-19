@@ -35,7 +35,8 @@ class OverlapsJoinHashTable : public BaselineJoinHashTable {
                               entry_count,
                               column_cache,
                               executor,
-                              inner_outer_pairs) {}
+                              inner_outer_pairs,
+                              false) {}
 
   ~OverlapsJoinHashTable() override {}
 
@@ -69,13 +70,14 @@ class OverlapsJoinHashTable : public BaselineJoinHashTable {
  protected:
   void reifyWithLayout(const int device_count,
                        const JoinHashTableInterface::HashType layout,
-                       size_t forced_size = 0) override;
+                       const bool sync) override;
 
   std::pair<size_t, size_t> calculateCounts(
       size_t shard_count,
       const Fragmenter_Namespace::TableInfo& query_info,
       const int device_count,
-      std::vector<BaselineJoinHashTable::ColumnsForDevice>& columns_per_device);
+      std::vector<BaselineJoinHashTable::ColumnsForDevice>& columns_per_device,
+      const bool sync);
 
   size_t calculateHashTableSize(size_t number_of_dimensions,
                                 size_t emitted_keys_count,
@@ -85,8 +87,8 @@ class OverlapsJoinHashTable : public BaselineJoinHashTable {
       const std::deque<Fragmenter_Namespace::FragmentInfo>& fragments,
       const int device_id) override;
 
-  std::pair<size_t, size_t> approximateTupleCount(
-      const std::vector<ColumnsForDevice>&) const override;
+  std::pair<size_t, size_t> approximateTupleCount(const std::vector<ColumnsForDevice>&,
+                                                  const bool) const override;
 
   size_t getKeyComponentWidth() const override;
 
@@ -95,7 +97,8 @@ class OverlapsJoinHashTable : public BaselineJoinHashTable {
   int initHashTableOnCpu(const std::vector<JoinColumn>& join_columns,
                          const std::vector<JoinColumnTypeInfo>& join_column_types,
                          const std::vector<JoinBucketInfo>& join_bucket_info,
-                         const JoinHashTableInterface::HashType layout) override;
+                         const JoinHashTableInterface::HashType layout,
+                         const bool sync) override;
 
   int initHashTableOnGpu(const std::vector<JoinColumn>& join_columns,
                          const std::vector<JoinColumnTypeInfo>& join_column_types,

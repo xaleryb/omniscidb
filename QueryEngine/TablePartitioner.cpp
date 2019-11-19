@@ -179,7 +179,7 @@ TemporaryTable TablePartitioner::runPartitioning() {
 
       if (pass_num_ > 0) {
         // we need to obtain proper fragment for partitioning
-        // Now we don't anyhow plit result of previous partition
+        // Now we don't anyhow split result of previous partition
         CHECK_EQ(fragment_sizes[tab_num].size(), size_t(1));
         createDataForPartition(partitions[pass_num_ - 1][tab_num]);
       }
@@ -211,11 +211,12 @@ TemporaryTable TablePartitioner::runPartitioning() {
         col_bufs[part_id].resize(targets.size(), nullptr);
 
         // Init storage for non-empty partitions only.
-        auto* storage = rs->allocateStorage();
+        int8_t* buff = static_cast<int8_t*>(
+            checked_malloc(mem_desc.getBufferSizeBytes(ExecutorDeviceType::CPU)));
+        row_set_mem_owner_->addColBuffer(buff);
+        rs->allocateStorage(buff, {});
         for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
-          size_t col_offs = mem_desc.getColOffInBytes(col_idx);
-          int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
-          col_bufs[part_id][col_idx] = col_buf;
+          col_bufs[part_id][col_idx] = buff + mem_desc.getColOffInBytes(col_idx);
         }
         partitions[pass_num_].push_back(rs);
       }
