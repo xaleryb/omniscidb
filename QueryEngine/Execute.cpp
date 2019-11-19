@@ -104,6 +104,7 @@ double g_bump_allocator_step_reduction{0.75};
 bool g_enable_direct_columnarization{true};
 extern bool g_enable_experimental_string_functions;
 bool g_force_radix_join{false};
+bool g_enable_zero_copy_columnarization{true};
 
 int const Executor::max_gpu_count;
 

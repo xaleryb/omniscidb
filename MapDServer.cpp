@@ -723,6 +723,12 @@ void MapDProgramOptions::fillAdvancedOptions() {
                                    ->default_value(g_force_radix_join)
                                    ->implicit_value(true),
                                "Force all joins to use radix join algorithm.");
+  developer_desc.add_options()("enable-zero-copy-columnarization",
+                               po::value<bool>(&g_enable_zero_copy_columnarization)
+                                   ->default_value(g_enable_zero_copy_columnarization)
+                                   ->implicit_value(true),
+                               "Enables/disables a zero-copy columnarization method "
+                               "for partitioned data in radix join.");
 }
 
 namespace {

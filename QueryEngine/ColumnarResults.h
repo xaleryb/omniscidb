@@ -112,6 +112,7 @@ class ColumnarResults {
   inline void writeBackCell(const TargetValue& col_val,
                             const size_t row_idx,
                             const size_t column_idx);
+  void materializeAllColumnsZeroCopy(const ResultSet& rows, const size_t num_columns);
   void materializeAllColumnsDirectly(const ResultSet& rows, const size_t num_columns);
   void materializeAllColumnsThroughIteration(const ResultSet& rows,
                                              const size_t num_columns);
