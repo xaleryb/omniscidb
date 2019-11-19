@@ -2306,6 +2306,7 @@ int32_t Executor::executePlanWithoutGroupBy(
   int32_t error_code = device_type == ExecutorDeviceType::GPU ? 0 : start_rowid;
   std::vector<int64_t*> out_vec;
   const auto hoist_buf = serializeLiterals(compilation_result.literal_values, device_id);
+  doLazyJoinHashTableReify(device_type, device_id, frag_id);
   const auto join_hash_table_ptrs = getJoinHashTablePtrs(device_type, device_id, frag_id);
   std::unique_ptr<OutVecOwner> output_memory_scope;
   if (g_enable_dynamic_watchdog && interrupted_) {
@@ -2524,6 +2525,17 @@ int32_t Executor::executePlanWithGroupBy(
   }
 
   return 0;
+}
+
+void Executor::doLazyJoinHashTableReify(const ExecutorDeviceType device_type,
+                                        const int device_id,
+                                        const int frag_id) {
+  const auto& join_hash_tables = plan_state_->join_info_.join_hash_tables_;
+  for (auto hash_table : join_hash_tables) {
+    if (hash_table && hash_table->isLazyReify())
+      hash_table->doLazyReify(
+          device_type, device_id, hash_table->isPartitioned() ? frag_id : -1);
+  }
 }
 
 std::vector<int64_t> Executor::getJoinHashTablePtrs(const ExecutorDeviceType device_type,
