@@ -55,23 +55,29 @@ ColumnarResults::ColumnarResults(
                                                           : use_parallel_algorithms(rows))
     , direct_columnar_conversion_(rows.isDirectColumnarConversionPossible()) {
   column_buffers_.resize(num_columns);
-  for (size_t i = 0; i < num_columns; ++i) {
-    const bool is_varlen = target_types[i].is_array() ||
-                           (target_types[i].is_string() &&
-                            target_types[i].get_compression() == kENCODING_NONE) ||
-                           target_types[i].is_geometry();
-    if (is_varlen) {
-      throw ColumnarConversionNotSupported();
-    }
-    column_buffers_[i] =
-        reinterpret_cast<int8_t*>(checked_malloc(num_rows_ * target_types[i].get_size()));
-    row_set_mem_owner->addColBuffer(column_buffers_[i]);
-  }
 
-  if (isDirectColumnarConversionPossible() && rows.entryCount() > 0) {
-    materializeAllColumnsDirectly(rows, num_columns);
+  if (rows.isZeroCopyColumnarConversionPossible() &&
+      rows.getRowSetMemOwner() == row_set_mem_owner) {
+    materializeAllColumnsZeroCopy(rows, num_columns);
   } else {
-    materializeAllColumnsThroughIteration(rows, num_columns);
+    for (size_t i = 0; i < num_columns; ++i) {
+      const bool is_varlen = target_types[i].is_array() ||
+                             (target_types[i].is_string() &&
+                              target_types[i].get_compression() == kENCODING_NONE) ||
+                             target_types[i].is_geometry();
+      if (is_varlen) {
+        throw ColumnarConversionNotSupported();
+      }
+      column_buffers_[i] = reinterpret_cast<int8_t*>(
+          checked_malloc(num_rows_ * target_types[i].get_size()));
+      row_set_mem_owner->addColBuffer(column_buffers_[i]);
+    }
+
+    if (isDirectColumnarConversionPossible() && rows.entryCount() > 0) {
+      materializeAllColumnsDirectly(rows, num_columns);
+    } else {
+      materializeAllColumnsThroughIteration(rows, num_columns);
+    }
   }
 }
 
@@ -291,6 +297,20 @@ void ColumnarResults::writeBackCellDirect<double>(
       read_from_function(rows, input_buffer_entry_idx, target_idx, slot_idx);
   const double dval = *reinterpret_cast<const double*>(may_alias_ptr(&ival));
   reinterpret_cast<double*>(column_buffers_[target_idx])[output_buffer_entry_idx] = dval;
+}
+
+/**
+ * This function materializes all columns from the main storage by simply storing
+ * pointers to column's data.
+ */
+void ColumnarResults::materializeAllColumnsZeroCopy(const ResultSet& rows,
+                                                    const size_t num_columns) {
+  CHECK(rows.isZeroCopyColumnarConversionPossible());
+  CHECK(rows.getQueryDescriptionType() == QueryDescriptionType::Projection);
+  int8_t* buff = rows.getStorage()->getUnderlyingBuffer();
+  for (size_t col_idx = 0; col_idx < num_columns; col_idx++) {
+    column_buffers_[col_idx] = buff + rows.getQueryMemDesc().getColOffInBytes(col_idx);
+  }
 }
 
 /**

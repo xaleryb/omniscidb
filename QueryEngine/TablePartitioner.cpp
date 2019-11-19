@@ -140,11 +140,12 @@ TemporaryTable TablePartitioner::runPartitioning() {
 
     // Init storage for non-empty partitions only.
     if (partition_sizes_[frag_id]) {
-      auto* storage = rs->allocateStorage();
+      int8_t* buff = static_cast<int8_t*>(
+          checked_malloc(mem_desc.getBufferSizeBytes(ExecutorDeviceType::CPU)));
+      row_set_mem_owner_->addColBuffer(buff);
+      rs->allocateStorage(buff, {});
       for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
-        size_t col_offs = mem_desc.getColOffInBytes(col_idx);
-        int8_t* col_buf = storage->getUnderlyingBuffer() + col_offs;
-        col_bufs[frag_id][col_idx] = col_buf;
+        col_bufs[frag_id][col_idx] = buff + mem_desc.getColOffInBytes(col_idx);
       }
     }
     partitions.push_back(rs);

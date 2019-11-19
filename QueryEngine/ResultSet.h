@@ -93,6 +93,8 @@ class ResultSetStorage {
 
   int8_t* getUnderlyingBuffer() const;
 
+  bool isBufferProvided() const { return buff_is_provided_; }
+
   template <class KeyType>
   void moveEntriesToBuffer(int8_t* new_buff, const size_t new_entry_count) const;
 
@@ -498,6 +500,7 @@ class ResultSet {
                             const size_t output_buffer_size) const;
 
   bool isDirectColumnarConversionPossible() const;
+  bool isZeroCopyColumnarConversionPossible() const;
 
   bool didOutputColumnar() const { return this->query_mem_desc_.didOutputColumnar(); }
 
