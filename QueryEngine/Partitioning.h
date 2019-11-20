@@ -22,7 +22,7 @@
 #include "InputMetadata.h"
 #include "RelAlgExecutionUnit.h"
 
-#define PARTITIONING_DEBUG_PRINT 0
+#define PARTITIONING_DEBUG_PRINT 1
 
 struct PartitioningOptions {
   enum PartitioningKind {
@@ -34,8 +34,8 @@ struct PartitioningOptions {
   };
 
   PartitioningKind kind = HASH;
-  int mask_bits = 16;
-  int scale_bits = 16;
+  size_t mask_bits = 16;
+  size_t scale_bits = 16;
 };
 
 RelAlgExecutionUnit performTablesPartitioning(

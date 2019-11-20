@@ -230,7 +230,7 @@ size_t RadixJoinHashTable::dump(size_t entry_limit) const {
   size_t res = 0;
   for (auto it = ids.begin(); it != ids.end(); ++it) {
     if (res >= entry_limit) {
-      std::cerr << "Partitions out of rows limit:";
+      std::cerr << "Partitions out of entries limit:";
       int first = *(it++);
       int last = first;
       while (it != ids.end()) {
@@ -241,6 +241,7 @@ size_t RadixJoinHashTable::dump(size_t entry_limit) const {
           first = *it;
           last = first;
         }
+        ++it;
       }
       dumpRange(first, last, " ");
       std::cerr << std::endl;

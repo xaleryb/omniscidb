@@ -738,6 +738,10 @@ void MapDProgramOptions::fillAdvancedOptions() {
       "radix-bits-scale",
       po::value<size_t>(&g_radix_bits_scale)->default_value(g_radix_bits_scale),
       "Specifies the position for masking during radix partitioning.");
+  developer_desc.add_options()(
+      "radix-pass-number",
+      po::value<size_t>(&g_radix_pass_num)->default_value(g_radix_pass_num),
+      "Specifies number of passes during radix table partitioning.");
   developer_desc.add_options()("radix-type",
                                po::value<std::string>(&radix_type),
                                "Specifies radix object - key value or key hash, possible "

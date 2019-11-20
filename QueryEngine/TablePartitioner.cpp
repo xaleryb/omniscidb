@@ -21,157 +21,169 @@
 #include "ThriftSerializers.h"
 
 TablePartitioner::TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
-                                   std::vector<InputColDescriptor> key_cols,
-                                   std::vector<InputColDescriptor> payload_cols,
+                                   const std::vector<InputColDescriptor>& key_cols,
+                                   const std::vector<InputColDescriptor>& payload_cols,
                                    const InputTableInfo& info,
                                    ColumnCacheMap& column_cache,
                                    PartitioningOptions po,
                                    Executor* executor,
                                    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner)
-    : key_cols_(std::move(key_cols))
-    , payload_cols_(std::move(payload_cols))
+    : key_count_(key_cols.size())
     , info_(info)
     , column_cache_(column_cache)
     , po_(std::move(po))
     , executor_(executor)
-    , ra_exe_unit_(ra_exe_unit)
-    , row_set_mem_owner_(row_set_mem_owner) {}
+    , row_set_mem_owner_(row_set_mem_owner) {
+  for (auto& col : key_cols)
+    input_cols_.emplace_back(col);
+  for (auto& col : payload_cols)
+    input_cols_.emplace_back(col);
+}
 
-void TablePartitioner::fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
-                                     size_t frag_num,
-                                     std::vector<const Analyzer::ColumnVar*>& vars,
-                                     std::vector<const int8_t*>& output) {
+void TablePartitioner::fetchFragment(
+    const Fragmenter_Namespace::FragmentInfo& frag,
+    const std::vector<std::shared_ptr<Analyzer::ColumnVar>>& col_vars,
+    const size_t expected_size,
+    std::vector<int8_t*>& output) {
   const int8_t* col_frag = nullptr;
   size_t elem_count = 0;
-  for (auto var : vars) {
+  for (auto var : col_vars) {
     std::tie(col_frag, elem_count) =
         ColumnFetcher::getOneColumnFragment(executor_,
-                                            *(var),
+                                            *var,
                                             frag,
                                             Data_Namespace::CPU_LEVEL,
                                             0,
                                             chunks_owner_,
                                             column_cache_);
-    if (col_frag == nullptr) {
-      continue;
-    }
-    CHECK_NE(elem_count, size_t(0));
-    output.push_back(col_frag);
+    output.push_back(const_cast<int8_t*>(col_frag));
+    CHECK_EQ(elem_count, expected_size);
   }
 }
 
 void TablePartitioner::fetchFragments(
-    std::vector<const Analyzer::ColumnVar*>& key_vars,
-    std::vector<const Analyzer::ColumnVar*>& payload_vars) {
-  // get all fragments for columns separately
-  // so far only one key column is considered
-  std::vector<const int8_t*> empty;
-  key_data_.assign(info_.info.fragments.size(), empty);
-  payload_data_.assign(info_.info.fragments.size(), empty);
+    const std::vector<std::shared_ptr<Analyzer::ColumnVar>>& col_vars) {
+  std::vector<int8_t*> empty;
+  input_bufs_.assign(info_.info.fragments.size(), empty);
   size_t frag_idx = 0;
   for (auto& frag : info_.info.fragments) {
-    fetchFragment(frag, frag_idx, key_vars, key_data_[frag_idx]);
-    fetchFragment(frag, frag_idx, payload_vars, payload_data_[frag_idx]);
+    fetchFragment(frag, col_vars, frag.getNumTuples(), input_bufs_[frag_idx]);
+    input_sizes_.push_back(frag.getNumTuples());
     frag_idx++;
   }
 }
 
 TemporaryTable TablePartitioner::runPartitioning() {
-  std::vector<const Analyzer::ColumnVar*> key_vars;
-  std::vector<const Analyzer::ColumnVar*> payload_vars;
   // Prepare some aux structures for memory descriptors and result sets.
   // ColSlotContext consumes Expr plain pointers and we use col_vars
-  // to own memory. It can be released after ColSlotContext creation.
+  // to own the memory.
   std::vector<std::shared_ptr<Analyzer::ColumnVar>> col_vars;
   std::vector<Analyzer::Expr*> slots;
   std::vector<TargetInfo> targets;
-  for (auto& col : key_cols_) {
+  for (auto& col : input_cols_) {
     auto col_var = createColVar(col);
     slots.push_back(col_var.get());
-    // fill info for obtaining key columns
-    key_vars.push_back(col_var.get());
-    key_sizes_.push_back(col_var->get_type_info().get_size());
-    targets.emplace_back(
-        TargetInfo{false, kMIN, col_var->get_type_info(), SQLTypeInfo(), false, false});
-    col_vars.emplace_back(std::move(col_var));
-  }
-  for (auto& col : payload_cols_) {
-    auto col_var = createColVar(col);
-    slots.push_back(col_var.get());
-    // fill info for obtaining payload columns
-    payload_vars.push_back(col_var.get());
-    payload_sizes_.push_back(col_var->get_type_info().get_size());
+    elem_sizes_.push_back(col_var->get_type_info().get_size());
     targets.emplace_back(
         TargetInfo{false, kMIN, col_var->get_type_info(), SQLTypeInfo(), false, false});
     col_vars.emplace_back(std::move(col_var));
   }
 
-  // fetch column data - keys and payloads
-  fetchFragments(key_vars, payload_vars);
+  // Fix-up number of passes.
+  size_t pass_count = g_radix_pass_num;
+  if (!pass_count)
+    pass_count = 1;
+  else if (pass_count > po_.mask_bits)
+    pass_count = po_.mask_bits;
 
-  // This vector holds write positions (in number of elements, not bytes)
-  // in partitions for each partitioned fragment.
-  // [fragment idx][partition id] -> offset in partition buffer.
-  std::vector<std::vector<size_t>> partition_offsets;
-  computePartitionSizesAndOffsets(partition_offsets);
-
-  std::vector<ssize_t> dummy;
-  ColSlotContext slot_ctx(slots, dummy);
-  slot_ctx.setAllSlotsPaddedSizeToLogicalSize();
   std::vector<ResultSetPtr> partitions;
-  // [partition id][column idx] -> column buffer.
-  std::vector<std::vector<int8_t*>> col_bufs;
-  col_bufs.resize(partition_sizes_.size());
-  for (size_t frag_id = 0; frag_id < partition_sizes_.size(); ++frag_id) {
-    if (!partition_sizes_[frag_id]) {
-      partitions.push_back(nullptr);
-      continue;
+  for (size_t pass_no = 0; pass_no < pass_count; ++pass_no) {
+    bool last_pass = (pass_no == (pass_count - 1));
+
+    // This is a holder of result sets from the previous pass
+    // to keep data alive during this one.
+    std::vector<ResultSetPtr> prev_partitions;
+    prev_partitions.swap(partitions);
+
+    // On the first pass we should fetch input table. For all
+    // subsequent passes we just use output as an input.
+    if (pass_no == 0) {
+      fetchFragments(col_vars);
+    } else {
+      input_bufs_ = std::move(output_bufs_);
+      input_sizes_ = std::move(output_sizes_);
+      output_bufs_.clear();
+      output_sizes_.clear();
     }
 
-    QueryMemoryDescriptor mem_desc(QueryDescriptionType::Projection,
-                                   executor_,
-                                   slot_ctx,
-                                   partition_sizes_[frag_id],
-                                   true);
-    auto rs = std::make_shared<ResultSet>(
-        targets, ExecutorDeviceType::CPU, mem_desc, row_set_mem_owner_, executor_);
-    rs->setCachedRowCount(partition_sizes_[frag_id]);
-    col_bufs[frag_id].resize(targets.size(), nullptr);
+    // This vector holds write positions (in number of elements, not bytes)
+    // in partitions for each partitioned fragment.
+    // [fragment idx][partition id] -> offset in partition buffer.
+    std::vector<std::vector<size_t>> partition_offsets;
+    computePartitionSizesAndOffsets(partition_offsets);
 
-    // Init storage for non-empty partitions only.
-    if (partition_sizes_[frag_id]) {
-      int8_t* buff = static_cast<int8_t*>(
-          checked_malloc(mem_desc.getBufferSizeBytes(ExecutorDeviceType::CPU)));
-      row_set_mem_owner_->addColBuffer(buff);
-      rs->allocateStorage(buff, {});
-      for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
-        col_bufs[frag_id][col_idx] = buff + mem_desc.getColOffInBytes(col_idx);
+    std::vector<ssize_t> dummy;
+    ColSlotContext slot_ctx(slots, dummy);
+    slot_ctx.setAllSlotsPaddedSizeToLogicalSize();
+    output_bufs_.resize(output_sizes_.size());
+    for (size_t frag_id = 0; frag_id < output_sizes_.size(); ++frag_id) {
+      if (!output_sizes_[frag_id]) {
+        partitions.push_back(nullptr);
+        continue;
       }
-    }
-    partitions.push_back(rs);
-  }
 
-  for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
-    // run partitioning function
-    doPartition(i, partition_offsets, col_bufs);
-  }
+      QueryMemoryDescriptor mem_desc(QueryDescriptionType::Projection,
+                                     executor_,
+                                     slot_ctx,
+                                     output_sizes_[frag_id],
+                                     true);
+      auto rs = std::make_shared<ResultSet>(
+          targets, ExecutorDeviceType::CPU, mem_desc, row_set_mem_owner_, executor_);
+      rs->setCachedRowCount(output_sizes_[frag_id]);
+      output_bufs_[frag_id].resize(targets.size(), nullptr);
+
+      // For the last pass we allocated buffers owned by RowSetMemoryOwner
+      // to enable zero-copy fetch for the resulting table. All other
+      // ResultSets allocate buffers by themselves.
+      int8_t* buff;
+      if (last_pass) {
+        buff = static_cast<int8_t*>(
+            checked_malloc(mem_desc.getBufferSizeBytes(ExecutorDeviceType::CPU)));
+        row_set_mem_owner_->addColBuffer(buff);
+        rs->allocateStorage(buff, {});
+      } else {
+        auto* storage = rs->allocateStorage();
+        buff = storage->getUnderlyingBuffer();
+      }
+      for (size_t col_idx = 0; col_idx < targets.size(); ++col_idx) {
+        output_bufs_[frag_id][col_idx] = buff + mem_desc.getColOffInBytes(col_idx);
+      }
+      partitions.push_back(rs);
+    }
+
+    for (size_t i = 0; i < input_bufs_.size(); ++i) {
+      // run partitioning function
+      doPartition(i, partition_offsets);
+    }
 
 // TODO: remove debug prints
 #if PARTITIONING_DEBUG_PRINT
-  for (size_t pid = 0; pid < partitions.size(); ++pid) {
-    std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
-    for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
-      auto row = partitions[pid]->getRowAt(rid);
-      for (auto& val : row) {
-        auto scalar_r = boost::get<ScalarTargetValue>(&val);
-        CHECK(scalar_r);
-        std::cerr << *scalar_r << " ";
+    std::cerr << "Partitioning results after pass #" << pass_no << std::endl;
+    for (size_t pid = 0; pid < partitions.size(); ++pid) {
+      std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
+      for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
+        auto row = partitions[pid]->getRowAt(rid);
+        for (auto& val : row) {
+          auto scalar_r = boost::get<ScalarTargetValue>(&val);
+          CHECK(scalar_r);
+          std::cerr << *scalar_r << " ";
+        }
+        std::cerr << std::endl;
       }
-      std::cerr << std::endl;
+      std::cerr << "=================================" << std::endl;
     }
-    std::cerr << "=================================" << std::endl;
-  }
 #endif
+  }
 
   return TemporaryTable(partitions, true);
 }
@@ -206,27 +218,17 @@ uint32_t TablePartitioner::getHashValue(const int8_t* key,
 }
 
 void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histogram) {
-  uint64_t i;
   const uint32_t fanOut = getPartitionsCount();
   // FIXME: only one key column for now!
-  auto fragment = key_data_[frag_idx].at(0);
-  auto fragment_size = info_.info.fragments[frag_idx].getNumTuples();
-  // FIXME: only one key column for now!
-  auto key_size = key_sizes_.at(0);
-  for (i = 0; i < fragment_size; ++i) {
+  CHECK_EQ(key_count_, (size_t)1);
+  auto buf = input_bufs_[frag_idx].at(0);
+  auto size = input_sizes_[frag_idx];
+  auto key_size = elem_sizes_.at(0);
+  for (size_t i = 0; i < size; ++i) {
     uint32_t idx =
-        getHashValue(&(fragment[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
+        getHashValue(&(buf[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
     histogram[idx]++;
   }
-
-  /* compute local prefix sum on hist */
-#if 0
-  uint64_t sum = 0;
-  for (i = 0; i < fanOut; i++) {
-    sum += histogram[i];
-    histogram[i] = sum;
-  }
-#endif
 }
 
 void TablePartitioner::computePartitionSizesAndOffsets(
@@ -249,37 +251,32 @@ void TablePartitioner::computePartitionSizesAndOffsets(
     }
   }
 
-  partition_sizes_.resize(pcnt, 0);
+  output_sizes_.resize(pcnt, 0);
   for (size_t j = 0; j < pcnt; ++j) {
-    partition_sizes_[j] = partition_offsets.back()[j] + histograms.back()[j];
+    output_sizes_[j] = partition_offsets.back()[j] + histograms.back()[j];
   }
 }
 
 void TablePartitioner::doPartition(int frag_idx,
-                                   std::vector<std::vector<size_t>>& partition_offsets,
-                                   std::vector<std::vector<int8_t*>>& col_bufs) {
+                                   std::vector<std::vector<size_t>>& partition_offsets) {
   const uint32_t fanOut = getPartitionsCount();
   // FIXME: only one key column for now!
-  auto key_size = key_sizes_.at(0);
-  auto keys = key_data_.at(frag_idx).at(0);
-  auto fragment_size = info_.info.fragments.at(frag_idx).getNumTuples();
-  for (uint64_t i = 0; i < fragment_size; ++i) {
-    uint32_t idx =
-        getHashValue(&(keys[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
-    // fill partition - first key, then payload(s) if needed
-    auto key_pos = partition_offsets[frag_idx][idx];
-    // FIXME: only one key column for now!
-    memcpy(&(col_bufs[idx][0][key_pos * key_size]), &(keys[i * key_size]), key_size);
-    if (payload_cols_.size() > 0) {
-      int payload_idx = 0;
-      for (auto payload : payload_data_[frag_idx]) {
-        auto payload_size = payload_sizes_.at(payload_idx);
-        memcpy(&(col_bufs[idx][payload_idx + key_cols_.size()][key_pos * payload_size]),
-               &(payload[i * payload_size]),
-               payload_size);
-      }
+  CHECK_EQ(key_count_, (size_t)1);
+  auto& input = input_bufs_[frag_idx];
+  auto key_size = elem_sizes_[0];
+  auto fragment_size = input_sizes_[frag_idx];
+  for (size_t i = 0; i < fragment_size; ++i) {
+    uint32_t partition_no =
+        getHashValue(input[0] + i * key_size, key_size, fanOut - 1, po_.scale_bits);
+    auto& output = output_bufs_[partition_no];
+    auto pos = partition_offsets[frag_idx][partition_no];
+    // fill partition
+    for (size_t elem_idx = 0; elem_idx < input_bufs_.size(); ++elem_idx) {
+      auto elem_size = elem_sizes_[elem_idx];
+      memcpy(
+          output[elem_idx] + pos * elem_size, input[elem_idx] + i * elem_size, elem_size);
     }
-    partition_offsets[frag_idx][idx]++;
+    partition_offsets[frag_idx][partition_no]++;
   }
 }
 

@@ -31,13 +31,17 @@ class Executor;
 class TemporaryTable {
  public:
   TemporaryTable(const ResultSetPtr& rs, bool partitioned = false)
-      : partitioned_(partitioned) {
+      : ref_(rs.get()), partitioned_(partitioned) {
     results_.push_back(rs);
   }
   TemporaryTable(const std::vector<ResultSetPtr>& results, bool partitioned = false)
-      : results_(results), partitioned_(partitioned) {}
+      : results_(results), ref_(nullptr), partitioned_(partitioned) {
+    fillRef();
+  }
   TemporaryTable(std::vector<ResultSetPtr>&& results, bool partitioned = false)
-      : results_(results), partitioned_(partitioned) {}
+      : results_(results), ref_(nullptr), partitioned_(partitioned) {
+    fillRef();
+  }
 
   TemporaryTable(const TemporaryTable& other) = default;
   TemporaryTable(TemporaryTable&& other) = default;
@@ -53,12 +57,17 @@ class TemporaryTable {
   size_t rowCount() const;
   size_t colCount() const;
 
+  bool empty() const { return !ref_; }
   bool isPartitioned() const { return partitioned_; }
 
   SQLTypeInfo getColType(const size_t col_idx) const;
 
  private:
+  void fillRef();
+
   std::vector<ResultSetPtr> results_;
+  // Ref is used to get metadata common for all RSs.
+  ResultSet* ref_;
   bool partitioned_;
 };
 
