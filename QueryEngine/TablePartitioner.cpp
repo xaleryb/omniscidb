@@ -127,16 +127,12 @@ TemporaryTable TablePartitioner::runPartitioning() {
     std::vector<std::vector<size_t>> partition_offsets;
     computePartitionSizesAndOffsets(pass_opts, partition_offsets);
 
+    // Now we create result sets to hold partitioning output.
     std::vector<ssize_t> dummy;
     ColSlotContext slot_ctx(slots, dummy);
     slot_ctx.setAllSlotsPaddedSizeToLogicalSize();
     output_bufs_.resize(output_sizes_.size());
     for (size_t frag_id = 0; frag_id < output_sizes_.size(); ++frag_id) {
-      if (!output_sizes_[frag_id]) {
-        partitions.push_back(nullptr);
-        continue;
-      }
-
       QueryMemoryDescriptor mem_desc(QueryDescriptionType::Projection,
                                      executor_,
                                      slot_ctx,
