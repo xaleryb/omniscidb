@@ -25,8 +25,8 @@
 class TablePartitioner {
  public:
   TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
-                   std::vector<InputColDescriptor> key_cols,
-                   std::vector<InputColDescriptor> payload_cols,
+                   const std::vector<InputColDescriptor>& key_cols,
+                   const std::vector<InputColDescriptor>& payload_cols,
                    const InputTableInfo& info,
                    ColumnCacheMap& column_cache,
                    PartitioningOptions po,
@@ -35,40 +35,38 @@ class TablePartitioner {
 
   TemporaryTable runPartitioning();
 
-  size_t getPartitionsCount() const;
-
  private:
   void fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
-                     size_t frag_num,
-                     std::vector<const Analyzer::ColumnVar*>& vars,
-                     std::vector<const int8_t*>& output);
-  void fetchFragments(std::vector<const Analyzer::ColumnVar*>& key_vars,
-                      std::vector<const Analyzer::ColumnVar*>& payload_vars);
+                     const std::vector<std::shared_ptr<Analyzer::ColumnVar>>& col_vars,
+                     const size_t expected_size,
+                     std::vector<int8_t*>& output);
+  void fetchFragments(const std::vector<std::shared_ptr<Analyzer::ColumnVar>>& col_vars);
   void computePartitionSizesAndOffsets(
+      const PartitioningOptions& pass_opts,
       std::vector<std::vector<size_t>>& partition_offsets);
-  void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
+  void collectHistogram(const PartitioningOptions& pass_opts,
+                        int frag_idx,
+                        std::vector<size_t>& histogram);
   uint32_t getHashValue(const int8_t* key, int size, int mask, int shift);
-  void doPartition(int frag_idx,
-                   std::vector<std::vector<size_t>>& partition_offsets,
-                   std::vector<std::vector<int8_t*>>& col_bufs);
+  void doPartition(const PartitioningOptions& pass_opts,
+                   int frag_idx,
+                   std::vector<std::vector<size_t>>& partition_offsets);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
-  std::vector<InputColDescriptor> key_cols_;
-  std::vector<InputColDescriptor> payload_cols_;
-  std::vector<std::vector<const int8_t*>> key_data_;
-  std::vector<std::vector<const int8_t*>> payload_data_;
-  std::vector<size_t> key_sizes_;
-  std::vector<size_t> payload_sizes_;
+  // In input and output vectors key columns always go first.
+  std::vector<InputColDescriptor> input_cols_;
+  std::vector<std::vector<int8_t*>> input_bufs_;
+  std::vector<size_t> input_sizes_;
+  std::vector<std::vector<int8_t*>> output_bufs_;
+  std::vector<size_t> output_sizes_;
+  std::vector<size_t> elem_sizes_;
+  size_t key_count_;
   const InputTableInfo& info_;
   ColumnCacheMap& column_cache_;
   PartitioningOptions po_;
   Executor* executor_;
-  const RelAlgExecutionUnit& ra_exe_unit_;
   std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
   std::vector<std::shared_ptr<Chunk_NS::Chunk>> chunks_owner_;
-  // Maps partition ID to a number of tuples in this partition.
-  std::vector<size_t> partition_sizes_;
-  //
 };
 
 #endif  // QUERYENGINE_TABLEPARTITIONER_H

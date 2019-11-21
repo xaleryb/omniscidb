@@ -44,9 +44,6 @@ std::shared_ptr<RadixJoinHashTable> RadixJoinHashTable::getInstance(
                                                                  device_count,
                                                                  column_cache,
                                                                  executor));
-  if (!join_hash_table->isLazyReify())
-    join_hash_table->reify(device_count);
-
   return join_hash_table;
 }
 
@@ -92,7 +89,8 @@ RadixJoinHashTable::RadixJoinHashTable(
                            device_count,
                            column_cache,
                            executor,
-                           true)));
+                           true,
+                           isLazyReify())));
   }
 }
 
@@ -219,7 +217,7 @@ void RadixJoinHashTable::doLazyReify(const ExecutorDeviceType device_type,
       << "Radix join hash table should be lazily reified by partitions";
   auto it = part_tables_.find(partition_id);
   if (it != part_tables_.end())
-    dynamic_cast<BaselineJoinHashTable*>(it->second.get())->reify(device_count_);
+    dynamic_cast<BaselineJoinHashTable*>(it->second.get())->reify(device_count_, true);
 }
 
 size_t RadixJoinHashTable::dump(size_t entry_limit) const {
@@ -230,7 +228,7 @@ size_t RadixJoinHashTable::dump(size_t entry_limit) const {
   size_t res = 0;
   for (auto it = ids.begin(); it != ids.end(); ++it) {
     if (res >= entry_limit) {
-      std::cerr << "Partitions out of rows limit:";
+      std::cerr << "Partitions out of entries limit:";
       int first = *(it++);
       int last = first;
       while (it != ids.end()) {
@@ -241,6 +239,7 @@ size_t RadixJoinHashTable::dump(size_t entry_limit) const {
           first = *it;
           last = first;
         }
+        ++it;
       }
       dumpRange(first, last, " ");
       std::cerr << std::endl;

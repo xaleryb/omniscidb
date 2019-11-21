@@ -54,24 +54,37 @@ Fragmenter_Namespace::TableInfo build_table_info(
 
 size_t TemporaryTable::getLimit() const {
   size_t res = 0;
-  for (auto& rs : results_)
-    res += rs->getLimit();
+  for (auto& rs : results_) {
+    if (rs)
+      res += rs->getLimit();
+  }
   return res;
 }
 
 size_t TemporaryTable::rowCount() const {
   size_t res = 0;
-  for (auto& rs : results_)
-    res += rs->rowCount();
+  for (auto& rs : results_) {
+    if (rs)
+      res += rs->rowCount();
+  }
   return res;
 }
 
 size_t TemporaryTable::colCount() const {
-  return results_.front()->colCount();
+  return ref_->colCount();
 }
 
 SQLTypeInfo TemporaryTable::getColType(const size_t col_idx) const {
-  return results_.front()->getColType(col_idx);
+  return ref_->getColType(col_idx);
+}
+
+void TemporaryTable::fillRef() {
+  for (auto& rs : results_) {
+    if (rs) {
+      ref_ = rs.get();
+      break;
+    }
+  }
 }
 
 Fragmenter_Namespace::TableInfo InputTableInfoCache::getTableInfo(const int table_id) {

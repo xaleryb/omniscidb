@@ -186,7 +186,7 @@ RelAlgExecutionUnit replaceInputInUnit(
     Analyzer::ExpressionPtrVector& target_exprs_owned) {
 #if PARTITIONING_DEBUG_PRINT
   std::cerr << "Replacing input tables in execution unit" << std::endl;
-  std::cerr << "========== Column replacement map (T:S:L)==========" << std::endl;
+  std::cerr << "============= Column replacement map ==============" << std::endl;
   for (auto& pr : input_maps) {
     std::cerr << "Table " << pr.first.getTableId() << ":" << pr.first.getNestLevel()
               << " -> " << pr.second.new_table_id << ":" << pr.first.getNestLevel()
@@ -277,9 +277,9 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   const auto& table_info = get_inner_query_info(table_id, query_infos);
 
   PartitioningOptions po;
-  // TODO: pass this value through the option?
-  po.mask_bits = 3;
-  po.scale_bits = 0;
+  po.mask_bits = g_radix_bits_count;
+  po.scale_bits = g_radix_bits_scale;
+  po.kind = g_radix_type;
   TablePartitioner partitioner(ra_exe_unit,
                                key,
                                payload,

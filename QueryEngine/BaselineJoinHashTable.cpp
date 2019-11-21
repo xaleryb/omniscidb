@@ -102,7 +102,8 @@ std::shared_ptr<BaselineJoinHashTable> BaselineJoinHashTable::getInstance(
     const int device_count,
     ColumnCacheMap& column_cache,
     Executor* executor,
-    bool size_agnostic) {
+    bool size_agnostic,
+    bool lazy_reify) {
   auto inner_outer_pairs = normalize_column_pairs(
       condition.get(), *executor->getCatalog(), executor->getTemporaryTables());
   const auto& query_info =
@@ -126,10 +127,12 @@ std::shared_ptr<BaselineJoinHashTable> BaselineJoinHashTable::getInstance(
                                 column_cache,
                                 executor,
                                 inner_outer_pairs,
-                                size_agnostic));
+                                size_agnostic,
+                                lazy_reify));
   join_hash_table->checkHashJoinReplicationConstraint(getInnerTableId(inner_outer_pairs));
   try {
-    join_hash_table->reify(device_count);
+    if (!join_hash_table->isLazyReify())
+      join_hash_table->reify(device_count);
   } catch (const TableMustBeReplicated& e) {
     // Throw a runtime error to abort the query
     join_hash_table->freeHashBufferMemory();
@@ -218,7 +221,8 @@ BaselineJoinHashTable::BaselineJoinHashTable(
     ColumnCacheMap& column_cache,
     Executor* executor,
     const std::vector<InnerOuter>& inner_outer_pairs,
-    bool size_agnostic)
+    bool size_agnostic,
+    bool lazy_reify)
     : condition_(condition)
     , query_infos_(query_infos)
     , memory_level_(memory_level)
@@ -228,6 +232,7 @@ BaselineJoinHashTable::BaselineJoinHashTable(
     , executor_(executor)
     , column_cache_(column_cache)
     , use_descriptors_(size_agnostic)
+    , lazy_reify_(lazy_reify)
     , inner_outer_pairs_(inner_outer_pairs)
     , catalog_(executor->getCatalog())
 #ifdef HAVE_CUDA
@@ -1556,9 +1561,8 @@ size_t BaselineJoinHashTable::dump(size_t entry_limit) const {
                         0,
                         entry_limit);
     }
-    // dumpOneToOneBuffer(cpu_hash_table_buff_, entry_count, key_width, key_count)
   } else {
-    std::cerr << "(buffer in not allocated)" << std::endl;
+    std::cerr << "(buffer is not allocated)" << std::endl;
   }
   return res;
 }

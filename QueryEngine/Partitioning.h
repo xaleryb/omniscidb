@@ -34,9 +34,26 @@ struct PartitioningOptions {
   };
 
   PartitioningKind kind = HASH;
-  int mask_bits = 16;
-  int scale_bits = 16;
+  size_t mask_bits = 16;
+  size_t scale_bits = 16;
+
+  size_t getPartitionsCount() const { return 1 << mask_bits; }
 };
+
+inline std::ostream& operator<<(std::ostream& os,
+                                PartitioningOptions::PartitioningKind kind) {
+  switch (kind) {
+    case PartitioningOptions::HASH:
+      os << "HASH";
+      break;
+    case PartitioningOptions::VALUE:
+      os << "VALUE";
+      break;
+    default:
+      os << "UNKNOWN";
+  }
+  return os;
+}
 
 RelAlgExecutionUnit performTablesPartitioning(
     const RelAlgExecutionUnit& ra_exe_unit,
