@@ -71,20 +71,11 @@ size_t TemporaryTable::rowCount() const {
 }
 
 size_t TemporaryTable::colCount() const {
-  return ref_->colCount();
+  return results_.front()->colCount();
 }
 
 SQLTypeInfo TemporaryTable::getColType(const size_t col_idx) const {
-  return ref_->getColType(col_idx);
-}
-
-void TemporaryTable::fillRef() {
-  for (auto& rs : results_) {
-    if (rs) {
-      ref_ = rs.get();
-      break;
-    }
-  }
+  return results_.front()->getColType(col_idx);
 }
 
 Fragmenter_Namespace::TableInfo InputTableInfoCache::getTableInfo(const int table_id) {
@@ -222,19 +213,21 @@ std::map<int, ChunkMetadata> synthesize_metadata(const ResultSet* rows) {
 
 Fragmenter_Namespace::TableInfo synthesize_table_info(const TemporaryTable& table) {
   std::deque<Fragmenter_Namespace::FragmentInfo> result;
+  bool non_empty = false;
   for (int frag_id = 0; frag_id < table.getFragCount(); ++frag_id) {
-    if (table.getResultSet(frag_id)) {
-      result.emplace_back();
-      auto& fragment = result.back();
-      fragment.fragmentId = frag_id;
-      fragment.deviceIds.resize(3);
-      fragment.resultSet = table.getResultSet(frag_id).get();
-      fragment.resultSetMutex.reset(new std::mutex());
-      fragment.setPhysicalNumTuples(fragment.resultSet->entryCount());
-    }
+    result.emplace_back();
+    auto& fragment = result.back();
+    fragment.fragmentId = frag_id;
+    fragment.deviceIds.resize(3);
+    fragment.resultSet = table.getResultSet(frag_id).get();
+    fragment.resultSetMutex.reset(new std::mutex());
+    fragment.setPhysicalNumTuples(fragment.resultSet ? fragment.resultSet->entryCount()
+                                                     : 0);
+    non_empty |= (fragment.resultSet != nullptr);
   }
   Fragmenter_Namespace::TableInfo table_info;
-  table_info.fragments = std::move(result);
+  if (non_empty)
+    table_info.fragments = std::move(result);
   return table_info;
 }
 
