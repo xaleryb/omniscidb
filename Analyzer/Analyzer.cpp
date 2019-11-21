@@ -77,6 +77,18 @@ std::shared_ptr<Analyzer::Expr> ExpressionTuple::deep_copy() const {
   return makeExpr<ExpressionTuple>(tuple_deep_copy);
 }
 
+std::shared_ptr<Analyzer::Expr> ExpressionTuple::rewrite_var_to_var(
+    const ColumnVarMap& col_map) const {
+  std::vector<std::shared_ptr<Expr>> new_tuple;
+  for (const auto& var : tuple_) {
+    const auto col_var =
+        std::dynamic_pointer_cast<Analyzer::ColumnVar>(var->rewrite_var_to_var(col_map));
+    CHECK(col_var);
+    new_tuple.push_back(col_var);
+  }
+  return makeExpr<ExpressionTuple>(new_tuple);
+}
+
 std::shared_ptr<Analyzer::Expr> Var::deep_copy() const {
   return makeExpr<Var>(type_info, table_id, column_id, rte_idx, which_row, varno);
 }

@@ -265,6 +265,9 @@ class ExpressionTuple : public Expr {
 
   std::shared_ptr<Analyzer::Expr> deep_copy() const override;
 
+  std::shared_ptr<Analyzer::Expr> rewrite_var_to_var(
+      const ColumnVarMap& col_map) const override;
+
   bool operator==(const Expr& rhs) const override;
   std::string toString() const override;
 
