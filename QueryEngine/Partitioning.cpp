@@ -186,7 +186,7 @@ RelAlgExecutionUnit replaceInputInUnit(
     Analyzer::ExpressionPtrVector& target_exprs_owned) {
 #if PARTITIONING_DEBUG_PRINT
   std::cerr << "Replacing input tables in execution unit" << std::endl;
-  std::cerr << "========== Column replacement map (T:S:L)==========" << std::endl;
+  std::cerr << "============= Column replacement map ==============" << std::endl;
   for (auto& pr : input_maps) {
     std::cerr << "Table " << pr.first.getTableId() << ":" << pr.first.getNestLevel()
               << " -> " << pr.second.new_table_id << ":" << pr.first.getNestLevel()

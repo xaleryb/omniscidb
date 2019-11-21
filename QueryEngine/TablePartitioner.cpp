@@ -100,6 +100,13 @@ TemporaryTable TablePartitioner::runPartitioning() {
   for (size_t pass_no = 0; pass_no < pass_count; ++pass_no) {
     bool last_pass = (pass_no == (pass_count - 1));
 
+    // Compute partitioning options for the current pass.
+    // We start partitioning using higher hash/value bits
+    // and then add lower bits.
+    PartitioningOptions pass_opts(po_);
+    pass_opts.mask_bits = po_.mask_bits * (pass_no + 1) / pass_count;
+    pass_opts.scale_bits = po_.scale_bits + po_.mask_bits - pass_opts.mask_bits;
+
     // This is a holder of result sets from the previous pass
     // to keep data alive during this one.
     std::vector<ResultSetPtr> prev_partitions;
@@ -120,7 +127,7 @@ TemporaryTable TablePartitioner::runPartitioning() {
     // in partitions for each partitioned fragment.
     // [fragment idx][partition id] -> offset in partition buffer.
     std::vector<std::vector<size_t>> partition_offsets;
-    computePartitionSizesAndOffsets(partition_offsets);
+    computePartitionSizesAndOffsets(pass_opts, partition_offsets);
 
     std::vector<ssize_t> dummy;
     ColSlotContext slot_ctx(slots, dummy);
@@ -163,14 +170,21 @@ TemporaryTable TablePartitioner::runPartitioning() {
 
     for (size_t i = 0; i < input_bufs_.size(); ++i) {
       // run partitioning function
-      doPartition(i, partition_offsets);
+      doPartition(pass_opts, i, partition_offsets);
     }
 
 // TODO: remove debug prints
 #if PARTITIONING_DEBUG_PRINT
     std::cerr << "Partitioning results after pass #" << pass_no << std::endl;
+    std::cerr << "Pass options: type=" << pass_opts.kind
+              << " mask=" << pass_opts.mask_bits << " scale=" << pass_opts.scale_bits
+              << std::endl;
     for (size_t pid = 0; pid < partitions.size(); ++pid) {
       std::cerr << "========== PARTITION " << pid << " ==========" << std::endl;
+      if (!partitions[pid]) {
+        std::cerr << "(empty)" << std::endl;
+        continue;
+      }
       for (size_t rid = 0; rid < partitions[pid]->entryCount(); ++rid) {
         auto row = partitions[pid]->getRowAt(rid);
         for (auto& val : row) {
@@ -187,12 +201,6 @@ TemporaryTable TablePartitioner::runPartitioning() {
 
   return TemporaryTable(partitions, true);
 }
-
-size_t TablePartitioner::getPartitionsCount() const {
-  return 1 << po_.mask_bits;
-}
-
-#define HASH_BIT_MODULO(K, MASK, NBITS) (((K)&MASK) >> NBITS)
 
 uint32_t TablePartitioner::getHashValue(const int8_t* key,
                                         int size,
@@ -214,11 +222,13 @@ uint32_t TablePartitioner::getHashValue(const int8_t* key,
       CHECK(false);
   }
 
-  return HASH_BIT_MODULO(value, mask, shift);
+  return (value >> shift) & mask;
 }
 
-void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histogram) {
-  const uint32_t fanOut = getPartitionsCount();
+void TablePartitioner::collectHistogram(const PartitioningOptions& pass_opts,
+                                        int frag_idx,
+                                        std::vector<size_t>& histogram) {
+  const uint32_t pcnt = pass_opts.getPartitionsCount();
   // FIXME: only one key column for now!
   CHECK_EQ(key_count_, (size_t)1);
   auto buf = input_bufs_[frag_idx].at(0);
@@ -226,25 +236,25 @@ void TablePartitioner::collectHistogram(int frag_idx, std::vector<size_t>& histo
   auto key_size = elem_sizes_.at(0);
   for (size_t i = 0; i < size; ++i) {
     uint32_t idx =
-        getHashValue(&(buf[i * key_size]), key_size, fanOut - 1, po_.scale_bits);
+        getHashValue(&(buf[i * key_size]), key_size, pcnt - 1, pass_opts.scale_bits);
     histogram[idx]++;
   }
 }
 
 void TablePartitioner::computePartitionSizesAndOffsets(
+    const PartitioningOptions& pass_opts,
     std::vector<std::vector<size_t>>& partition_offsets) {
-  auto pcnt = getPartitionsCount();
-  std::vector<std::vector<size_t>> histograms(info_.info.fragments.size(),
+  auto pcnt = pass_opts.getPartitionsCount();
+  std::vector<std::vector<size_t>> histograms(input_bufs_.size(),
                                               std::vector<size_t>(pcnt, 0));
 
   // Run histogram collection.
-  for (size_t i = 0; i < info_.info.fragments.size(); ++i) {
-    // run histogram collection function.
-    collectHistogram(i, histograms[i]);
+  for (size_t i = 0; i < input_bufs_.size(); ++i) {
+    collectHistogram(pass_opts, i, histograms[i]);
   }
 
   // Count partition sizes and offsets (in number of tuples).
-  partition_offsets.assign(info_.info.fragments.size(), std::vector<size_t>(pcnt, 0));
+  partition_offsets.assign(input_bufs_.size(), std::vector<size_t>(pcnt, 0));
   for (size_t i = 0; i < (histograms.size() - 1); ++i) {
     for (size_t j = 0; j < pcnt; ++j) {
       partition_offsets[i + 1][j] = partition_offsets[i][j] + histograms[i][j];
@@ -257,26 +267,27 @@ void TablePartitioner::computePartitionSizesAndOffsets(
   }
 }
 
-void TablePartitioner::doPartition(int frag_idx,
+void TablePartitioner::doPartition(const PartitioningOptions& pass_opts,
+                                   int frag_idx,
                                    std::vector<std::vector<size_t>>& partition_offsets) {
-  const uint32_t fanOut = getPartitionsCount();
+  const uint32_t pcnt = pass_opts.getPartitionsCount();
   // FIXME: only one key column for now!
   CHECK_EQ(key_count_, (size_t)1);
   auto& input = input_bufs_[frag_idx];
   auto key_size = elem_sizes_[0];
   auto fragment_size = input_sizes_[frag_idx];
   for (size_t i = 0; i < fragment_size; ++i) {
-    uint32_t partition_no =
-        getHashValue(input[0] + i * key_size, key_size, fanOut - 1, po_.scale_bits);
-    auto& output = output_bufs_[partition_no];
-    auto pos = partition_offsets[frag_idx][partition_no];
+    uint32_t part_no =
+        getHashValue(input[0] + i * key_size, key_size, pcnt - 1, pass_opts.scale_bits);
+    auto& output = output_bufs_[part_no];
+    auto pos = partition_offsets[frag_idx][part_no];
     // fill partition
-    for (size_t elem_idx = 0; elem_idx < input_bufs_.size(); ++elem_idx) {
+    for (size_t elem_idx = 0; elem_idx < elem_sizes_.size(); ++elem_idx) {
       auto elem_size = elem_sizes_[elem_idx];
       memcpy(
           output[elem_idx] + pos * elem_size, input[elem_idx] + i * elem_size, elem_size);
     }
-    partition_offsets[frag_idx][partition_no]++;
+    partition_offsets[frag_idx][part_no]++;
   }
 }
 

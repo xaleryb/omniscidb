@@ -2449,6 +2449,7 @@ int32_t Executor::executePlanWithGroupBy(
   // 3. Optimize runtime.
   auto hoist_buf = serializeLiterals(compilation_result.literal_values, device_id);
   int32_t error_code = device_type == ExecutorDeviceType::GPU ? 0 : start_rowid;
+  doLazyJoinHashTableReify(device_type, device_id, frag_id);
   const auto join_hash_table_ptrs = getJoinHashTablePtrs(device_type, device_id, frag_id);
   if (g_enable_dynamic_watchdog && interrupted_) {
     return ERR_INTERRUPTED;
@@ -2954,9 +2955,6 @@ Executor::JoinHashTableOrError Executor::buildHashTableForQualifier(
                                                         device_count,
                                                         column_cache,
                                                         this);
-#if PARTITIONING_DEBUG_PRINT
-      join_hash_table->dump();
-#endif
     } else if (qual_bin_oper->is_overlaps_oper()) {
       join_hash_table = OverlapsJoinHashTable::getInstance(
           qual_bin_oper, query_infos, memory_level, device_count, column_cache, this);

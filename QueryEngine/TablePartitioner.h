@@ -35,8 +35,6 @@ class TablePartitioner {
 
   TemporaryTable runPartitioning();
 
-  size_t getPartitionsCount() const;
-
  private:
   void fetchFragment(const Fragmenter_Namespace::FragmentInfo& frag,
                      const std::vector<std::shared_ptr<Analyzer::ColumnVar>>& col_vars,
@@ -44,10 +42,15 @@ class TablePartitioner {
                      std::vector<int8_t*>& output);
   void fetchFragments(const std::vector<std::shared_ptr<Analyzer::ColumnVar>>& col_vars);
   void computePartitionSizesAndOffsets(
+      const PartitioningOptions& pass_opts,
       std::vector<std::vector<size_t>>& partition_offsets);
-  void collectHistogram(int frag_idx, std::vector<size_t>& histogram);
+  void collectHistogram(const PartitioningOptions& pass_opts,
+                        int frag_idx,
+                        std::vector<size_t>& histogram);
   uint32_t getHashValue(const int8_t* key, int size, int mask, int shift);
-  void doPartition(int frag_idx, std::vector<std::vector<size_t>>& partition_offsets);
+  void doPartition(const PartitioningOptions& pass_opts,
+                   int frag_idx,
+                   std::vector<std::vector<size_t>>& partition_offsets);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
 
   // In input and output vectors key columns always go first.
