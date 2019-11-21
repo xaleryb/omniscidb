@@ -47,9 +47,9 @@ class TablePartitioner {
   void collectHistogram(const PartitioningOptions& pass_opts,
                         int frag_idx,
                         std::vector<size_t>& histogram);
-  uint32_t getHashValue(const PartitioningOptions& pass_opts,
-                        const int8_t* key,
-                        int size);
+  uint32_t getPartitionNo(const PartitioningOptions& pass_opts,
+                          const std::vector<int8_t*>& bufs,
+                          size_t idx);
   void doPartition(const PartitioningOptions& pass_opts,
                    int frag_idx,
                    std::vector<std::vector<size_t>>& partition_offsets);

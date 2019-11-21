@@ -196,28 +196,36 @@ TemporaryTable TablePartitioner::runPartitioning() {
   return TemporaryTable(partitions, true);
 }
 
-uint32_t TablePartitioner::getHashValue(const PartitioningOptions& pass_opts,
-                                        const int8_t* key,
-                                        int size) {
+uint32_t TablePartitioner::getPartitionNo(const PartitioningOptions& pass_opts,
+                                          const std::vector<int8_t*>& bufs,
+                                          size_t idx) {
   uint64_t value = 0;
   // FIXME: only one key column!
   if (pass_opts.kind == PartitioningOptions::HASH) {
-    if (pass_opts.scale_bits + pass_opts.scale_bits > 32) {
-      value = MurmurHash64AImpl(key, size, value);
-    } else {
-      value = MurmurHash1Impl(key, size, value);
+    for (size_t i = 0; i < key_count_; ++i) {
+      size_t key_size = elem_sizes_[i];
+      int8_t* key_p = bufs[i] + idx * key_size;
+      if (pass_opts.scale_bits + pass_opts.scale_bits > 32) {
+        value = MurmurHash64AImpl(key_p, key_size, value);
+      } else {
+        value = MurmurHash1Impl(key_p, key_size, value);
+      }
     }
   } else {
+    // For partitioning by value only the first key component
+    // is used.
     CHECK(pass_opts.kind == PartitioningOptions::VALUE);
-    switch (size) {
+    size_t key_size = elem_sizes_[0];
+    int8_t* key_p = bufs[0] + idx * key_size;
+    switch (key_size) {
       case 2:
-        value = *((int16_t*)key);
+        value = *((int16_t*)key_p);
         break;
       case 4:
-        value = *((int32_t*)key);
+        value = *((int32_t*)key_p);
         break;
       case 8:
-        value = *((int64_t*)key);
+        value = *((int64_t*)key_p);
         break;
       default:
         CHECK(false);
@@ -231,14 +239,11 @@ uint32_t TablePartitioner::getHashValue(const PartitioningOptions& pass_opts,
 void TablePartitioner::collectHistogram(const PartitioningOptions& pass_opts,
                                         int frag_idx,
                                         std::vector<size_t>& histogram) {
-  // FIXME: only one key column for now!
-  CHECK_EQ(key_count_, (size_t)1);
-  auto buf = input_bufs_[frag_idx].at(0);
+  auto& input = input_bufs_[frag_idx];
   auto size = input_sizes_[frag_idx];
-  auto key_size = elem_sizes_.at(0);
   for (size_t i = 0; i < size; ++i) {
-    uint32_t idx = getHashValue(pass_opts, &(buf[i * key_size]), key_size);
-    histogram[idx]++;
+    uint32_t part_no = getPartitionNo(pass_opts, input, i);
+    histogram[part_no]++;
   }
 }
 
@@ -271,13 +276,10 @@ void TablePartitioner::computePartitionSizesAndOffsets(
 void TablePartitioner::doPartition(const PartitioningOptions& pass_opts,
                                    int frag_idx,
                                    std::vector<std::vector<size_t>>& partition_offsets) {
-  // FIXME: only one key column for now!
-  CHECK_EQ(key_count_, (size_t)1);
   auto& input = input_bufs_[frag_idx];
-  auto key_size = elem_sizes_[0];
   auto fragment_size = input_sizes_[frag_idx];
   for (size_t i = 0; i < fragment_size; ++i) {
-    uint32_t part_no = getHashValue(pass_opts, input[0] + i * key_size, key_size);
+    uint32_t part_no = getPartitionNo(pass_opts, input, i);
     auto& output = output_bufs_[part_no];
     auto pos = partition_offsets[frag_idx][part_no];
     // fill partition
