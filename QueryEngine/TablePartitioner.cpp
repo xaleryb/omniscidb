@@ -202,6 +202,8 @@ uint32_t TablePartitioner::getPartitionNo(const PartitioningOptions& pass_opts,
   uint64_t value = 0;
   // FIXME: only one key column!
   if (pass_opts.kind == PartitioningOptions::HASH) {
+    // FIXME: use GenericKeyHandler and a single Mumrmur call
+    // to get the same hashing as for baseline hash table.
     for (size_t i = 0; i < key_count_; ++i) {
       size_t key_size = elem_sizes_[i];
       int8_t* key_p = bufs[i] + idx * key_size;
