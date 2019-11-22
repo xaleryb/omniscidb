@@ -746,6 +746,12 @@ void MapDProgramOptions::fillAdvancedOptions() {
                                po::value<std::string>(&radix_type),
                                "Specifies radix object - key value or key hash, possible "
                                "values: \"value\" or \"hash\" (default)");
+  developer_desc.add_options()(
+      "enable-multi-thread-partitioning",
+      po::value<bool>(&g_enable_multi_thread_partitioning)
+          ->default_value(g_enable_multi_thread_partitioning)
+          ->implicit_value(true),
+      "Enables/disables a table partitioining using multiple threads.");
 }
 
 namespace {

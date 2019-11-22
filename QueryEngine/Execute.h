@@ -97,6 +97,7 @@ extern size_t g_radix_bits_count;
 extern size_t g_radix_bits_scale;
 extern size_t g_radix_pass_num;
 extern PartitioningOptions::PartitioningKind g_radix_type;
+extern bool g_enable_multi_thread_partitioning;
 
 class QueryCompilationDescriptor;
 using QueryCompilationDescriptorOwned = std::unique_ptr<QueryCompilationDescriptor>;
