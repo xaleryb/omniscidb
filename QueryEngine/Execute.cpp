@@ -109,6 +109,7 @@ size_t g_radix_bits_scale{0};
 size_t g_radix_pass_num{1};
 PartitioningOptions::PartitioningKind g_radix_type{
     PartitioningOptions::PartitioningKind::HASH};
+bool g_enable_multi_thread_partitioning{true};
 
 int const Executor::max_gpu_count;
 

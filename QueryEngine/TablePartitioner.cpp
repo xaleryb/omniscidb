@@ -162,10 +162,18 @@ TemporaryTable TablePartitioner::runPartitioning() {
       partitions.push_back(rs);
     }
 
+    std::vector<std::future<void>> partitioning_threads;
+    partitioning_threads.reserve(input_bufs_.size());
     for (size_t i = 0; i < input_bufs_.size(); ++i) {
       // run partitioning function
-      doPartition(pass_opts, i, partition_offsets);
+      partitioning_threads.emplace_back(std::async(
+          g_enable_multi_thread_partitioning ? std::launch::async : std::launch::deferred,
+          [this, i, &pass_opts, &partition_offsets] {
+            doPartition(pass_opts, i, partition_offsets);
+          }));
     }
+    for (auto& thread : partitioning_threads)
+      thread.get();
 
 // TODO: remove debug prints
 #if PARTITIONING_DEBUG_PRINT
