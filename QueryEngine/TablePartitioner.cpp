@@ -18,6 +18,8 @@
 #include "ColumnFetcher.h"
 #include "MurmurHash1Inl.h"
 
+#include "Utils/Threading.h"
+
 TablePartitioner::TablePartitioner(const RelAlgExecutionUnit& ra_exe_unit,
                                    const std::vector<InputColDescriptor>& key_cols,
                                    const std::vector<InputColDescriptor>& payload_cols,
@@ -166,11 +168,16 @@ TemporaryTable TablePartitioner::runPartitioning() {
     partitioning_threads.reserve(input_bufs_.size());
     for (size_t i = 0; i < input_bufs_.size(); ++i) {
       // run partitioning function
-      partitioning_threads.emplace_back(std::async(
-          g_enable_multi_thread_partitioning ? std::launch::async : std::launch::deferred,
-          [this, i, &pass_opts, &partition_offsets] {
-            doPartition(pass_opts, i, partition_offsets);
-          }));
+      if (g_enable_multi_thread_partitioning)
+        partitioning_threads.emplace_back(
+            std::async(std::launch::deferred, [this, i, &pass_opts, &partition_offsets] {
+              doPartition(pass_opts, i, partition_offsets);
+            }));
+      else
+        partitioning_threads.emplace_back(
+            utils::async([this, i, &pass_opts, &partition_offsets] {
+              doPartition(pass_opts, i, partition_offsets);
+            }));
     }
     for (auto& thread : partitioning_threads)
       thread.get();
