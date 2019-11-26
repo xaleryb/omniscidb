@@ -1699,50 +1699,101 @@ void fill_one_to_many_baseline_hash_table(
   std::vector<std::future<void>> counter_threads;
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
     if (join_buckets_per_key.size() > 0) {
-      counter_threads.push_back(utils::async([count_buff,
-                                              composite_key_dict,
-                                              &hash_entry_count,
-                                              &join_buckets_per_key,
-                                              &join_column_per_key,
-                                              cpu_thread_idx,
-                                              cpu_thread_count] {
-        const auto key_handler =
-            OverlapsKeyHandler(join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
-                               &join_column_per_key[0],
-                               join_buckets_per_key[0].bucket_sizes_for_dimension.data());
-        count_matches_baseline(count_buff,
-                               composite_key_dict,
-                               hash_entry_count,
-                               &key_handler,
-                               join_column_per_key[0].num_elems,
-                               cpu_thread_idx,
-                               cpu_thread_count);
-      }));
+      if (cpu_thread_count == 1)
+        counter_threads.push_back(
+            std::async(std::launch::deferred,
+                       [count_buff,
+                        composite_key_dict,
+                        &hash_entry_count,
+                        &join_buckets_per_key,
+                        &join_column_per_key,
+                        cpu_thread_idx,
+                        cpu_thread_count] {
+                         const auto key_handler = OverlapsKeyHandler(
+                             join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
+                             &join_column_per_key[0],
+                             join_buckets_per_key[0].bucket_sizes_for_dimension.data());
+                         count_matches_baseline(count_buff,
+                                                composite_key_dict,
+                                                hash_entry_count,
+                                                &key_handler,
+                                                join_column_per_key[0].num_elems,
+                                                cpu_thread_idx,
+                                                cpu_thread_count);
+                       }));
+      else
+        counter_threads.push_back(utils::async([count_buff,
+                                                composite_key_dict,
+                                                &hash_entry_count,
+                                                &join_buckets_per_key,
+                                                &join_column_per_key,
+                                                cpu_thread_idx,
+                                                cpu_thread_count] {
+          const auto key_handler = OverlapsKeyHandler(
+              join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
+              &join_column_per_key[0],
+              join_buckets_per_key[0].bucket_sizes_for_dimension.data());
+          count_matches_baseline(count_buff,
+                                 composite_key_dict,
+                                 hash_entry_count,
+                                 &key_handler,
+                                 join_column_per_key[0].num_elems,
+                                 cpu_thread_idx,
+                                 cpu_thread_count);
+        }));
     } else {
-      counter_threads.push_back(utils::async([count_buff,
-                                              composite_key_dict,
-                                              &key_component_count,
-                                              &hash_entry_count,
-                                              &join_column_per_key,
-                                              &type_info_per_key,
-                                              &sd_inner_proxy_per_key,
-                                              &sd_outer_proxy_per_key,
-                                              cpu_thread_idx,
-                                              cpu_thread_count] {
-        const auto key_handler = GenericKeyHandler(key_component_count,
-                                                   true,
-                                                   &join_column_per_key[0],
-                                                   &type_info_per_key[0],
-                                                   &sd_inner_proxy_per_key[0],
-                                                   &sd_outer_proxy_per_key[0]);
-        count_matches_baseline(count_buff,
-                               composite_key_dict,
-                               hash_entry_count,
-                               &key_handler,
-                               join_column_per_key[0].num_elems,
-                               cpu_thread_idx,
-                               cpu_thread_count);
-      }));
+      if (cpu_thread_count == 1)
+        counter_threads.push_back(std::async(
+            std::launch::deferred,
+            [count_buff,
+             composite_key_dict,
+             &key_component_count,
+             &hash_entry_count,
+             &join_column_per_key,
+             &type_info_per_key,
+             &sd_inner_proxy_per_key,
+             &sd_outer_proxy_per_key,
+             cpu_thread_idx,
+             cpu_thread_count] {
+              const auto key_handler = GenericKeyHandler(key_component_count,
+                                                         true,
+                                                         &join_column_per_key[0],
+                                                         &type_info_per_key[0],
+                                                         &sd_inner_proxy_per_key[0],
+                                                         &sd_outer_proxy_per_key[0]);
+              count_matches_baseline(count_buff,
+                                     composite_key_dict,
+                                     hash_entry_count,
+                                     &key_handler,
+                                     join_column_per_key[0].num_elems,
+                                     cpu_thread_idx,
+                                     cpu_thread_count);
+            }));
+      else
+        counter_threads.push_back(utils::async([count_buff,
+                                                composite_key_dict,
+                                                &key_component_count,
+                                                &hash_entry_count,
+                                                &join_column_per_key,
+                                                &type_info_per_key,
+                                                &sd_inner_proxy_per_key,
+                                                &sd_outer_proxy_per_key,
+                                                cpu_thread_idx,
+                                                cpu_thread_count] {
+          const auto key_handler = GenericKeyHandler(key_component_count,
+                                                     true,
+                                                     &join_column_per_key[0],
+                                                     &type_info_per_key[0],
+                                                     &sd_inner_proxy_per_key[0],
+                                                     &sd_outer_proxy_per_key[0]);
+          count_matches_baseline(count_buff,
+                                 composite_key_dict,
+                                 hash_entry_count,
+                                 &key_handler,
+                                 join_column_per_key[0].num_elems,
+                                 cpu_thread_idx,
+                                 cpu_thread_count);
+        }));
     }
   }
 
@@ -1757,15 +1808,27 @@ void fill_one_to_many_baseline_hash_table(
       count_copy.begin(), count_copy.end(), count_copy.begin(), cpu_thread_count);
   std::vector<std::future<void>> pos_threads;
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
-    pos_threads.push_back(utils::async(
-        [&](const int thread_idx) {
-          for (size_t i = thread_idx; i < hash_entry_count; i += cpu_thread_count) {
-            if (count_buff[i]) {
-              pos_buff[i] = count_copy[i];
+    if (cpu_thread_count == 1)
+      pos_threads.push_back(std::async(
+          std::launch::deferred,
+          [&](const int thread_idx) {
+            for (size_t i = thread_idx; i < hash_entry_count; i += cpu_thread_count) {
+              if (count_buff[i]) {
+                pos_buff[i] = count_copy[i];
+              }
             }
-          }
-        },
-        cpu_thread_idx));
+          },
+          cpu_thread_idx));
+    else
+      pos_threads.push_back(utils::async(
+          [&](const int thread_idx) {
+            for (size_t i = thread_idx; i < hash_entry_count; i += cpu_thread_count) {
+              if (count_buff[i]) {
+                pos_buff[i] = count_copy[i];
+              }
+            }
+          },
+          cpu_thread_idx));
   }
   for (auto& child : pos_threads) {
     child.get();
@@ -1775,30 +1838,58 @@ void fill_one_to_many_baseline_hash_table(
   std::vector<std::future<void>> rowid_threads;
   for (size_t cpu_thread_idx = 0; cpu_thread_idx < cpu_thread_count; ++cpu_thread_idx) {
     if (join_buckets_per_key.size() > 0) {
-      rowid_threads.push_back(utils::async([buff,
-                                            composite_key_dict,
-                                            hash_entry_count,
-                                            invalid_slot_val,
-                                            &join_column_per_key,
-                                            &join_buckets_per_key,
-                                            cpu_thread_idx,
-                                            cpu_thread_count] {
-        const auto key_handler =
-            OverlapsKeyHandler(join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
-                               &join_column_per_key[0],
-                               join_buckets_per_key[0].bucket_sizes_for_dimension.data());
-        SUFFIX(fill_row_ids_baseline)
-        (buff,
-         composite_key_dict,
-         hash_entry_count,
-         invalid_slot_val,
-         &key_handler,
-         join_column_per_key[0].num_elems,
-         cpu_thread_idx,
-         cpu_thread_count);
-      }));
+      if (cpu_thread_count == 1)
+        rowid_threads.push_back(
+            std::async(std::launch::deferred,
+                       [buff,
+                        composite_key_dict,
+                        hash_entry_count,
+                        invalid_slot_val,
+                        &join_column_per_key,
+                        &join_buckets_per_key,
+                        cpu_thread_idx,
+                        cpu_thread_count] {
+                         const auto key_handler = OverlapsKeyHandler(
+                             join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
+                             &join_column_per_key[0],
+                             join_buckets_per_key[0].bucket_sizes_for_dimension.data());
+                         SUFFIX(fill_row_ids_baseline)
+                         (buff,
+                          composite_key_dict,
+                          hash_entry_count,
+                          invalid_slot_val,
+                          &key_handler,
+                          join_column_per_key[0].num_elems,
+                          cpu_thread_idx,
+                          cpu_thread_count);
+                       }));
+      else
+        rowid_threads.push_back(utils::async([buff,
+                                              composite_key_dict,
+                                              hash_entry_count,
+                                              invalid_slot_val,
+                                              &join_column_per_key,
+                                              &join_buckets_per_key,
+                                              cpu_thread_idx,
+                                              cpu_thread_count] {
+          const auto key_handler = OverlapsKeyHandler(
+              join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
+              &join_column_per_key[0],
+              join_buckets_per_key[0].bucket_sizes_for_dimension.data());
+          SUFFIX(fill_row_ids_baseline)
+          (buff,
+           composite_key_dict,
+           hash_entry_count,
+           invalid_slot_val,
+           &key_handler,
+           join_column_per_key[0].num_elems,
+           cpu_thread_idx,
+           cpu_thread_count);
+        }));
     } else {
-      rowid_threads.push_back(utils::async([buff,
+      if (cpu_thread_count == 1)
+        rowid_threads.push_back(std::async(std::launch::deferred,
+                                           [buff,
                                             composite_key_dict,
                                             hash_entry_count,
                                             invalid_slot_val,
@@ -1809,22 +1900,51 @@ void fill_one_to_many_baseline_hash_table(
                                             &sd_outer_proxy_per_key,
                                             cpu_thread_idx,
                                             cpu_thread_count] {
-        const auto key_handler = GenericKeyHandler(key_component_count,
-                                                   true,
-                                                   &join_column_per_key[0],
-                                                   &type_info_per_key[0],
-                                                   &sd_inner_proxy_per_key[0],
-                                                   &sd_outer_proxy_per_key[0]);
-        SUFFIX(fill_row_ids_baseline)
-        (buff,
-         composite_key_dict,
-         hash_entry_count,
-         invalid_slot_val,
-         &key_handler,
-         join_column_per_key[0].num_elems,
-         cpu_thread_idx,
-         cpu_thread_count);
-      }));
+                                             const auto key_handler = GenericKeyHandler(
+                                                 key_component_count,
+                                                 true,
+                                                 &join_column_per_key[0],
+                                                 &type_info_per_key[0],
+                                                 &sd_inner_proxy_per_key[0],
+                                                 &sd_outer_proxy_per_key[0]);
+                                             SUFFIX(fill_row_ids_baseline)
+                                             (buff,
+                                              composite_key_dict,
+                                              hash_entry_count,
+                                              invalid_slot_val,
+                                              &key_handler,
+                                              join_column_per_key[0].num_elems,
+                                              cpu_thread_idx,
+                                              cpu_thread_count);
+                                           }));
+      else
+        rowid_threads.push_back(utils::async([buff,
+                                              composite_key_dict,
+                                              hash_entry_count,
+                                              invalid_slot_val,
+                                              key_component_count,
+                                              &join_column_per_key,
+                                              &type_info_per_key,
+                                              &sd_inner_proxy_per_key,
+                                              &sd_outer_proxy_per_key,
+                                              cpu_thread_idx,
+                                              cpu_thread_count] {
+          const auto key_handler = GenericKeyHandler(key_component_count,
+                                                     true,
+                                                     &join_column_per_key[0],
+                                                     &type_info_per_key[0],
+                                                     &sd_inner_proxy_per_key[0],
+                                                     &sd_outer_proxy_per_key[0]);
+          SUFFIX(fill_row_ids_baseline)
+          (buff,
+           composite_key_dict,
+           hash_entry_count,
+           invalid_slot_val,
+           &key_handler,
+           join_column_per_key[0].num_elems,
+           cpu_thread_idx,
+           cpu_thread_count);
+        }));
     }
   }
 
@@ -1894,29 +2014,56 @@ void approximate_distinct_tuples(uint8_t* hll_buffer_all_cpus,
 
   std::vector<std::future<void>> approx_distinct_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
-    approx_distinct_threads.push_back(utils::async([&join_column_per_key,
-                                                    &type_info_per_key,
-                                                    b,
-                                                    hll_buffer_all_cpus,
-                                                    padded_size_bytes,
-                                                    thread_idx,
-                                                    thread_count] {
-      auto hll_buffer = hll_buffer_all_cpus + thread_idx * padded_size_bytes;
+    if (thread_count == 1)
+      approx_distinct_threads.push_back(std::async(
+          std::launch::deferred,
+          [&join_column_per_key,
+           &type_info_per_key,
+           b,
+           hll_buffer_all_cpus,
+           padded_size_bytes,
+           thread_idx,
+           thread_count] {
+            auto hll_buffer = hll_buffer_all_cpus + thread_idx * padded_size_bytes;
 
-      const auto key_handler = GenericKeyHandler(join_column_per_key.size(),
-                                                 false,
-                                                 &join_column_per_key[0],
-                                                 &type_info_per_key[0],
-                                                 nullptr,
-                                                 nullptr);
-      approximate_distinct_tuples_impl(hll_buffer,
-                                       nullptr,
-                                       b,
-                                       join_column_per_key[0].num_elems,
-                                       &key_handler,
-                                       thread_idx,
-                                       thread_count);
-    }));
+            const auto key_handler = GenericKeyHandler(join_column_per_key.size(),
+                                                       false,
+                                                       &join_column_per_key[0],
+                                                       &type_info_per_key[0],
+                                                       nullptr,
+                                                       nullptr);
+            approximate_distinct_tuples_impl(hll_buffer,
+                                             nullptr,
+                                             b,
+                                             join_column_per_key[0].num_elems,
+                                             &key_handler,
+                                             thread_idx,
+                                             thread_count);
+          }));
+    else
+      approx_distinct_threads.push_back(utils::async([&join_column_per_key,
+                                                      &type_info_per_key,
+                                                      b,
+                                                      hll_buffer_all_cpus,
+                                                      padded_size_bytes,
+                                                      thread_idx,
+                                                      thread_count] {
+        auto hll_buffer = hll_buffer_all_cpus + thread_idx * padded_size_bytes;
+
+        const auto key_handler = GenericKeyHandler(join_column_per_key.size(),
+                                                   false,
+                                                   &join_column_per_key[0],
+                                                   &type_info_per_key[0],
+                                                   nullptr,
+                                                   nullptr);
+        approximate_distinct_tuples_impl(hll_buffer,
+                                         nullptr,
+                                         b,
+                                         join_column_per_key[0].num_elems,
+                                         &key_handler,
+                                         thread_idx,
+                                         thread_count);
+      }));
   }
   for (auto& child : approx_distinct_threads) {
     child.get();
@@ -1938,28 +2085,54 @@ void approximate_distinct_tuples_overlaps(
 
   std::vector<std::future<void>> approx_distinct_threads;
   for (int thread_idx = 0; thread_idx < thread_count; ++thread_idx) {
-    approx_distinct_threads.push_back(utils::async([&join_column_per_key,
-                                                    &join_buckets_per_key,
-                                                    &row_counts,
-                                                    b,
-                                                    hll_buffer_all_cpus,
-                                                    padded_size_bytes,
-                                                    thread_idx,
-                                                    thread_count] {
-      auto hll_buffer = hll_buffer_all_cpus + thread_idx * padded_size_bytes;
+    if (thread_count == 1)
+      approx_distinct_threads.push_back(std::async(
+          std::launch::deferred,
+          [&join_column_per_key,
+           &join_buckets_per_key,
+           &row_counts,
+           b,
+           hll_buffer_all_cpus,
+           padded_size_bytes,
+           thread_idx,
+           thread_count] {
+            auto hll_buffer = hll_buffer_all_cpus + thread_idx * padded_size_bytes;
 
-      const auto key_handler =
-          OverlapsKeyHandler(join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
-                             &join_column_per_key[0],
-                             join_buckets_per_key[0].bucket_sizes_for_dimension.data());
-      approximate_distinct_tuples_impl(hll_buffer,
-                                       row_counts.data(),
-                                       b,
-                                       join_column_per_key[0].num_elems,
-                                       &key_handler,
-                                       thread_idx,
-                                       thread_count);
-    }));
+            const auto key_handler = OverlapsKeyHandler(
+                join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
+                &join_column_per_key[0],
+                join_buckets_per_key[0].bucket_sizes_for_dimension.data());
+            approximate_distinct_tuples_impl(hll_buffer,
+                                             row_counts.data(),
+                                             b,
+                                             join_column_per_key[0].num_elems,
+                                             &key_handler,
+                                             thread_idx,
+                                             thread_count);
+          }));
+    else
+      approx_distinct_threads.push_back(utils::async([&join_column_per_key,
+                                                      &join_buckets_per_key,
+                                                      &row_counts,
+                                                      b,
+                                                      hll_buffer_all_cpus,
+                                                      padded_size_bytes,
+                                                      thread_idx,
+                                                      thread_count] {
+        auto hll_buffer = hll_buffer_all_cpus + thread_idx * padded_size_bytes;
+
+        const auto key_handler =
+            OverlapsKeyHandler(join_buckets_per_key[0].bucket_sizes_for_dimension.size(),
+                               &join_column_per_key[0],
+                               join_buckets_per_key[0].bucket_sizes_for_dimension.data());
+        approximate_distinct_tuples_impl(hll_buffer,
+                                         row_counts.data(),
+                                         b,
+                                         join_column_per_key[0].num_elems,
+                                         &key_handler,
+                                         thread_idx,
+                                         thread_count);
+      }));
   }
   for (auto& child : approx_distinct_threads) {
     child.get();
