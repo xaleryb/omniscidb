@@ -100,6 +100,9 @@ set(query_engine_source_files
     TableGenerations.cpp
     TableOptimizer.cpp
     TablePartitioner.cpp
+    TablePartitionerCgen.cpp
+    TablePartitionerRuntime.cpp
+    TablePartitionerRuntime.bc
     TargetExprBuilder.cpp
     UDFCompiler.cpp
     StringFunctions.cpp
@@ -199,6 +202,16 @@ add_custom_command(
     ${CMAKE_CURRENT_SOURCE_DIR}/RuntimeFunctions.cpp)
 
 add_custom_command(
+    DEPENDS TablePartitionerRuntime.cpp TablePartitionerRuntime.h 
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/TablePartitionerRuntime.bc
+    COMMAND ${llvm_clangpp_cmd}
+    ARGS -std=c++14 ${RT_OPT_FLAGS} -c -emit-llvm
+    ${CLANG_SDK_INC}
+    ${CLANG_CRT_INC}
+    ${MAPD_DEFINITIONS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/TablePartitionerRuntime.cpp)
+
+add_custom_command(
     DEPENDS ExtensionFunctions.hpp ExtensionFunctionsGeo.hpp
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast
     COMMAND ${llvm_clangpp_cmd}
@@ -206,7 +219,7 @@ add_custom_command(
     ${CMAKE_CURRENT_SOURCE_DIR}/ExtensionFunctions.hpp | grep FunctionDecl | grep ExtensionFunctions |
     sed -E "s/\\-FunctionDecl.*line:[0-9]+:[0-9]+//g" > ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast)
 
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/RuntimeFunctions.bc ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast DESTINATION QueryEngine)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/RuntimeFunctions.bc ${CMAKE_CURRENT_BINARY_DIR}/TablePartitionerRuntime.bc ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast DESTINATION QueryEngine)
 
 if(ENABLE_CUDA)
   if (ENABLE_RENDERING)

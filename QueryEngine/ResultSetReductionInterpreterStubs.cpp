@@ -175,7 +175,8 @@ StubGenerator::Stub StubGenerator::generateStub(const std::string& name,
   std::lock_guard<std::mutex> s_stubs_cache_lock(s_stubs_cache_mutex);
   const auto val_ptr = s_stubs_cache.get(key);
   if (val_ptr) {
-    return reinterpret_cast<StubGenerator::Stub>(std::get<0>(val_ptr->first.front()));
+    return reinterpret_cast<StubGenerator::Stub>(
+        std::get<0>(val_ptr->first.front()).front());
   }
   auto cgen_state = std::make_unique<CgenState>(std::vector<InputTableInfo>{}, false);
   std::unique_ptr<llvm::Module> module(runtime_module_shallow_copy(cgen_state.get()));
