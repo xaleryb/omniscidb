@@ -69,6 +69,8 @@
 #include <set>
 #include <thread>
 
+#include "Utils/Threading.h"
+
 bool g_enable_debug_timer{false};
 bool g_enable_watchdog{false};
 bool g_enable_dynamic_watchdog{false};
@@ -1750,15 +1752,14 @@ void Executor::dispatchFragments(
             const int device_id,
             const FragmentsList& frag_list,
             const int64_t rowid_lookup_key) {
-          query_threads.push_back(std::async(std::launch::async,
-                                             dispatch,
-                                             ExecutorDeviceType::GPU,
-                                             device_id,
-                                             query_comp_desc,
-                                             query_mem_desc,
-                                             frag_list,
-                                             ExecutorDispatchMode::MultifragmentKernel,
-                                             rowid_lookup_key));
+          query_threads.push_back(utils::async(dispatch,
+                                               ExecutorDeviceType::GPU,
+                                               device_id,
+                                               query_comp_desc,
+                                               query_mem_desc,
+                                               frag_list,
+                                               ExecutorDispatchMode::MultifragmentKernel,
+                                               rowid_lookup_key));
         };
     fragment_descriptor.assignFragsToMultiDispatch(multifrag_kernel_dispatch);
   } else {
@@ -1792,15 +1793,14 @@ void Executor::dispatchFragments(
       }
       CHECK_GE(device_id, 0);
 
-      query_threads.push_back(std::async(std::launch::async,
-                                         dispatch,
-                                         device_type,
-                                         device_id,
-                                         query_comp_desc,
-                                         query_mem_desc,
-                                         frag_list,
-                                         ExecutorDispatchMode::KernelPerFragment,
-                                         rowid_lookup_key));
+      query_threads.push_back(utils::async(dispatch,
+                                           device_type,
+                                           device_id,
+                                           query_comp_desc,
+                                           query_mem_desc,
+                                           frag_list,
+                                           ExecutorDispatchMode::KernelPerFragment,
+                                           rowid_lookup_key));
 
       ++frag_list_idx;
     };
