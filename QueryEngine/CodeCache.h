@@ -59,8 +59,9 @@ class ExecutionEngineWrapper {
 class GpuCompilationContext;
 
 using CodeCacheKey = std::vector<std::string>;
-using CodeCacheVal = std::vector<
-    std::tuple<void*, ExecutionEngineWrapper, std::unique_ptr<GpuCompilationContext>>>;
+using CodeCacheVal = std::vector<std::tuple<std::vector<void*>,
+                                            ExecutionEngineWrapper,
+                                            std::unique_ptr<GpuCompilationContext>>>;
 using CodeCacheValWithModule = std::pair<CodeCacheVal, llvm::Module*>;
 using CodeCache =
     LruCache<CodeCacheKey, CodeCacheValWithModule, boost::hash<CodeCacheKey>>;

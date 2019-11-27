@@ -752,6 +752,11 @@ void MapDProgramOptions::fillAdvancedOptions() {
           ->default_value(g_enable_multi_thread_partitioning)
           ->implicit_value(true),
       "Enables/disables a table partitioining using multiple threads.");
+  developer_desc.add_options()("enable-jit-partitioning",
+                               po::value<bool>(&g_enable_jit_partitioning)
+                                   ->default_value(g_enable_jit_partitioning)
+                                   ->implicit_value(true),
+                               "Enables/disables a table partitioining using JIT code.");
 }
 
 namespace {

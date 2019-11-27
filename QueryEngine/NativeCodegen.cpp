@@ -213,7 +213,7 @@ std::vector<std::pair<void*, void*>> Executor::getCodeFromCache(const CodeCacheK
     std::vector<std::pair<void*, void*>> native_functions;
     for (auto& native_code : it->second.first) {
       GpuCompilationContext* gpu_context = std::get<2>(native_code).get();
-      native_functions.emplace_back(std::get<0>(native_code),
+      native_functions.emplace_back(std::get<0>(native_code).front(),
                                     gpu_context ? gpu_context->module() : nullptr);
     }
     return native_functions;
@@ -229,8 +229,9 @@ void Executor::addCodeToCache(
   CHECK(!native_code.empty());
   CodeCacheVal cache_val;
   for (auto& native_func : native_code) {
-    cache_val.emplace_back(
-        std::get<0>(native_func), std::move(std::get<1>(native_func)), nullptr);
+    cache_val.emplace_back(std::vector<void*>({std::get<0>(native_func)}),
+                           std::move(std::get<1>(native_func)),
+                           nullptr);
   }
   cache.put(key,
             std::make_pair<decltype(cache_val), decltype(module)>(std::move(cache_val),
@@ -246,7 +247,7 @@ void Executor::addCodeToCache(
   CodeCacheVal cache_val;
   for (const auto& native_func : native_code) {
     cache_val.emplace_back(
-        std::get<0>(native_func),
+        std::vector<void*>({std::get<0>(native_func)}),
         ExecutionEngineWrapper(),
         std::unique_ptr<GpuCompilationContext>(std::get<1>(native_func)));
   }

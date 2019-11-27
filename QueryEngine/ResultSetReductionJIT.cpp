@@ -519,7 +519,8 @@ ReductionCode ResultSetReductionJIT::codegen() const {
   CodeCacheKey key{cacheKey()};
   const auto val_ptr = s_code_cache.get(key);
   if (val_ptr) {
-    return {reinterpret_cast<ReductionCode::FuncPtr>(std::get<0>(val_ptr->first.front())),
+    return {reinterpret_cast<ReductionCode::FuncPtr>(
+                std::get<0>(val_ptr->first.front()).front()),
             nullptr,
             nullptr,
             nullptr,

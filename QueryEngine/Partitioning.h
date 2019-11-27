@@ -36,6 +36,7 @@ struct PartitioningOptions {
   PartitioningKind kind = HASH;
   size_t mask_bits = 16;
   size_t scale_bits = 16;
+  size_t passes = 1;
 
   size_t getPartitionsCount() const { return 1 << mask_bits; }
 };

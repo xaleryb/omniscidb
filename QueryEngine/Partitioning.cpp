@@ -280,7 +280,9 @@ void performTablePartitioning(const std::vector<const Analyzer::ColumnVar*>& key
   po.mask_bits = g_radix_bits_count;
   po.scale_bits = g_radix_bits_scale;
   po.kind = g_radix_type;
+  po.passes = g_radix_pass_num;
   TablePartitioner partitioner(ra_exe_unit,
+                               co,
                                key,
                                payload,
                                table_info,
