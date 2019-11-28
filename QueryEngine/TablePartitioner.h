@@ -54,6 +54,9 @@ class TablePartitioner {
                           size_t row_no);
   void doPartition(size_t pass_no,
                    const PartitioningOptions& pass_opts,
+                   std::vector<size_t>& partition_offsets);
+  void doPartition(size_t pass_no,
+                   const PartitioningOptions& pass_opts,
                    int frag_idx,
                    std::vector<size_t>& partition_offsets);
   std::shared_ptr<Analyzer::ColumnVar> createColVar(const InputColDescriptor& col);
