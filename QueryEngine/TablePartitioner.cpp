@@ -89,6 +89,7 @@ CodeCacheKey TablePartitioner::getCodeCacheKey() const {
 }
 
 void TablePartitioner::generatePartitioningModule() {
+  INJECT_TIMER(generatePartitioningModule);
   CodeCacheKey cache_key = getCodeCacheKey();
   auto it = code_cache_.find(cache_key);
   if (it != code_cache_.cend()) {
