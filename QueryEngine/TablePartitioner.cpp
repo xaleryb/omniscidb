@@ -335,18 +335,162 @@ void TablePartitioner::computePartitionSizesAndOffsets(
   }
 }
 
+#define CACHE_LINE_SIZE 64
+
+#include <immintrin.h>
+
+void TablePartitioner::nonTempStore(int8_t* dst, const int8_t* src, size_t size) {
+  if (size != 64) {
+    memcpy(dst, src, size);
+    return;
+  }
+
+#ifdef __AVX512F__
+  __m512i* d1 = (__m512i*)dst;
+  __m512i s1 = *((__m512i*)src);
+
+  _mm512_stream_si512(d1, s1);
+#elif defined(__AVX__)
+  register __m256i* d1 = (__m256i*)dst;
+  register __m256i s1 = *((__m256i*)src);
+  register __m256i* d2 = d1 + 1;
+  register __m256i s2 = *(((__m256i*)src) + 1);
+
+  _mm256_stream_si256(d1, s1);
+  _mm256_stream_si256(d2, s2);
+
+#elif defined(__SSE2__)
+
+  __m128i* d1 = (__m128i*)dst;
+  __m128i* d2 = d1 + 1;
+  __m128i* d3 = d1 + 2;
+  __m128i* d4 = d1 + 3;
+  __m128i s1 = *(__m128i*)src;
+  __m128i s2 = *((__m128i*)src + 1);
+  __m128i s3 = *((__m128i*)src + 2);
+  __m128i s4 = *((__m128i*)src + 3);
+
+  _mm_stream_si128(d1, s1);
+  _mm_stream_si128(d2, s2);
+  _mm_stream_si128(d3, s3);
+  _mm_stream_si128(d4, s4);
+
+#else
+  // Regular memcpy
+  memcpy(dst, src, size);
+#endif
+}
+
+// If enabled, use software-write-combined-buffer technique to fill partitions
+void TablePartitioner::copyWithSWCB(int8_t* swcb_buf,
+                                    size_t swcb_buf_size,
+                                    int8_t* real_dst,
+                                    const int8_t* src,
+                                    size_t elem_size) {
+  auto swcb_limit = CACHE_LINE_SIZE / elem_size - 1;
+  auto pos = swcb_buf_size & swcb_limit;
+  memcpy(swcb_buf + pos * elem_size, src, elem_size);
+  // drop buffer in a partition when it is full
+  if (pos == swcb_limit) {
+    nonTempStore(real_dst - swcb_limit * elem_size, swcb_buf, CACHE_LINE_SIZE);
+  }
+}
+
+void TablePartitioner::remainderCopyWithSWCB(int8_t* swcb_buf,
+                                             size_t swcb_buf_size,
+                                             int8_t* real_dst,
+                                             size_t elem_size) {
+  auto swcb_limit = CACHE_LINE_SIZE / elem_size - 1;
+  auto rem_size = swcb_buf_size & swcb_limit;
+  real_dst -= rem_size * elem_size;
+  for (uint32_t j = 0; j < rem_size; ++j) {
+    memcpy(real_dst, swcb_buf, elem_size);
+    real_dst += elem_size;
+    swcb_buf += elem_size;
+  }
+}
+
+void TablePartitioner::initSWCBuffers(int frag_idx,
+                                      const uint32_t part_count,
+                                      std::vector<std::vector<int8_t*>>& swcb_bufs,
+                                      std::vector<std::vector<size_t>>& swcb_sizes,
+                                      std::vector<std::vector<size_t>>& unswcb_elts,
+                                      std::vector<std::vector<bool>>& can_done_swcb) {
+  // Fill initial information about swcb buffers and allocate them
+  swcb_bufs.resize(part_count);
+  swcb_sizes.resize(part_count);
+  unswcb_elts.resize(part_count);
+  can_done_swcb.resize(part_count);
+  for (uint32_t i = 0; i < part_count; ++i) {
+    // swcb_sizes[i] = partition_offsets[frag_idx][i];
+    unswcb_elts[i].resize(elem_sizes_.size(), 0);
+    can_done_swcb[i].resize(elem_sizes_.size(), 0);
+    swcb_sizes[i].resize(elem_sizes_.size(), 0);
+    for (uint32_t j = 0; j < elem_sizes_.size(); j++) {
+      auto alloc_buf = static_cast<int8_t*>(aligned_alloc(
+          CACHE_LINE_SIZE, elem_sizes_[j] * (CACHE_LINE_SIZE / elem_sizes_[j])));
+      if (!alloc_buf)
+        throw std::runtime_error("Not enough memory for software-combined buffer");
+      swcb_bufs[i].push_back(alloc_buf);
+    }
+  }
+}
+
+void TablePartitioner::finalizeSWCBuffers(int frag_idx,
+                                          const uint32_t part_count,
+                                          std::vector<size_t>& partition_offsets,
+                                          std::vector<std::vector<int8_t*>>& swcb_bufs,
+                                          std::vector<std::vector<size_t>>& swcb_sizes,
+                                          std::vector<std::vector<size_t>>& unswcb_elts) {
+  for (uint32_t part_no = 0; part_no < part_count; ++part_no) {
+    auto offsets = partition_offsets.data() + frag_idx * part_count;
+    int8_t** output = output_bufs_.data() + part_no * elem_sizes_.size();
+    for (uint32_t j = 0; j < elem_sizes_.size(); j++) {
+      int size = swcb_sizes[part_no][j];
+      if (size > 0) {
+        auto pos = offsets[part_no] + unswcb_elts[part_no][j];
+        auto elem_size = elem_sizes_.at(j);
+        remainderCopyWithSWCB(&(swcb_bufs[part_no][j][0]),
+                              size,
+                              output[j] + (pos + size) * elem_size,
+                              elem_size);
+      }
+    }
+  }
+  for (uint32_t i = 0; i < part_count; ++i) {
+    for (uint32_t j = 0; j < swcb_bufs[i].size(); j++) {
+      free(swcb_bufs[i][j]);
+    }
+  }
+}
+
+bool TablePartitioner::canStartSWCB(size_t offset_addr) {
+  // TODO: we may choose alignment depending on vector size
+  return (offset_addr & (CACHE_LINE_SIZE - 1)) == 0;
+}
+
 void TablePartitioner::doPartition(size_t pass_no,
                                    const PartitioningOptions& pass_opts,
                                    int frag_idx,
                                    std::vector<size_t>& partition_offsets) {
   int8_t** input = input_bufs_.data() + frag_idx * elem_sizes_.size();
+  auto part_count = pass_opts.getPartitionsCount();
   size_t rows = input_sizes_[frag_idx];
-  size_t* offsets = partition_offsets.data() + frag_idx * pass_opts.getPartitionsCount();
+  size_t* offsets = partition_offsets.data() + frag_idx * part_count;
   if (g_enable_jit_partitioning) {
     auto hist_fn =
         (void (*)(int8_t**, size_t, int8_t**, size_t*))pass_entries_[pass_no * 2 + 1];
     (*hist_fn)(input, rows, output_bufs_.data(), offsets);
   } else {
+    // Software combine buffers
+    std::vector<std::vector<int8_t*>> swcb_bufs;
+    std::vector<std::vector<size_t>> swcb_sizes;
+    std::vector<std::vector<size_t>> unswcb_elts;
+    std::vector<std::vector<bool>> can_done_swcb;
+    if (g_radix_use_swcb) {
+      initSWCBuffers(
+          frag_idx, part_count, swcb_bufs, swcb_sizes, unswcb_elts, can_done_swcb);
+    }
     for (size_t i = 0; i < rows; ++i) {
       uint32_t part_no = getPartitionNo(pass_opts, input, i);
       int8_t** output = output_bufs_.data() + part_no * elem_sizes_.size();
@@ -354,11 +498,40 @@ void TablePartitioner::doPartition(size_t pass_no,
       // fill partition
       for (size_t elem_idx = 0; elem_idx < elem_sizes_.size(); ++elem_idx) {
         auto elem_size = elem_sizes_[elem_idx];
-        memcpy(output[elem_idx] + pos * elem_size,
-               input[elem_idx] + i * elem_size,
-               elem_size);
+        auto input_elem_pos = input[elem_idx] + i * elem_size;
+        if (g_radix_use_swcb) {
+          auto init_off = pos + unswcb_elts[part_no][elem_idx];
+          auto size = swcb_sizes[part_no][elem_idx];
+          can_done_swcb[part_no][elem_idx] =
+              can_done_swcb[part_no][elem_idx]
+                  ? can_done_swcb[part_no][elem_idx]
+                  : canStartSWCB((int64_t)(output[elem_idx] + init_off * elem_size));
+          if (can_done_swcb[part_no][elem_idx]) {
+            copyWithSWCB(&(swcb_bufs[part_no][elem_idx][0]),
+                         size,
+                         output[elem_idx] + (size + init_off) * elem_size,
+                         input_elem_pos,
+                         elem_size);
+          } else {
+            memcpy(output[elem_idx] + init_off * elem_size, input_elem_pos, elem_size);
+          }
+        } else
+          // Regular store, no swcb
+          memcpy(output[elem_idx] + pos * elem_size, input_elem_pos, elem_size);
+        if (g_radix_use_swcb) {
+          if (!can_done_swcb[part_no][elem_idx])
+            unswcb_elts[part_no][elem_idx]++;
+          else
+            swcb_sizes[part_no][elem_idx]++;
+        }
       }
-      offsets[part_no] = pos + 1;
+      if (!g_radix_use_swcb)
+        // Regular store, no swcb
+        offsets[part_no] = pos + 1;
+    }
+    if (g_radix_use_swcb) {
+      finalizeSWCBuffers(
+          frag_idx, part_count, partition_offsets, swcb_bufs, swcb_sizes, unswcb_elts);
     }
   }
 }

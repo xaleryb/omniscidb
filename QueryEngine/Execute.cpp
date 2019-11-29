@@ -109,6 +109,7 @@ bool g_enable_zero_copy_columnarization{true};
 size_t g_radix_bits_count{5};
 size_t g_radix_bits_scale{0};
 size_t g_radix_pass_num{1};
+bool g_radix_use_swcb{false};
 PartitioningOptions::PartitioningKind g_radix_type{
     PartitioningOptions::PartitioningKind::HASH};
 bool g_enable_multi_thread_partitioning{true};

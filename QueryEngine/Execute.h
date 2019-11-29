@@ -96,6 +96,7 @@ extern bool g_enable_zero_copy_columnarization;
 extern size_t g_radix_bits_count;
 extern size_t g_radix_bits_scale;
 extern size_t g_radix_pass_num;
+extern bool g_radix_use_swcb;
 extern PartitioningOptions::PartitioningKind g_radix_type;
 extern bool g_enable_multi_thread_partitioning;
 extern bool g_enable_jit_partitioning;

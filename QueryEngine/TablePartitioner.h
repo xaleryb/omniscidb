@@ -52,6 +52,29 @@ class TablePartitioner {
   uint32_t getPartitionNo(const PartitioningOptions& pass_opts,
                           int8_t** bufs,
                           size_t row_no);
+  void nonTempStore(int8_t* dst, const int8_t* src, size_t size);
+  void copyWithSWCB(int8_t* swcb_buf,
+                    size_t swcb_buf_size,
+                    int8_t* real_dst,
+                    const int8_t* src,
+                    size_t elem_size);
+  void remainderCopyWithSWCB(int8_t* swcb_buf,
+                             size_t swcb_buf_size,
+                             int8_t* real_dst,
+                             size_t elem_size);
+  void initSWCBuffers(int frag_idx,
+                      const uint32_t fanOut,
+                      std::vector<std::vector<int8_t*>>& swcb_bufs,
+                      std::vector<std::vector<size_t>>& swcb_sizes,
+                      std::vector<std::vector<size_t>>& unswcb_elts,
+                      std::vector<std::vector<bool>>& can_done_swcb);
+  void finalizeSWCBuffers(int frag_idx,
+                          const uint32_t part_count,
+                          std::vector<size_t>& partition_offsets,
+                          std::vector<std::vector<int8_t*>>& swcb_bufs,
+                          std::vector<std::vector<size_t>>& swcb_sizes,
+                          std::vector<std::vector<size_t>>& unswcb_elts);
+  bool canStartSWCB(size_t offset_addr);
   void doPartition(size_t pass_no,
                    const PartitioningOptions& pass_opts,
                    int frag_idx,
