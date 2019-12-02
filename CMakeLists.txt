@@ -217,6 +217,15 @@ else()
   set(llvm_config_cmd llvm-config)
 endif()
 
+# CPU target setup
+option(ENABLE_AVX "Enable AVX extension" OFF)
+option(ENABLE_AVX512 "Enable AVX512 extension" OFF)
+if(ENABLE_AVX)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
+elseif(ENABLE_AVX512)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f")
+endif()
+
 # address and thread sanitizer
 option(ENABLE_STANDALONE_CALCITE "Require standalone Calcite server" OFF)
 option(ENABLE_ASAN "Enable address sanitizer" OFF)

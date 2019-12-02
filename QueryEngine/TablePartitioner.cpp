@@ -351,10 +351,10 @@ void TablePartitioner::nonTempStore(int8_t* dst, const int8_t* src, size_t size)
 
   _mm512_stream_si512(d1, s1);
 #elif defined(__AVX__)
-  register __m256i* d1 = (__m256i*)dst;
-  register __m256i s1 = *((__m256i*)src);
-  register __m256i* d2 = d1 + 1;
-  register __m256i s2 = *(((__m256i*)src) + 1);
+  __m256i* d1 = (__m256i*)dst;
+  __m256i s1 = *((__m256i*)src);
+  __m256i* d2 = d1 + 1;
+  __m256i s2 = *(((__m256i*)src) + 1);
 
   _mm256_stream_si256(d1, s1);
   _mm256_stream_si256(d2, s2);
