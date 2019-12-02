@@ -378,6 +378,7 @@ RelAlgExecutionUnit performTablesPartitioning(
     std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
     TemporaryTables& temporary_tables,
     Analyzer::ExpressionPtrVector& target_exprs_owned) {
+  INJECT_TIMER(performTablesPartitioning);
   if (!g_force_radix_join)
     return ra_exe_unit;
 

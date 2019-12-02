@@ -89,6 +89,7 @@ CodeCacheKey TablePartitioner::getCodeCacheKey() const {
 }
 
 void TablePartitioner::generatePartitioningModule() {
+  INJECT_TIMER(generatePartitioningModule);
   CodeCacheKey cache_key = getCodeCacheKey();
   auto it = code_cache_.find(cache_key);
   if (it != code_cache_.cend()) {
@@ -109,6 +110,7 @@ void TablePartitioner::setupModule(const CodeCacheValWithModule& val) {
 }
 
 TemporaryTable TablePartitioner::runPartitioning() {
+  INJECT_TIMER(runPartitioning);
   // Prepare some aux structures for memory descriptors and result sets.
   // ColSlotContext consumes Expr plain pointers and we use col_vars
   // to own the memory.
@@ -130,6 +132,7 @@ TemporaryTable TablePartitioner::runPartitioning() {
 
   std::vector<ResultSetPtr> partitions;
   for (size_t pass_no = 0; pass_no < po_.passes; ++pass_no) {
+    INJECT_TIMER(runPartitioningPass);
     bool last_pass = (pass_no == (po_.passes - 1));
 
     PartitioningOptions pass_opts = getPassOpts(pass_no);
@@ -192,23 +195,8 @@ TemporaryTable TablePartitioner::runPartitioning() {
       partitions.push_back(rs);
     }
 
-    std::vector<std::future<void>> partitioning_threads;
-    partitioning_threads.reserve(input_sizes_.size());
-    for (size_t i = 0; i < input_sizes_.size(); ++i) {
-      // run partitioning function
-      if (g_enable_multi_thread_partitioning)
-        partitioning_threads.emplace_back(
-            utils::async([this, i, pass_no, &pass_opts, &partition_offsets] {
-              doPartition(pass_no, pass_opts, i, partition_offsets);
-            }));
-      else
-        partitioning_threads.emplace_back(std::async(
-            std::launch::deferred, [this, i, pass_no, &pass_opts, &partition_offsets] {
-              doPartition(pass_no, pass_opts, i, partition_offsets);
-            }));
-    }
-    for (auto& thread : partitioning_threads)
-      thread.get();
+    // run partitioning function
+    doPartition(pass_no, pass_opts, partition_offsets);
 
 // TODO: remove debug prints
 #if PARTITIONING_DEBUG_PRINT
@@ -302,6 +290,7 @@ void TablePartitioner::computePartitionSizesAndOffsets(
     size_t pass_no,
     const PartitioningOptions& pass_opts,
     std::vector<size_t>& partition_offsets) {
+  INJECT_TIMER(computePartitionSizesAndOffsets);
   auto pcnt = pass_opts.getPartitionsCount();
   std::vector<size_t> histograms(partition_offsets.size());
 
@@ -467,6 +456,28 @@ void TablePartitioner::finalizeSWCBuffers(int frag_idx,
 bool TablePartitioner::canStartSWCB(size_t offset_addr) {
   // TODO: we may choose alignment depending on vector size
   return (offset_addr & (CACHE_LINE_SIZE - 1)) == 0;
+}
+
+void TablePartitioner::doPartition(size_t pass_no,
+                                   const PartitioningOptions& pass_opts,
+                                   std::vector<size_t>& partition_offsets) {
+  INJECT_TIMER(doPartitioning);
+  std::vector<std::future<void>> partitioning_threads;
+  partitioning_threads.reserve(input_sizes_.size());
+  for (size_t i = 0; i < input_sizes_.size(); ++i) {
+    if (g_enable_multi_thread_partitioning)
+      partitioning_threads.emplace_back(
+          utils::async([this, i, pass_no, &pass_opts, &partition_offsets] {
+            doPartition(pass_no, pass_opts, i, partition_offsets);
+          }));
+    else
+      partitioning_threads.emplace_back(std::async(
+          std::launch::deferred, [this, i, pass_no, &pass_opts, &partition_offsets] {
+            doPartition(pass_no, pass_opts, i, partition_offsets);
+          }));
+  }
+  for (auto& thread : partitioning_threads)
+    thread.get();
 }
 
 void TablePartitioner::doPartition(size_t pass_no,
