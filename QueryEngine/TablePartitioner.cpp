@@ -502,10 +502,9 @@ void TablePartitioner::doPartition(size_t pass_no,
         if (g_radix_use_swcb) {
           auto init_off = pos + unswcb_elts[part_no][elem_idx];
           auto size = swcb_sizes[part_no][elem_idx];
-          can_done_swcb[part_no][elem_idx] =
-              can_done_swcb[part_no][elem_idx]
-                  ? can_done_swcb[part_no][elem_idx]
-                  : canStartSWCB((int64_t)(output[elem_idx] + init_off * elem_size));
+          auto output_pos = output[elem_idx] + init_off * elem_size;
+          if (!can_done_swcb[part_no][elem_idx])
+            can_done_swcb[part_no][elem_idx] = canStartSWCB((int64_t)output_pos);
           if (can_done_swcb[part_no][elem_idx]) {
             copyWithSWCB(&(swcb_bufs[part_no][elem_idx][0]),
                          size,
@@ -513,7 +512,7 @@ void TablePartitioner::doPartition(size_t pass_no,
                          input_elem_pos,
                          elem_size);
           } else {
-            memcpy(output[elem_idx] + init_off * elem_size, input_elem_pos, elem_size);
+            memcpy(output_pos, input_elem_pos, elem_size);
           }
         } else
           // Regular store, no swcb
