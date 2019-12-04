@@ -688,7 +688,7 @@ JoinColumn BaselineJoinHashTable::fetchColumn(
     }
   }
   {
-    std::lock_guard<std::mutex> fragment_fetch_lock(fragment_fetch_mutex);
+    // std::lock_guard<std::mutex> fragment_fetch_lock(fragment_fetch_mutex);
     if (has_multi_frag) {
       if (effective_memory_level == Data_Namespace::GPU_LEVEL) {
         CHECK(col_buff != nullptr);

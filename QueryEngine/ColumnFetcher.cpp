@@ -32,14 +32,14 @@ std::pair<const int8_t*, size_t> ColumnFetcher::getOneColumnFragment(
   if (fragment.isEmptyPhysicalFragment()) {
     return {nullptr, 0};
   }
-  auto chunk_meta_it = fragment.getChunkMetadataMap().find(hash_col.get_column_id());
-  CHECK(chunk_meta_it != fragment.getChunkMetadataMap().end());
   const auto& catalog = *executor->getCatalog();
   const auto cd = get_column_descriptor_maybe(
       hash_col.get_column_id(), hash_col.get_table_id(), catalog);
   CHECK(!cd || !(cd->isVirtualCol));
   const int8_t* col_buff = nullptr;
   if (cd) {
+    auto chunk_meta_it = fragment.getChunkMetadataMap().find(hash_col.get_column_id());
+    CHECK(chunk_meta_it != fragment.getChunkMetadataMap().end());
     ChunkKey chunk_key{catalog.getCurrentDB().dbId,
                        fragment.physicalTableId,
                        hash_col.get_column_id(),
@@ -58,34 +58,47 @@ std::pair<const int8_t*, size_t> ColumnFetcher::getOneColumnFragment(
     CHECK(ab->getMemoryPtr());
     col_buff = reinterpret_cast<int8_t*>(ab->getMemoryPtr());
   } else {
-    const ColumnarResults* col_frag{nullptr};
-    {
-      std::lock_guard<std::mutex> columnar_conversion_guard(columnar_conversion_mutex);
-      const auto table_id = hash_col.get_table_id();
-      const auto frag_id = fragment.fragmentId;
-      if (column_cache.empty() || !column_cache.count(table_id)) {
-        column_cache.insert(std::make_pair(
-            table_id, std::unordered_map<int, std::shared_ptr<const ColumnarResults>>()));
+    const auto frag_id = fragment.fragmentId;
+    auto& tmp_table =
+        get_temporary_table(executor->temporary_tables_, hash_col.get_table_id());
+    auto& rs = tmp_table.getResultSet(frag_id);
+    // Fast zero-copy path with no mutex.
+    if (rs->isZeroCopyColumnarConversionPossible() &&
+        rs->getRowSetMemOwner() == executor->row_set_mem_owner_) {
+      col_buff = rs->getStorage()->getUnderlyingBuffer() +
+                 rs->getQueryMemDesc().getColOffInBytes(hash_col.get_column_id());
+      if (effective_mem_lvl == Data_Namespace::GPU_LEVEL) {
+        size_t elem_sz =
+            rs->getQueryMemDesc().getPaddedSlotWidthBytes(hash_col.get_column_id());
+        size_t size = rs->entryCount() * elem_sz;
+        col_buff = transferColumn(col_buff, size, &catalog.getDataMgr(), device_id);
       }
-      auto& frag_id_to_result = column_cache[table_id];
-      if (frag_id_to_result.empty() || !frag_id_to_result.count(frag_id)) {
-        auto& tmp_table =
-            get_temporary_table(executor->temporary_tables_, hash_col.get_table_id());
-        frag_id_to_result.insert(
-            std::make_pair(frag_id,
-                           std::shared_ptr<const ColumnarResults>(
-                               columnarize_result(executor->row_set_mem_owner_,
-                                                  tmp_table.getResultSet(frag_id),
-                                                  frag_id))));
+    } else {
+      const ColumnarResults* col_frag{nullptr};
+      {
+        std::lock_guard<std::mutex> columnar_conversion_guard(columnar_conversion_mutex);
+        const auto table_id = hash_col.get_table_id();
+        if (column_cache.empty() || !column_cache.count(table_id)) {
+          column_cache.insert(std::make_pair(
+              table_id,
+              std::unordered_map<int, std::shared_ptr<const ColumnarResults>>()));
+        }
+        auto& frag_id_to_result = column_cache[table_id];
+        if (frag_id_to_result.empty() || !frag_id_to_result.count(frag_id)) {
+          frag_id_to_result.insert(
+              std::make_pair(frag_id,
+                             std::shared_ptr<const ColumnarResults>(columnarize_result(
+                                 executor->row_set_mem_owner_, rs, frag_id))));
+        }
+        col_frag = column_cache[table_id][frag_id].get();
       }
-      col_frag = column_cache[table_id][frag_id].get();
+      col_buff = transferColumnIfNeeded(
+          col_frag,
+          hash_col.get_column_id(),
+          &catalog.getDataMgr(),
+          effective_mem_lvl,
+          effective_mem_lvl == Data_Namespace::CPU_LEVEL ? 0 : device_id);
     }
-    col_buff = transferColumnIfNeeded(
-        col_frag,
-        hash_col.get_column_id(),
-        &catalog.getDataMgr(),
-        effective_mem_lvl,
-        effective_mem_lvl == Data_Namespace::CPU_LEVEL ? 0 : device_id);
   }
   return {col_buff, fragment.getNumTuples()};
 }
@@ -293,15 +306,22 @@ const int8_t* ColumnFetcher::transferColumnIfNeeded(
   if (memory_level == Data_Namespace::GPU_LEVEL) {
     const auto& col_ti = columnar_results->getColumnType(col_id);
     const auto num_bytes = columnar_results->size() * col_ti.get_size();
-    auto gpu_col_buffer = CudaAllocator::alloc(data_mgr, num_bytes, device_id);
-    copy_to_gpu(data_mgr,
-                reinterpret_cast<CUdeviceptr>(gpu_col_buffer),
-                col_buffers[col_id],
-                num_bytes,
-                device_id);
-    return gpu_col_buffer;
+    return transferColumn(col_buffers[col_id], num_bytes, data_mgr, device_id);
   }
   return col_buffers[col_id];
+}
+
+const int8_t* ColumnFetcher::transferColumn(const int8_t* col_buf,
+                                            const size_t size,
+                                            Data_Namespace::DataMgr* data_mgr,
+                                            const int device_id) {
+  if (!col_buf) {
+    return nullptr;
+  }
+  auto gpu_col_buffer = CudaAllocator::alloc(data_mgr, size, device_id);
+  copy_to_gpu(
+      data_mgr, reinterpret_cast<CUdeviceptr>(gpu_col_buffer), col_buf, size, device_id);
+  return gpu_col_buffer;
 }
 
 const int8_t* ColumnFetcher::getResultSetColumn(

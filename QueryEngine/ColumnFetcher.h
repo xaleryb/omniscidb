@@ -68,6 +68,10 @@ class ColumnFetcher {
       Data_Namespace::DataMgr* data_mgr,
       const Data_Namespace::MemoryLevel memory_level,
       const int device_id);
+  static const int8_t* transferColumn(const int8_t* col_buf,
+                                      const size_t size,
+                                      Data_Namespace::DataMgr* data_mgr,
+                                      const int device_id);
 
   const int8_t* getResultSetColumn(const ResultSetPtr& buffer,
                                    const int table_id,
