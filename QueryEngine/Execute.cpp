@@ -133,6 +133,7 @@ size_t g_approx_quantile_buffer{1000};
 size_t g_approx_quantile_centroids{300};
 
 extern bool g_cache_string_hash;
+bool g_enable_multifrag_rs{false};
 
 int const Executor::max_gpu_count;
 
@@ -852,7 +853,7 @@ std::pair<int64_t, int32_t> Executor::reduceResults(const SQLAgg agg,
 
 namespace {
 
-ResultSetPtr get_merged_result(
+TemporaryTable get_merged_result(
     std::vector<std::pair<ResultSetPtr, std::vector<size_t>>>& results_per_device) {
   auto& first = results_per_device.front().first;
   CHECK(first);
@@ -861,7 +862,17 @@ ResultSetPtr get_merged_result(
     CHECK(next);
     first->append(*next);
   }
-  return std::move(first);
+  return TemporaryTable(std::move(first));
+}
+
+TemporaryTable get_separate_results(
+    std::vector<std::pair<ResultSetPtr, std::vector<size_t>>>& results_per_device) {
+  std::vector<ResultSetPtr> results;
+  results.reserve(results_per_device.size());
+  for (auto& r : results_per_device) {
+    results.emplace_back(r.first);
+  }
+  return TemporaryTable(std::move(results));
 }
 
 }  // namespace
@@ -885,7 +896,6 @@ TemporaryTable Executor::resultsUnion(SharedKernelContext& shared_context,
                                        blockSize(),
                                        gridSize());
   }
-
   using IndexedResultSet = std::pair<ResultSetPtr, std::vector<size_t>>;
   std::sort(results_per_device.begin(),
             results_per_device.end(),
@@ -1359,7 +1369,7 @@ RelAlgExecutionUnit replace_scan_limit(const RelAlgExecutionUnit& ra_exe_unit_in
 
 }  // namespace
 
-ResultSetPtr Executor::executeWorkUnit(size_t& max_groups_buffer_entry_guess,
+TemporaryTable Executor::executeWorkUnit(size_t& max_groups_buffer_entry_guess,
                                        const bool is_agg,
                                        const std::vector<InputTableInfo>& query_infos,
                                        const RelAlgExecutionUnit& ra_exe_unit_in,
@@ -1393,12 +1403,10 @@ ResultSetPtr Executor::executeWorkUnit(size_t& max_groups_buffer_entry_guess,
                                       render_info,
                                       has_cardinality_estimation,
                                       column_cache);
-    if (result) {
-      result->setKernelQueueTime(kernel_queue_time_ms_);
-      result->addCompilationQueueTime(compilation_queue_time_ms_);
-      if (eo.just_validate) {
-        result->setValidationOnlyRes();
-      }
+    result.setKernelQueueTime(kernel_queue_time_ms_);
+    result.addCompilationQueueTime(compilation_queue_time_ms_);
+    if (eo.just_validate) {
+      result.setValidationOnlyRes();
     }
     return result;
   } catch (const CompilationRetryNewScanLimit& e) {
@@ -1415,18 +1423,16 @@ ResultSetPtr Executor::executeWorkUnit(size_t& max_groups_buffer_entry_guess,
                             render_info,
                             has_cardinality_estimation,
                             column_cache);
-    if (result) {
-      result->setKernelQueueTime(kernel_queue_time_ms_);
-      result->addCompilationQueueTime(compilation_queue_time_ms_);
-      if (eo.just_validate) {
-        result->setValidationOnlyRes();
-      }
+    result.setKernelQueueTime(kernel_queue_time_ms_);
+    result.addCompilationQueueTime(compilation_queue_time_ms_);
+    if (eo.just_validate) {
+      result.setValidationOnlyRes();
     }
     return result;
   }
 }
 
-ResultSetPtr Executor::executeWorkUnitImpl(
+TemporaryTable Executor::executeWorkUnitImpl(
     size_t& max_groups_buffer_entry_guess,
     const bool is_agg,
     const bool allow_single_frag_table_opt,
@@ -1497,7 +1503,7 @@ ResultSetPtr Executor::executeWorkUnitImpl(
           new QueryMemoryDescriptor(this, 0, QueryDescriptionType::Projection, false));
     }
     if (eo.just_explain) {
-      return executeExplain(*query_comp_desc_owned);
+      return {executeExplain(*query_comp_desc_owned)};
     }
 
     for (const auto target_expr : ra_exe_unit.target_exprs) {
@@ -2434,10 +2440,10 @@ FetchResult Executor::fetchChunks(
           plan_state_->columns_to_fetch_.end()) {
         memory_level_for_column = Data_Namespace::CPU_LEVEL;
       }
-      if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
-        frag_col_buffers[it->second] = column_fetcher.getResultSetColumn(
-            col_id.get(), memory_level_for_column, device_id, device_allocator);
-      } else {
+      /// if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
+      ///   frag_col_buffers[it->second] = column_fetcher.getResultSetColumn(
+      ///     col_id.get(), memory_level_for_column, device_id, device_allocator);
+      /// } else {
         if (needFetchAllFragments(*col_id, ra_exe_unit, selected_fragments)) {
           frag_col_buffers[it->second] =
               column_fetcher.getAllTableColumnFragments(table_id,
@@ -2458,7 +2464,8 @@ FetchResult Executor::fetchChunks(
                                                        device_id,
                                                        device_allocator);
         }
-      }
+      ///}
+      //}
     }
     all_frag_col_buffers.push_back(frag_col_buffers);
   }
@@ -2565,10 +2572,10 @@ FetchResult Executor::fetchUnionChunks(
             plan_state_->columns_to_fetch_.end()) {
           memory_level_for_column = Data_Namespace::CPU_LEVEL;
         }
-        if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
-          frag_col_buffers[it->second] = column_fetcher.getResultSetColumn(
-              col_id.get(), memory_level_for_column, device_id, device_allocator);
-        } else {
+        ///if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
+        ///  frag_col_buffers[it->second] = column_fetcher.getResultSetColumn(
+        ///      col_id.get(), memory_level_for_column, device_id, device_allocator);
+        ///} else {
           if (needFetchAllFragments(*col_id, ra_exe_unit, selected_fragments)) {
             frag_col_buffers[it->second] =
                 column_fetcher.getAllTableColumnFragments(table_id,
@@ -2589,7 +2596,7 @@ FetchResult Executor::fetchUnionChunks(
                                                          device_id,
                                                          device_allocator);
           }
-        }
+        ///}
       }
       all_frag_col_buffers.push_back(frag_col_buffers);
     }
