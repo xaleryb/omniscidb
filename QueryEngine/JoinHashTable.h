@@ -122,6 +122,11 @@ class JoinHashTable : public JoinHashTableInterface {
   virtual ~JoinHashTable() {}
 
  private:
+  // We don't want to create JoinHashTable for big ranges
+  // with small number of valid entries. Therefore we
+  // define the minimal load level (in percent).
+  static constexpr size_t huge_join_hash_min_load_ = 10;
+
   JoinHashTable(const std::shared_ptr<Analyzer::BinOper> qual_bin_oper,
                 const Analyzer::ColumnVar* col_var,
                 const std::vector<InputTableInfo>& query_infos,
