@@ -43,6 +43,10 @@ class RelAlgVisitor {
     if (join) {
       return aggregateResult(result, visitJoin(join));
     }
+    const auto union_node = dynamic_cast<const RelUnion*>(rel_alg);
+    if (union_node) {
+      return aggregateResult(result, visitUnion(union_node));
+    }
     const auto left_deep_inner_join = dynamic_cast<const RelLeftDeepInnerJoin*>(rel_alg);
     if (left_deep_inner_join) {
       return aggregateResult(result, visitLeftDeepInnerJoin(left_deep_inner_join));
@@ -82,6 +86,8 @@ class RelAlgVisitor {
   virtual T visitFilter(const RelFilter*) const { return defaultResult(); }
 
   virtual T visitJoin(const RelJoin*) const { return defaultResult(); }
+
+  virtual T visitUnion(const RelUnion*) const { return defaultResult(); }
 
   virtual T visitLeftDeepInnerJoin(const RelLeftDeepInnerJoin*) const {
     return defaultResult();

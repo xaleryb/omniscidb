@@ -619,6 +619,15 @@ void RelAlgExecutor::executeRelAlgStep(const RaExecutionSequence& seq,
     addTemporaryTable(-table_func->getId(), exec_desc.getResult().getDataPtr());
     return;
   }
+  const auto union_node = dynamic_cast<const RelUnion*>(body);
+  if (union_node) {
+    bool multifrag_result =
+        g_enable_multifrag_rs && (step_idx != seq.size() - 1) && !seq.hasTableFunctions();
+    exec_desc.setResult(executeUnion(
+        union_node, eo_work_unit.with_multifrag_result(multifrag_result), queue_time_ms));
+    addTemporaryTable(-union_node->getId(), exec_desc.getResult().getTable());
+    return;
+  }
   CHECK(false);
 }
 
@@ -1545,6 +1554,50 @@ ExecutionResult RelAlgExecutor::executeTableFunction(const RelTableFunction* tab
     throw std::runtime_error("Table function ran out of memory during execution");
   }
   result.setQueueTime(queue_time_ms);
+  return result;
+}
+
+ExecutionResult RelAlgExecutor::executeUnion(const RelUnion* union_node,
+                                             const ExecutionOptions& eo,
+                                             const int64_t queue_time_ms) {
+  auto timer = DEBUG_TIMER(__func__);
+  CHECK(union_node->isAll());
+
+  const auto lhs = union_node->getInput(0);
+  const auto rhs = union_node->getInput(1);
+  if (!temporary_tables_.count(-lhs->getId()) ||
+      !temporary_tables_.count(-rhs->getId())) {
+    throw QueryNotSupported(std::string(
+        "unsupported UINION ALL input: intermediate table expected but not found"));
+  }
+
+  if (!eo.multifrag_result) {
+    if (!g_enable_multifrag_rs) {
+      throw QueryNotSupported(std::string("UINION ALL requires --enable-multifrag-rs"));
+    }
+    throw QueryNotSupported(std::string(
+        "unsupported UINION ALL case: multifrag result is not allowed but NYI"));
+  }
+
+  auto lhs_table = get_temporary_table(&temporary_tables_, -lhs->getId());
+  auto rhs_table = get_temporary_table(&temporary_tables_, -rhs->getId());
+
+  std::vector<ResultSetPtr> all_rs;
+  all_rs.reserve(lhs_table.getFragCount() + rhs_table.getFragCount());
+
+  for (auto& rs : lhs_table) {
+    all_rs.push_back(rs);
+  }
+  for (auto& rs : rhs_table) {
+    all_rs.push_back(rs);
+  }
+
+  ExecutionResult result(TemporaryTable(std::move(all_rs)),
+                         union_node->getOutputMetainfo());
+  result.setQueueTime(queue_time_ms);
+
+  union_node->setOutputMetainfo(union_node->getInput(0)->getOutputMetainfo());
+
   return result;
 }
 

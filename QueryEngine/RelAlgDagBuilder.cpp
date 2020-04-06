@@ -186,6 +186,12 @@ RANodeOutput get_node_output(const RelAlgNode* ra_node) {
     lhs_out.insert(lhs_out.end(), rhs_out.begin(), rhs_out.end());
     return lhs_out;
   }
+  const auto union_node = dynamic_cast<const RelUnion*>(ra_node);
+  if (union_node) {
+    // Union output count doesn't depend on the input
+    CHECK_EQ(size_t(2), union_node->inputCount());
+    return n_outputs(union_node, union_node->size());
+  }
   const auto table_func_node = dynamic_cast<const RelTableFunction*>(ra_node);
   if (table_func_node) {
     // Table Function output count doesn't depend on the input
@@ -250,6 +256,16 @@ bool isRenamedInput(const RelAlgNode* node,
     }
     CHECK_GE(index, lhs_size);
     return isRenamedInput(join->getInput(1), index - lhs_size, new_name);
+  }
+
+  if (auto union_node = dynamic_cast<const RelUnion*>(node)) {
+    CHECK_EQ(size_t(2), union_node->inputCount());
+    const auto lhs_size = union_node->getInput(0)->size();
+    if (index < lhs_size) {
+      return isRenamedInput(union_node->getInput(0), index, new_name);
+    }
+    CHECK_GE(index, lhs_size);
+    return isRenamedInput(union_node->getInput(1), index - lhs_size, new_name);
   }
 
   if (auto scan = dynamic_cast<const RelScan*>(node)) {
@@ -363,6 +379,10 @@ std::shared_ptr<RelAlgNode> RelJoin::deepCopy() const {
   RexDeepCopyVisitor copier;
   auto condition_copy = copier.visit(condition_.get());
   return std::make_shared<RelJoin>(inputs_[0], inputs_[1], condition_copy, join_type_);
+}
+
+std::shared_ptr<RelAlgNode> RelUnion::deepCopy() const {
+  return std::make_shared<RelUnion>(inputs_[0], inputs_[1], all_);
 }
 
 std::shared_ptr<RelAlgNode> RelCompound::deepCopy() const {
@@ -1962,6 +1982,8 @@ class RelAlgDispatcher {
         ra_node = dispatchAggregate(crt_node);
       } else if (rel_op == std::string("LogicalJoin")) {
         ra_node = dispatchJoin(crt_node, root_dag_builder);
+      } else if (rel_op == std::string("LogicalUnion")) {
+        ra_node = dispatchUnion(crt_node, root_dag_builder);
       } else if (rel_op == std::string("LogicalSort")) {
         ra_node = dispatchSort(crt_node);
       } else if (rel_op == std::string("LogicalValues")) {
@@ -2045,6 +2067,17 @@ class RelAlgDispatcher {
     auto filter_rex =
         parse_scalar_expr(field(join_ra, "condition"), cat_, root_dag_builder);
     return std::make_shared<RelJoin>(inputs[0], inputs[1], filter_rex, join_type);
+  }
+
+  std::shared_ptr<RelUnion> dispatchUnion(const rapidjson::Value& union_ra,
+                                          RelAlgDagBuilder& root_dag_builder) {
+    const auto inputs = getRelAlgInputs(union_ra);
+    CHECK_EQ(size_t(2), inputs.size());
+    const auto all = json_bool(field(union_ra, "all"));
+    if (!all) {
+      throw QueryNotSupported(std::string("UNION is not supported yet"));
+    }
+    return std::make_shared<RelUnion>(inputs[0], inputs[1], all);
   }
 
   std::shared_ptr<RelSort> dispatchSort(const rapidjson::Value& sort_ra) {

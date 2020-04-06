@@ -29,6 +29,7 @@ class RelAlgPhysicalInputsVisitor : public RelAlgVisitor<PhysicalInputSet> {
   PhysicalInputSet visitCompound(const RelCompound* compound) const override;
   PhysicalInputSet visitFilter(const RelFilter* filter) const override;
   PhysicalInputSet visitJoin(const RelJoin* join) const override;
+  PhysicalInputSet visitUnion(const RelUnion* union_node) const override;
   PhysicalInputSet visitLeftDeepInnerJoin(const RelLeftDeepInnerJoin*) const override;
   PhysicalInputSet visitProject(const RelProject* project) const override;
   PhysicalInputSet visitSort(const RelSort* sort) const override;
@@ -137,6 +138,14 @@ PhysicalInputSet RelAlgPhysicalInputsVisitor::visitJoin(const RelJoin* join) con
   }
   RexPhysicalInputsVisitor visitor;
   return visitor.visit(condition);
+}
+
+PhysicalInputSet RelAlgPhysicalInputsVisitor::visitUnion(
+    const RelUnion* union_node) const {
+  auto lhs = visit(union_node->getInput(0));
+  auto rhs = visit(union_node->getInput(1));
+  lhs.insert(rhs.begin(), rhs.end());
+  return lhs;
 }
 
 PhysicalInputSet RelAlgPhysicalInputsVisitor::visitLeftDeepInnerJoin(

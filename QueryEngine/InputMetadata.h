@@ -30,6 +30,8 @@ class Executor;
 
 class TemporaryTable {
  public:
+  using const_iterator = std::vector<ResultSetPtr>::const_iterator;
+
   TemporaryTable() {}
   TemporaryTable(const ResultSetPtr& rs) { results_.emplace_back(rs); }
   TemporaryTable(ResultSetPtr&& rs) { results_.emplace_back(rs); }
@@ -59,6 +61,9 @@ class TemporaryTable {
 
   ResultSetPtr& operator[](size_t idx) { return results_[idx]; }
   const ResultSetPtr& operator[](size_t idx) const { return results_[idx]; }
+
+  const_iterator begin() const { return results_.begin(); }
+  const_iterator end() const { return results_.end(); }
 
  private:
   std::vector<ResultSetPtr> results_;

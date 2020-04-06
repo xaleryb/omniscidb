@@ -27,8 +27,7 @@ ExecutionResult::ExecutionResult(const ResultSetPtr& rows,
 
 ExecutionResult::ExecutionResult(ResultSetPtr&& result,
                                  const std::vector<TargetMetaInfo>& targets_meta)
-    : results_(result), targets_meta_(targets_meta), filter_push_down_enabled_(false) {
-}
+    : results_(result), targets_meta_(targets_meta), filter_push_down_enabled_(false) {}
 
 ExecutionResult::ExecutionResult(const TemporaryTable& results,
                                  const std::vector<TargetMetaInfo>& targets_meta)
@@ -36,8 +35,7 @@ ExecutionResult::ExecutionResult(const TemporaryTable& results,
 
 ExecutionResult::ExecutionResult(TemporaryTable&& results,
                                  const std::vector<TargetMetaInfo>& targets_meta)
-    : results_(results), targets_meta_(targets_meta), filter_push_down_enabled_(false) {
-}
+    : results_(results), targets_meta_(targets_meta), filter_push_down_enabled_(false) {}
 
 ExecutionResult::ExecutionResult(const ExecutionResult& that)
     : targets_meta_(that.targets_meta_)
@@ -143,7 +141,8 @@ DAG build_dag(const RelAlgNode* sink) {
           (dynamic_cast<const RelLogicalValues*>(node) && input_num == 0) ||
           (dynamic_cast<const RelModify*>(node) && input_num == 1) ||
           (input_num == 2 && (dynamic_cast<const RelJoin*>(node) ||
-                              dynamic_cast<const RelLeftDeepInnerJoin*>(node))) ||
+                              dynamic_cast<const RelLeftDeepInnerJoin*>(node) ||
+                              dynamic_cast<const RelUnion*>(node))) ||
           (input_num > 2 && (dynamic_cast<const RelLeftDeepInnerJoin*>(node))));
     for (size_t i = 0; i < input_num; ++i) {
       const auto input = node->getInput(i);

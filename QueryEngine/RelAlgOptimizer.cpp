@@ -350,6 +350,13 @@ std::unordered_set<const RelProject*> get_visible_projects(const RelAlgNode* roo
     return lhs_projs;
   }
 
+  if (auto union_node = dynamic_cast<const RelUnion*>(root)) {
+    auto lhs_projs = get_visible_projects(union_node->getInput(0));
+    auto rhs_projs = get_visible_projects(union_node->getInput(1));
+    lhs_projs.insert(rhs_projs.begin(), rhs_projs.end());
+    return lhs_projs;
+  }
+
   CHECK(dynamic_cast<const RelFilter*>(root) || dynamic_cast<const RelSort*>(root));
   return get_visible_projects(root->getInput(0));
 }
@@ -414,8 +421,9 @@ std::unordered_map<const RelAlgNode*, std::unordered_set<const RelAlgNode*>> bui
       const auto left_deep_join = dynamic_cast<const RelLeftDeepInnerJoin*>(walker);
       const auto logical_values = dynamic_cast<const RelLogicalValues*>(walker);
       const auto table_func = dynamic_cast<const RelTableFunction*>(walker);
+      const auto union_node = dynamic_cast<const RelUnion*>(walker);
       CHECK(join || project || aggregate || filter || sort || left_deep_join ||
-            logical_values || table_func);
+            logical_values || table_func || union_node);
       for (size_t i = 0; i < walker->inputCount(); ++i) {
         auto src = walker->getInput(i);
         if (dynamic_cast<const RelScan*>(src) || dynamic_cast<const RelModify*>(src)) {
@@ -649,6 +657,21 @@ std::vector<std::unordered_set<size_t>> get_live_ins(
         continue;
       }
       CHECK(false);
+    }
+    return {lhs_live_ins, rhs_live_ins};
+  }
+  if (auto union_node = dynamic_cast<const RelUnion*>(node)) {
+    std::unordered_set<size_t> lhs_live_ins;
+    std::unordered_set<size_t> rhs_live_ins;
+    CHECK_EQ(size_t(2), union_node->inputCount());
+    auto lhs = union_node->getInput(0);
+    const auto rhs_idx_base = lhs->size();
+    for (const auto idx : live_out) {
+      if (idx < rhs_idx_base) {
+        lhs_live_ins.insert(idx);
+      } else {
+        rhs_live_ins.insert(idx - rhs_idx_base);
+      }
     }
     return {lhs_live_ins, rhs_live_ins};
   }

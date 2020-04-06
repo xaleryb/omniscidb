@@ -982,6 +982,33 @@ class RelJoin : public RelAlgNode {
   const JoinType join_type_;
 };
 
+class RelUnion : public RelAlgNode {
+ public:
+  RelUnion(std::shared_ptr<const RelAlgNode> lhs,
+           std::shared_ptr<const RelAlgNode> rhs,
+           bool all)
+      : all_(all) {
+    inputs_.push_back(lhs);
+    inputs_.push_back(rhs);
+  }
+
+  bool isAll() const { return all_; }
+
+  std::string toString() const override {
+    std::string result =
+        "(RelUnion<" + std::to_string(reinterpret_cast<uint64_t>(this)) + ">[";
+    result += "all=" + std::to_string(all_);
+    return result + "])";
+  }
+
+  size_t size() const override { return inputs_[0]->size() + inputs_[1]->size(); }
+
+  std::shared_ptr<RelAlgNode> deepCopy() const override;
+
+ private:
+  bool all_;
+};
+
 class RelFilter : public RelAlgNode {
  public:
   RelFilter(std::unique_ptr<const RexScalar>& filter,

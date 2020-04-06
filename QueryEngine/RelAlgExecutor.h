@@ -200,6 +200,10 @@ class RelAlgExecutor : private StorageIOFacility<RelAlgExecutorTraits> {
                                        const ExecutionOptions&,
                                        const int64_t queue_time_ms);
 
+  ExecutionResult executeUnion(const RelUnion*,
+                               const ExecutionOptions&,
+                               const int64_t queue_time_ms);
+
   // Computes the window function results to be used by the query.
   void computeWindow(const RelAlgExecutionUnit& ra_exe_unit,
                      const CompilationOptions& co,
