@@ -82,8 +82,8 @@ public class MapDPlanner extends PlannerImpl {
       this.replaced = replaced;
     }
   }
-
-  private CalciteCatalogReader createCatalogReader() {
+  
+  public CalciteCatalogReader createCatalogReader() {
     final SchemaPlus rootSchema = rootSchema(config.getDefaultSchema());
     final Context context = config.getContext();
     final CalciteConnectionConfig connectionConfig;

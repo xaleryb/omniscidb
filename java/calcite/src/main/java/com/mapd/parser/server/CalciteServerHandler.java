@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.type.TypeFactory;
 import com.mapd.calcite.parser.MapDParser;
 import com.mapd.calcite.parser.MapDParserOptions;
 import com.mapd.calcite.parser.MapDSchema;
+import com.mapd.calcite.parser.MapDTypeSystem;
 import com.mapd.calcite.parser.MapDUser;
 import com.mapd.common.SockTransportProperties;
 import com.omnisci.thrift.calciteserver.CalciteServer;
@@ -34,6 +35,7 @@ import com.omnisci.thrift.calciteserver.TPlanResult;
 import com.omnisci.thrift.calciteserver.TUserDefinedFunction;
 import com.omnisci.thrift.calciteserver.TUserDefinedTableFunction;
 
+import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
@@ -41,6 +43,7 @@ import org.apache.calcite.prepare.MapDPlanner;
 import org.apache.calcite.prepare.SqlIdentifierCapturer;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.externalize.RelJsonReader;
+import org.apache.calcite.rel.externalize.RelJsonWriter;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.runtime.CalciteContextException;
 import org.apache.calcite.sql.parser.SqlParseException;
@@ -189,15 +192,20 @@ public class CalciteServerHandler implements CalciteServer.Iface {
                   filterPushDownInfo, legacySyntax, isExplain, isViewOptimize);
           jsonResult = parser.processSql(sqlText, parserOptions);
         } else {
-          // MapDSchema schema = new MapDSchema(
-          //   dataDir, this, mapdPort, parser.mapdUser, parser.sock_transport_properties);
-          // MapDPlanner planner = parser.getPlanner();
-          // RexBuilder rexBuilder = new RexBuilder(planner.getTypeFactory());
-          // RelOptPlanner relOptPlanner = new VolcanoPlanner();
-          // RelOptCluster cluster = RelOptCluster.create(relOptPlanner, rexBuilder);
-          // RelJsonReader reader = new RelJsonReader(cluster, RELOPT_SCHEMA, schema);
-          // RelNode node = reader.read(sqlText);
-          jsonResult = sqlText;
+          MapDSchema schema = new MapDSchema(
+            dataDir, parser, mapdPort, parser.mapdUser, parser.sock_transport_properties);
+          MapDPlanner planner = parser.getPlanner();
+
+          final MapDTypeSystem typeSystem = new MapDTypeSystem();
+          RexBuilder rexBuilder = new RexBuilder(new JavaTypeFactoryImpl(typeSystem));
+          RelOptPlanner relOptPlanner = new VolcanoPlanner();
+          RelOptCluster cluster = RelOptCluster.create(relOptPlanner, rexBuilder);
+          RelJsonReader reader = new RelJsonReader(cluster, planner.createCatalogReader(), schema);
+          RelNode node = reader.read(sqlText);
+
+          RelJsonWriter writer = new RelJsonWriter();
+          node.explain(writer);
+          jsonResult = writer.asString();
         }
       } catch (ValidationException ex) {
         String msg = "Validation: " + ex.getMessage();
