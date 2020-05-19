@@ -94,7 +94,7 @@
 #include <string>
 #include <thread>
 #include <typeinfo>
-
+#include <iostream>
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <arrow/ipc/api.h>
@@ -4989,16 +4989,14 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
               legacylockmgr::ExecutorOuterLock, true));
 
       std::string query_ra;
-      if (pw.is_exec_ra) {
-        query_ra = pw.actual_query;
-      } else {
-        _return.execution_time_ms += measure<>::execution([&]() {
-          TPlanResult result;
-          std::tie(result, locks) =
-              parse_to_ra(query_state_proxy, query_str, {}, true, mapd_parameters_);
-          query_ra = result.plan_result;
-        });
-      }
+      std::cout << query_str << std::endl;
+      _return.execution_time_ms += measure<>::execution([&]() {
+        TPlanResult result;
+        std::tie(result, locks) =
+            parse_to_ra(query_state_proxy, query_str, {}, true, mapd_parameters_);
+        query_ra = result.plan_result;
+        std::cout << query_ra << std::endl;
+      });
 
       std::string query_ra_calcite_explain;
       if (pw.isCalciteExplain() && (!g_enable_filter_push_down || g_cluster)) {
@@ -5351,6 +5349,7 @@ std::pair<TPlanResult, lockmgr::LockedTableDescriptors> DBHandler::parse_to_ra(
                                    mapd_parameters.enable_calcite_view_optimize,
                                    check_privileges,
                                    in_memory_session_id);
+
         session_cleanup_handler(in_memory_session_id);
       } catch (std::exception&) {
         session_cleanup_handler(in_memory_session_id);

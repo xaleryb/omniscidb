@@ -17,8 +17,10 @@ package com.mapd.parser.server;
 
 import static com.mapd.calcite.parser.MapDParser.CURRENT_PARSER;
 
+import com.fasterxml.jackson.databind.type.TypeFactory;
 import com.mapd.calcite.parser.MapDParser;
 import com.mapd.calcite.parser.MapDParserOptions;
+import com.mapd.calcite.parser.MapDSchema;
 import com.mapd.calcite.parser.MapDUser;
 import com.mapd.common.SockTransportProperties;
 import com.omnisci.thrift.calciteserver.CalciteServer;
@@ -32,8 +34,14 @@ import com.omnisci.thrift.calciteserver.TPlanResult;
 import com.omnisci.thrift.calciteserver.TUserDefinedFunction;
 import com.omnisci.thrift.calciteserver.TUserDefinedTableFunction;
 
+import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptPlanner;
+import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.prepare.MapDPlanner;
 import org.apache.calcite.prepare.SqlIdentifierCapturer;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.externalize.RelJsonReader;
+import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.runtime.CalciteContextException;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.validate.SqlMoniker;
@@ -152,6 +160,13 @@ public class CalciteServerHandler implements CalciteServer.Iface {
     CURRENT_PARSER.set(parser);
 
     // need to trim the sql string as it seems it is not trimed prior to here
+    boolean is_calcite = false;
+
+    if (sqlText.contains("execute relalg")) {
+      sqlText = sqlText.replace("execute relalg", "");
+      is_calcite = true;
+    }
+
     sqlText = sqlText.trim();
     // remove last charcter if it is a ;
     if (sqlText.length() > 0 && sqlText.charAt(sqlText.length() - 1) == ';') {
@@ -169,9 +184,21 @@ public class CalciteServerHandler implements CalciteServer.Iface {
                 req.input_prev, req.input_start, req.input_next));
       }
       try {
-        MapDParserOptions parserOptions = new MapDParserOptions(
-                filterPushDownInfo, legacySyntax, isExplain, isViewOptimize);
-        jsonResult = parser.processSql(sqlText, parserOptions);
+        if (!is_calcite) {
+          MapDParserOptions parserOptions = new MapDParserOptions(
+                  filterPushDownInfo, legacySyntax, isExplain, isViewOptimize);
+          jsonResult = parser.processSql(sqlText, parserOptions);
+        } else {
+          // MapDSchema schema = new MapDSchema(
+          //   dataDir, this, mapdPort, parser.mapdUser, parser.sock_transport_properties);
+          // MapDPlanner planner = parser.getPlanner();
+          // RexBuilder rexBuilder = new RexBuilder(planner.getTypeFactory());
+          // RelOptPlanner relOptPlanner = new VolcanoPlanner();
+          // RelOptCluster cluster = RelOptCluster.create(relOptPlanner, rexBuilder);
+          // RelJsonReader reader = new RelJsonReader(cluster, RELOPT_SCHEMA, schema);
+          // RelNode node = reader.read(sqlText);
+          jsonResult = sqlText;
+        }
       } catch (ValidationException ex) {
         String msg = "Validation: " + ex.getMessage();
         MAPDLOGGER.error(msg, ex);

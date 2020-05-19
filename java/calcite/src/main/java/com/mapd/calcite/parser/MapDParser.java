@@ -133,9 +133,9 @@ public final class MapDParser {
 
   private int callCount = 0;
   private final int mapdPort;
-  private MapDUser mapdUser;
+  public MapDUser mapdUser;
   SqlNode sqlNode_;
-  private SockTransportProperties sock_transport_properties = null;
+  public SockTransportProperties sock_transport_properties = null;
 
   private static Map<String, Boolean> SubqueryCorrMemo = new ConcurrentHashMap<>();
 
@@ -186,7 +186,7 @@ public final class MapDParser {
     }
   };
 
-  private MapDPlanner getPlanner() {
+  public MapDPlanner getPlanner() {
     return getPlanner(true, true);
   }
 
@@ -212,7 +212,7 @@ public final class MapDParser {
     return false;
   }
 
-  private MapDPlanner getPlanner(final boolean allowSubQueryExpansion,
+  public MapDPlanner getPlanner(final boolean allowSubQueryExpansion,
           final boolean allowPushdownJoinCondition) {
     final MapDSchema mapd =
             new MapDSchema(dataDir, this, mapdPort, mapdUser, sock_transport_properties);

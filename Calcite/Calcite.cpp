@@ -45,6 +45,7 @@
 #include "rapidjson/document.h"
 
 #include <utility>
+#include <iostream>
 
 using namespace rapidjson;
 using namespace apache::thrift;
@@ -400,6 +401,8 @@ TPlanResult Calcite::process(
                                    is_explain,
                                    is_view_optimize,
                                    calcite_session_id);
+
+  std::cout << result.plan_result << std::endl;
   if (check_privileges && !is_explain) {
     checkAccessedObjectsPrivileges(query_state_proxy, result);
   }
