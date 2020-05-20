@@ -18,11 +18,14 @@ package com.mapd.parser.server;
 import static com.mapd.calcite.parser.MapDParser.CURRENT_PARSER;
 
 import com.fasterxml.jackson.databind.type.TypeFactory;
+import com.google.common.collect.ImmutableList;
 import com.mapd.calcite.parser.MapDParser;
 import com.mapd.calcite.parser.MapDParserOptions;
 import com.mapd.calcite.parser.MapDSchema;
+import com.mapd.calcite.parser.MapDSerializer;
 import com.mapd.calcite.parser.MapDTypeSystem;
 import com.mapd.calcite.parser.MapDUser;
+import com.mapd.calcite.parser.ProjectProjectRemoveRule;
 import com.mapd.common.SockTransportProperties;
 import com.omnisci.thrift.calciteserver.CalciteServer;
 import com.omnisci.thrift.calciteserver.InvalidParseRequest;
@@ -35,20 +38,43 @@ import com.omnisci.thrift.calciteserver.TPlanResult;
 import com.omnisci.thrift.calciteserver.TUserDefinedFunction;
 import com.omnisci.thrift.calciteserver.TUserDefinedTableFunction;
 
+import org.apache.calcite.adapter.enumerable.EnumerableRules;
+import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.config.CalciteConnectionConfig;
+import org.apache.calcite.config.CalciteConnectionConfigImpl;
+import org.apache.calcite.config.CalciteConnectionProperty;
+import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
+import org.apache.calcite.plan.Context;
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptLattice;
+import org.apache.calcite.plan.RelOptMaterialization;
 import org.apache.calcite.plan.RelOptPlanner;
+import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
+import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.prepare.MapDPlanner;
 import org.apache.calcite.prepare.SqlIdentifierCapturer;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.core.RelFactories;
+import org.apache.calcite.rel.externalize.MapDRelJsonReader;
 import org.apache.calcite.rel.externalize.RelJsonReader;
 import org.apache.calcite.rel.externalize.RelJsonWriter;
+import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
+import org.apache.calcite.rel.rules.FilterMergeRule;
+import org.apache.calcite.rel.rules.FilterProjectTransposeRule;
+import org.apache.calcite.rel.rules.JoinProjectTransposeRule;
+import org.apache.calcite.rel.rules.ProjectMergeRule;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.runtime.CalciteContextException;
+import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.validate.SqlMoniker;
 import org.apache.calcite.sql.validate.SqlMonikerType;
+import org.apache.calcite.tools.Program;
+import org.apache.calcite.tools.Programs;
 import org.apache.calcite.tools.RelConversionException;
 import org.apache.calcite.tools.ValidationException;
 import org.apache.commons.pool.PoolableObjectFactory;
@@ -63,6 +89,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 /**
  *
@@ -191,21 +218,72 @@ public class CalciteServerHandler implements CalciteServer.Iface {
           MapDParserOptions parserOptions = new MapDParserOptions(
                   filterPushDownInfo, legacySyntax, isExplain, isViewOptimize);
           jsonResult = parser.processSql(sqlText, parserOptions);
+          System.out.println(jsonResult);
         } else {
-          MapDSchema schema = new MapDSchema(
-            dataDir, parser, mapdPort, parser.mapdUser, parser.sock_transport_properties);
+          MapDSchema schema = new MapDSchema(dataDir,
+                  parser,
+                  mapdPort,
+                  parser.mapdUser,
+                  parser.sock_transport_properties);
           MapDPlanner planner = parser.getPlanner();
 
           final MapDTypeSystem typeSystem = new MapDTypeSystem();
-          RexBuilder rexBuilder = new RexBuilder(new JavaTypeFactoryImpl(typeSystem));
+          JavaTypeFactory typeFactory = new JavaTypeFactoryImpl(typeSystem);
+          RexBuilder rexBuilder = new RexBuilder(typeFactory);
           RelOptPlanner relOptPlanner = new VolcanoPlanner();
           RelOptCluster cluster = RelOptCluster.create(relOptPlanner, rexBuilder);
-          RelJsonReader reader = new RelJsonReader(cluster, planner.createCatalogReader(), schema);
-          RelNode node = reader.read(sqlText);
 
-          RelJsonWriter writer = new RelJsonWriter();
-          node.explain(writer);
-          jsonResult = writer.asString();
+          final SchemaPlus rootSchema =
+                  MapDPlanner.rootSchema(planner.config.getDefaultSchema());
+          final Context context = planner.config.getContext();
+          final CalciteConnectionConfig connectionConfig;
+
+          if (context != null) {
+            connectionConfig = context.unwrap(CalciteConnectionConfig.class);
+          } else {
+            Properties properties = new Properties();
+            properties.setProperty(CalciteConnectionProperty.CASE_SENSITIVE.camelName(),
+                    String.valueOf(planner.config.getParserConfig().caseSensitive()));
+            connectionConfig = new CalciteConnectionConfigImpl(properties);
+          }
+
+          CalciteCatalogReader catalogReader = new CalciteCatalogReader(
+                  CalciteSchema.from(rootSchema),
+                  CalciteSchema.from(planner.config.getDefaultSchema()).path(null),
+                  typeFactory,
+                  connectionConfig);
+
+          MapDRelJsonReader reader = new MapDRelJsonReader(cluster, catalogReader, schema);
+          RelRoot relR = RelRoot.of(reader.read(sqlText), SqlKind.SELECT);
+          planner.applyQueryOptimizationRules(relR);
+          planner.applyFilterPushdown(relR);
+          ProjectMergeRule projectMergeRule =
+                  new ProjectMergeRule(true, RelFactories.LOGICAL_BUILDER);
+          final Program program = Programs.hep(
+                  ImmutableList.of(FilterProjectTransposeRule.INSTANCE,
+                          projectMergeRule,
+                          ProjectProjectRemoveRule.INSTANCE,
+                          FilterMergeRule.INSTANCE,
+                          JoinProjectTransposeRule.LEFT_PROJECT_INCLUDE_OUTER,
+                          JoinProjectTransposeRule.RIGHT_PROJECT_INCLUDE_OUTER,
+                          JoinProjectTransposeRule.BOTH_PROJECT_INCLUDE_OUTER),
+                  true,
+                  DefaultRelMetadataProvider.INSTANCE);
+
+          RelNode oldRel;
+          RelNode newRel = relR.project();
+
+          do {
+            oldRel = newRel;
+            newRel = program.run(null,
+                    oldRel,
+                    null,
+                    ImmutableList.<RelOptMaterialization>of(),
+                    ImmutableList.<RelOptLattice>of());
+            // there must be a better way to compare these
+          } while (!RelOptUtil.toString(oldRel).equals(RelOptUtil.toString(newRel)));
+
+          jsonResult = MapDSerializer.toString(newRel);
         }
       } catch (ValidationException ex) {
         String msg = "Validation: " + ex.getMessage();

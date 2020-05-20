@@ -18,6 +18,7 @@ package org.apache.calcite.rel.externalize;
 
 import com.google.common.collect.ImmutableList;
 
+import org.apache.calcite.avatica.AvaticaUtils;
 import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
@@ -50,9 +51,14 @@ import org.apache.calcite.rex.RexWindowBound;
 import org.apache.calcite.sql.JoinType;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlFunction;
+import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.validate.SqlNameMatchers;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.JsonBuilder;
 import org.apache.calcite.util.Util;
@@ -74,7 +80,8 @@ public class MapDRelJson {
           new HashMap<String, Constructor>();
   private final JsonBuilder jsonBuilder;
 
-  public static final List<String> PACKAGES = ImmutableList.of("org.apache.calcite.rel.",
+  public static final List<String> PACKAGES = ImmutableList.of(
+          "org.apache.calcite.rel.",
           "org.apache.calcite.rel.core.",
           "org.apache.calcite.rel.logical.",
           "org.apache.calcite.adapter.jdbc.",
@@ -510,8 +517,38 @@ public class MapDRelJson {
     return null;
   }
 
+  SqlOperator toOp(RelInput relInput, Map<String, Object> map) {
+    // in case different operator has the same kind, check with both name and kind.
+    String name = map.get("name").toString();
+    String kind = map.get("kind").toString();
+    String syntax = map.get("syntax").toString();
+    SqlKind sqlKind = SqlKind.valueOf(kind);
+    SqlSyntax  sqlSyntax = SqlSyntax.valueOf(syntax);
+    List<SqlOperator> operators = new ArrayList<>();
+    SqlStdOperatorTable.instance().lookupOperatorOverloads(
+        new SqlIdentifier(name, new SqlParserPos(0, 0)),
+        null,
+        sqlSyntax,
+        operators,
+        SqlNameMatchers.liberal());
+    for (SqlOperator operator: operators) {
+      if (operator.kind == sqlKind) {
+        return operator;
+      }
+    }
+    String class_ = (String) map.get("class");
+    if (class_ != null) {
+      return AvaticaUtils.instantiatePlugin(SqlOperator.class, class_);
+    }
+    return null;
+  }
+
   SqlAggFunction toAggregation(String agg, Map<String, Object> map) {
     return (SqlAggFunction) toOp(agg, map);
+  }
+
+  SqlAggFunction toAggregation(RelInput relInput, String agg, Map<String, Object> map) {
+    return (SqlAggFunction) toOp(relInput, map);
   }
 
   private String toJson(SqlOperator operator) {

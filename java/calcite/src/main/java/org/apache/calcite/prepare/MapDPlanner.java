@@ -17,6 +17,7 @@
 package org.apache.calcite.prepare;
 
 import com.mapd.calcite.parser.MapDParserOptions;
+import com.mapd.calcite.parser.MapDSerializer;
 
 import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
@@ -55,7 +56,7 @@ import java.util.Properties;
  * Implementation of {@link org.apache.calcite.tools.Planner}.
  */
 public class MapDPlanner extends PlannerImpl {
-  FrameworkConfig config;
+  public FrameworkConfig config;
   private List<MapDParserOptions.FilterPushDownInfo> filterPushDownInfo =
           new ArrayList<>();
 
@@ -64,7 +65,7 @@ public class MapDPlanner extends PlannerImpl {
     this.config = config;
   }
 
-  private static SchemaPlus rootSchema(SchemaPlus schema) {
+  public static SchemaPlus rootSchema(SchemaPlus schema) {
     for (;;) {
       if (schema.getParentSchema() == null) {
         return schema;
@@ -140,12 +141,13 @@ public class MapDPlanner extends PlannerImpl {
   @Override
   public RelRoot rel(SqlNode sql) throws RelConversionException {
     RelRoot root = super.rel(sql);
+    System.out.println(MapDSerializer.toString(root.project()));
     root = applyQueryOptimizationRules(root);
     root = applyFilterPushdown(root);
     return root;
   }
 
-  private RelRoot applyFilterPushdown(RelRoot root) {
+  public RelRoot applyFilterPushdown(RelRoot root) {
     if (filterPushDownInfo.isEmpty()) {
       return root;
     }
@@ -162,7 +164,7 @@ public class MapDPlanner extends PlannerImpl {
     return root.withRel(rootRelNode);
   }
 
-  private RelRoot applyQueryOptimizationRules(RelRoot root) {
+  public RelRoot applyQueryOptimizationRules(RelRoot root) {
     QueryOptimizationRules outerJoinOptRule =
             new OuterJoinOptViaNullRejectionRule(RelFactories.LOGICAL_BUILDER);
 
