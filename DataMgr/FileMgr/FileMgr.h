@@ -182,11 +182,9 @@ class FileMgr : public AbstractBufferMgr {  // implements
                         std::vector<Page>& pages,
                         const bool isMetadata);
 
-  void getChunkMetadataVec(
-      std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec) override;
-  void getChunkMetadataVecForKeyPrefix(
-      std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec,
-      const ChunkKey& keyPrefix) override;
+  void getChunkMetadataVec(ChunkMetadataVector& chunkMetadataVec) override;
+  void getChunkMetadataVecForKeyPrefix(ChunkMetadataVector& chunkMetadataVec,
+                                       const ChunkKey& keyPrefix) override;
 
   /**
    * @brief Fsyncs data files, writes out epoch and
@@ -229,6 +227,8 @@ class FileMgr : public AbstractBufferMgr {  // implements
   void createTopLevelMetadata();  // create metadata shared by all tables of all DBs
   std::string getFileMgrBasePath() const { return fileMgrBasePath_; }
   void closeRemovePhysical();
+
+  void removeTableRelatedDS(const int db_id, const int table_id) override;
 
   void free_page(std::pair<FileInfo*, int>&& page);
   const std::pair<const int, const int> get_fileMgrKey() const { return fileMgrKey_; }

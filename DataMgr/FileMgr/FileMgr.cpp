@@ -37,6 +37,7 @@
 
 #include "DataMgr/FileMgr/GlobalFileMgr.h"
 #include "Shared/File.h"
+#include "Shared/checked_alloc.h"
 #include "Shared/measure.h"
 
 #define EPOCH_FILENAME "epoch"
@@ -474,7 +475,7 @@ void FileMgr::copyPage(Page& srcPage,
   CHECK(offset + numBytes <= defaultPageSize_);
   FileInfo* srcFileInfo = getFileInfoForFileId(srcPage.fileId);
   FileInfo* destFileInfo = destFileMgr->getFileInfoForFileId(destPage.fileId);
-  int8_t* buffer = new int8_t[numBytes];
+  int8_t* buffer = reinterpret_cast<int8_t*>(checked_malloc(numBytes));
 
   size_t bytesRead = srcFileInfo->read(
       srcPage.pageNum * defaultPageSize_ + offset + reservedHeaderSize, numBytes, buffer);
@@ -484,7 +485,7 @@ void FileMgr::copyPage(Page& srcPage,
       numBytes,
       buffer);
   CHECK(bytesWritten == numBytes);
-  delete[] buffer;
+  ::free(buffer);
 }
 
 void FileMgr::createEpochFile(const std::string& epochFileName) {
@@ -929,22 +930,20 @@ chunkIt->second->encoder->numElems));
     }
 }
 */
-void FileMgr::getChunkMetadataVec(
-    std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec) {
+void FileMgr::getChunkMetadataVec(ChunkMetadataVector& chunkMetadataVec) {
   mapd_unique_lock<mapd_shared_mutex> chunkIndexWriteLock(chunkIndexMutex_);
   chunkMetadataVec.reserve(chunkIndex_.size());
   for (auto chunkIt = chunkIndex_.begin(); chunkIt != chunkIndex_.end(); ++chunkIt) {
     if (chunkIt->second->has_encoder) {
-      ChunkMetadata chunkMetadata;
-      chunkIt->second->encoder->getMetadata(chunkMetadata);
-      chunkMetadataVec.emplace_back(chunkIt->first, chunkMetadata);
+      auto chunk_metadata = std::make_shared<ChunkMetadata>();
+      chunkIt->second->encoder->getMetadata(chunk_metadata);
+      chunkMetadataVec.emplace_back(chunkIt->first, chunk_metadata);
     }
   }
 }
 
-void FileMgr::getChunkMetadataVecForKeyPrefix(
-    std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec,
-    const ChunkKey& keyPrefix) {
+void FileMgr::getChunkMetadataVecForKeyPrefix(ChunkMetadataVector& chunkMetadataVec,
+                                              const ChunkKey& keyPrefix) {
   mapd_unique_lock<mapd_shared_mutex> chunkIndexWriteLock(
       chunkIndexMutex_);  // is this guarding the right structure?  it look slike we oly
                           // read here for chunk
@@ -964,9 +963,9 @@ void FileMgr::getChunkMetadataVecForKeyPrefix(
     cout << endl;
     */
     if (chunkIt->second->has_encoder) {
-      ChunkMetadata chunkMetadata;
-      chunkIt->second->encoder->getMetadata(chunkMetadata);
-      chunkMetadataVec.emplace_back(chunkIt->first, chunkMetadata);
+      auto chunk_metadata = std::make_shared<ChunkMetadata>();
+      chunkIt->second->encoder->getMetadata(chunk_metadata);
+      chunkMetadataVec.emplace_back(chunkIt->first, chunk_metadata);
     }
     chunkIt++;
   }
@@ -1002,4 +1001,7 @@ void FileMgr::free_page(std::pair<FileInfo*, int>&& page) {
   free_pages.push_back(page);
 }
 
+void FileMgr::removeTableRelatedDS(const int db_id, const int table_id) {
+  UNREACHABLE();
+}
 }  // namespace File_Namespace

@@ -27,7 +27,6 @@
 #include "Fragmenter/InsertOrderFragmenter.h"
 #include "QueryEngine/Execute.h"
 #include "QueryEngine/TargetValue.h"
-#include "Shared/ConfigResolve.h"
 #include "Shared/DateConverters.h"
 #include "Shared/Logger.h"
 #include "Shared/TypedDataAccessors.h"
@@ -113,8 +112,8 @@ static int get_chunks(const Catalog_Namespace::Catalog* catalog,
                                                chunk_key,
                                                memory_level,
                                                0,
-                                               chunk_meta_it->second.numBytes,
-                                               chunk_meta_it->second.numElements);
+                                               chunk_meta_it->second->numBytes,
+                                               chunk_meta_it->second->numElements);
         chunks.push_back(chunk);
       }
     }
@@ -143,10 +142,10 @@ struct ScalarChunkConverter : public ChunkToInsertDataConverter {
   const BUFFER_DATA_TYPE* data_buffer_addr_;
 
   ScalarChunkConverter(const size_t num_rows, const Chunk_NS::Chunk* chunk)
-      : chunk_(chunk), column_descriptor_(chunk->get_column_desc()) {
+      : chunk_(chunk), column_descriptor_(chunk->getColumnDesc()) {
     column_data_ = ColumnDataPtr(reinterpret_cast<INSERT_DATA_TYPE*>(
         checked_malloc(num_rows * sizeof(INSERT_DATA_TYPE))));
-    data_buffer_addr_ = (BUFFER_DATA_TYPE*)chunk->get_buffer()->getMemoryPtr();
+    data_buffer_addr_ = (BUFFER_DATA_TYPE*)chunk->getBuffer()->getMemoryPtr();
   }
 
   ~ScalarChunkConverter() override {}
@@ -174,10 +173,10 @@ struct FixedLenArrayChunkConverter : public ChunkToInsertDataConverter {
   size_t fixed_array_length_;
 
   FixedLenArrayChunkConverter(const size_t num_rows, const Chunk_NS::Chunk* chunk)
-      : chunk_(chunk), column_descriptor_(chunk->get_column_desc()) {
+      : chunk_(chunk), column_descriptor_(chunk->getColumnDesc()) {
     column_data_ = std::make_unique<std::vector<ArrayDatum>>(num_rows);
-    data_buffer_addr_ = chunk->get_buffer()->getMemoryPtr();
-    fixed_array_length_ = chunk->get_column_desc()->columnType.get_size();
+    data_buffer_addr_ = chunk->getBuffer()->getMemoryPtr();
+    fixed_array_length_ = chunk->getColumnDesc()->columnType.get_size();
   }
 
   ~FixedLenArrayChunkConverter() override {}
@@ -206,8 +205,8 @@ struct ArrayChunkConverter : public FixedLenArrayChunkConverter {
   ArrayChunkConverter(const size_t num_rows, const Chunk_NS::Chunk* chunk)
       : FixedLenArrayChunkConverter(num_rows, chunk) {
     index_buffer_addr_ =
-        (StringOffsetT*)(chunk->get_index_buf() ? chunk->get_index_buf()->getMemoryPtr()
-                                                : nullptr);
+        (StringOffsetT*)(chunk->getIndexBuf() ? chunk->getIndexBuf()->getMemoryPtr()
+                                              : nullptr);
   }
 
   ~ArrayChunkConverter() override {}
@@ -231,12 +230,12 @@ struct StringChunkConverter : public ChunkToInsertDataConverter {
   const StringOffsetT* index_buffer_addr_;
 
   StringChunkConverter(size_t num_rows, const Chunk_NS::Chunk* chunk)
-      : chunk_(chunk), column_descriptor_(chunk->get_column_desc()) {
+      : chunk_(chunk), column_descriptor_(chunk->getColumnDesc()) {
     column_data_ = std::make_unique<std::vector<std::string>>(num_rows);
-    data_buffer_addr_ = chunk->get_buffer()->getMemoryPtr();
+    data_buffer_addr_ = chunk->getBuffer()->getMemoryPtr();
     index_buffer_addr_ =
-        (StringOffsetT*)(chunk->get_index_buf() ? chunk->get_index_buf()->getMemoryPtr()
-                                                : nullptr);
+        (StringOffsetT*)(chunk->getIndexBuf() ? chunk->getIndexBuf()->getMemoryPtr()
+                                              : nullptr);
   }
 
   ~StringChunkConverter() override {}
@@ -266,10 +265,10 @@ struct DateChunkConverter : public ChunkToInsertDataConverter {
   const BUFFER_DATA_TYPE* data_buffer_addr_;
 
   DateChunkConverter(const size_t num_rows, const Chunk_NS::Chunk* chunk)
-      : chunk_(chunk), column_descriptor_(chunk->get_column_desc()) {
+      : chunk_(chunk), column_descriptor_(chunk->getColumnDesc()) {
     column_data_ = ColumnDataPtr(
         reinterpret_cast<int64_t*>(checked_malloc(num_rows * sizeof(int64_t))));
-    data_buffer_addr_ = (BUFFER_DATA_TYPE*)chunk->get_buffer()->getMemoryPtr();
+    data_buffer_addr_ = (BUFFER_DATA_TYPE*)chunk->getBuffer()->getMemoryPtr();
   }
 
   ~DateChunkConverter() override {}
@@ -298,10 +297,6 @@ void InsertOrderFragmenter::updateColumns(
     const size_t indexOffFragmentOffsetColumn,
     const Data_Namespace::MemoryLevel memoryLevel,
     UpdelRoll& updelRoll) {
-  if (!is_feature_enabled<VarlenUpdates>()) {
-    throw std::runtime_error("varlen UPDATE path not enabled.");
-  }
-
   updelRoll.is_varlen_update = true;
   updelRoll.catalog = catalog;
   updelRoll.logicalTableId = catalog->getLogicalTableId(td->tableId);
@@ -333,7 +328,7 @@ void InsertOrderFragmenter::updateColumns(
   std::shared_ptr<Chunk_NS::Chunk> deletedChunk;
   for (size_t indexOfChunk = 0; indexOfChunk < chunks.size(); indexOfChunk++) {
     auto chunk = chunks[indexOfChunk];
-    const auto chunk_cd = chunk->get_column_desc();
+    const auto chunk_cd = chunk->getColumnDesc();
 
     if (chunk_cd->isDeletedCol) {
       deletedChunk = chunk;
@@ -488,12 +483,12 @@ void InsertOrderFragmenter::updateColumns(
 
   updelRoll.dirtyChunks[deletedChunk.get()] = deletedChunk;
   ChunkKey chunkey{updelRoll.catalog->getCurrentDB().dbId,
-                   deletedChunk->get_column_desc()->tableId,
-                   deletedChunk->get_column_desc()->columnId,
+                   deletedChunk->getColumnDesc()->tableId,
+                   deletedChunk->getColumnDesc()->columnId,
                    fragment.fragmentId};
   updelRoll.dirtyChunkeys.insert(chunkey);
   bool* deletedChunkBuffer =
-      reinterpret_cast<bool*>(deletedChunk->get_buffer()->getMemoryPtr());
+      reinterpret_cast<bool*>(deletedChunk->getBuffer()->getMemoryPtr());
 
   std::atomic<size_t> row_idx{0};
 
@@ -583,20 +578,20 @@ void InsertOrderFragmenter::updateColumns(
   insertDataNoCheckpoint(insert_data);
 
   // update metdata
-  if (!deletedChunk->get_buffer()->has_encoder) {
-    deletedChunk->init_encoder();
+  if (!deletedChunk->getBuffer()->has_encoder) {
+    deletedChunk->initEncoder();
   }
-  deletedChunk->get_buffer()->encoder->updateStats(static_cast<int64_t>(true), false);
+  deletedChunk->getBuffer()->encoder->updateStats(static_cast<int64_t>(true), false);
 
   auto& shadowDeletedChunkMeta =
-      fragment.shadowChunkMetadataMap[deletedChunk->get_column_desc()->columnId];
-  if (shadowDeletedChunkMeta.numElements >
-      deletedChunk->get_buffer()->encoder->getNumElems()) {
+      fragment.shadowChunkMetadataMap[deletedChunk->getColumnDesc()->columnId];
+  if (shadowDeletedChunkMeta->numElements >
+      deletedChunk->getBuffer()->encoder->getNumElems()) {
     // the append will have populated shadow meta data, otherwise use existing num
     // elements
-    deletedChunk->get_buffer()->encoder->setNumElems(shadowDeletedChunkMeta.numElements);
+    deletedChunk->getBuffer()->encoder->setNumElems(shadowDeletedChunkMeta->numElements);
   }
-  deletedChunk->get_buffer()->setUpdated();
+  deletedChunk->getBuffer()->setUpdated();
 }
 
 void InsertOrderFragmenter::updateColumn(const Catalog_Namespace::Catalog* catalog,
@@ -631,8 +626,8 @@ void InsertOrderFragmenter::updateColumn(const Catalog_Namespace::Catalog* catal
                                          chunk_key,
                                          Data_Namespace::CPU_LEVEL,
                                          0,
-                                         chunk_meta_it->second.numBytes,
-                                         chunk_meta_it->second.numElements);
+                                         chunk_meta_it->second->numBytes,
+                                         chunk_meta_it->second->numElements);
 
   std::vector<int8_t> has_null_per_thread(ncore, 0);
   std::vector<double> max_double_per_thread(ncore, std::numeric_limits<double>::lowest());
@@ -644,7 +639,7 @@ void InsertOrderFragmenter::updateColumn(const Catalog_Namespace::Catalog* catal
   std::vector<std::future<void>> threads;
 
   const auto segsz = (nrow + ncore - 1) / ncore;
-  auto dbuf = chunk->get_buffer();
+  auto dbuf = chunk->getBuffer();
   auto dbuf_addr = dbuf->getMemoryPtr();
   dbuf->setUpdated();
   {
@@ -951,10 +946,11 @@ void InsertOrderFragmenter::updateColumnMetadata(const ColumnDescriptor* cd,
   }
   auto& chunkMetadata = updel_roll.chunkMetadata[key];
 
-  auto buffer = chunk->get_buffer();
+  auto buffer = chunk->getBuffer();
   const auto& lhs_type = cd->columnType;
 
-  auto update_stats = [& encoder = buffer->encoder](auto min, auto max, auto has_null) {
+  auto encoder = buffer->encoder.get();
+  auto update_stats = [&encoder](auto min, auto max, auto has_null) {
     static_assert(std::is_same<decltype(min), decltype(max)>::value,
                   "Type mismatch on min/max");
     if (has_null) {
@@ -996,16 +992,6 @@ void InsertOrderFragmenter::updateMetadata(const Catalog_Namespace::Catalog* cat
     fragmentInfo.setChunkMetadataMap(chunkMetadata);
     fragmentInfo.shadowNumTuples = updel_roll.numTuples[key];
     fragmentInfo.setPhysicalNumTuples(fragmentInfo.shadowNumTuples);
-    // TODO(ppan): When fragment-level compaction is enable, the following code
-    // should suffice. When not (ie. existing code), we'll revert to update
-    // InsertOrderFragmenter::varLenColInfo_
-    /*
-    for (const auto cit : chunkMetadata) {
-      const auto& cd = *catalog->getMetadataForColumn(td->tableId, cit.first);
-      if (cd.columnType.get_size() < 0)
-        fragmentInfo.varLenColInfox[cd.columnId] = cit.second.numBytes;
-    }
-    */
   }
 }
 
@@ -1028,8 +1014,8 @@ auto InsertOrderFragmenter::getChunksForAllColumns(
                                                chunk_key,
                                                memory_level,
                                                0,
-                                               chunk_meta_it->second.numBytes,
-                                               chunk_meta_it->second.numElements);
+                                               chunk_meta_it->second->numBytes,
+                                               chunk_meta_it->second->numElements);
         chunks.push_back(chunk);
       }
     }
@@ -1040,7 +1026,7 @@ auto InsertOrderFragmenter::getChunksForAllColumns(
 // get a sorted vector of offsets of rows to vacuum
 const std::vector<uint64_t> InsertOrderFragmenter::getVacuumOffsets(
     const std::shared_ptr<Chunk_NS::Chunk>& chunk) {
-  const auto data_buffer = chunk->get_buffer();
+  const auto data_buffer = chunk->getBuffer();
   const auto data_addr = data_buffer->getMemoryPtr();
   const size_t nrows_in_chunk = data_buffer->size();
   const size_t ncore = cpu_threads();
@@ -1091,17 +1077,17 @@ static void set_chunk_metadata(const Catalog_Namespace::Catalog* catalog,
                                const std::shared_ptr<Chunk_NS::Chunk>& chunk,
                                const size_t nrows_to_keep,
                                UpdelRoll& updel_roll) {
-  auto cd = chunk->get_column_desc();
+  auto cd = chunk->getColumnDesc();
   auto td = catalog->getMetadataForTable(cd->tableId);
-  auto data_buffer = chunk->get_buffer();
+  auto data_buffer = chunk->getBuffer();
   std::lock_guard<std::mutex> lck(updel_roll.mutex);
   const auto key = std::make_pair(td, &fragment);
   if (0 == updel_roll.chunkMetadata.count(key)) {
     updel_roll.chunkMetadata[key] = fragment.getChunkMetadataMapPhysical();
   }
   auto& chunkMetadata = updel_roll.chunkMetadata[key];
-  chunkMetadata[cd->columnId].numElements = nrows_to_keep;
-  chunkMetadata[cd->columnId].numBytes = data_buffer->size();
+  chunkMetadata[cd->columnId]->numElements = nrows_to_keep;
+  chunkMetadata[cd->columnId]->numBytes = data_buffer->size();
   if (updel_roll.dirtyChunks.count(chunk.get()) == 0) {
     updel_roll.dirtyChunks.emplace(chunk.get(), chunk);
   }
@@ -1111,9 +1097,9 @@ auto InsertOrderFragmenter::vacuum_fixlen_rows(
     const FragmentInfo& fragment,
     const std::shared_ptr<Chunk_NS::Chunk>& chunk,
     const std::vector<uint64_t>& frag_offsets) {
-  const auto cd = chunk->get_column_desc();
+  const auto cd = chunk->getColumnDesc();
   const auto& col_type = cd->columnType;
-  auto data_buffer = chunk->get_buffer();
+  auto data_buffer = chunk->getBuffer();
   auto data_addr = data_buffer->getMemoryPtr();
   auto element_size =
       col_type.is_fixlen_array() ? col_type.get_size() : get_element_size(col_type);
@@ -1147,8 +1133,8 @@ auto InsertOrderFragmenter::vacuum_varlen_rows(
     const FragmentInfo& fragment,
     const std::shared_ptr<Chunk_NS::Chunk>& chunk,
     const std::vector<uint64_t>& frag_offsets) {
-  auto data_buffer = chunk->get_buffer();
-  auto index_buffer = chunk->get_index_buf();
+  auto data_buffer = chunk->getBuffer();
+  auto index_buffer = chunk->getIndexBuf();
   auto data_addr = data_buffer->getMemoryPtr();
   auto indices_addr = index_buffer ? index_buffer->getMemoryPtr() : nullptr;
   auto index_array = (StringOffsetT*)indices_addr;
@@ -1224,10 +1210,10 @@ void InsertOrderFragmenter::compactRows(const Catalog_Namespace::Catalog* catalo
 
   for (size_t ci = 0; ci < chunks.size(); ++ci) {
     auto chunk = chunks[ci];
-    const auto cd = chunk->get_column_desc();
+    const auto cd = chunk->getColumnDesc();
     const auto& col_type = cd->columnType;
-    auto data_buffer = chunk->get_buffer();
-    auto index_buffer = chunk->get_index_buf();
+    auto data_buffer = chunk->getBuffer();
+    auto index_buffer = chunk->getIndexBuf();
     auto data_addr = data_buffer->getMemoryPtr();
     auto indices_addr = index_buffer ? index_buffer->getMemoryPtr() : nullptr;
     auto index_array = (StringOffsetT*)indices_addr;
@@ -1308,7 +1294,7 @@ void InsertOrderFragmenter::compactRows(const Catalog_Namespace::Catalog* catalo
   updel_roll.numTuples[key] = nrows_to_keep;
   for (size_t ci = 0; ci < chunks.size(); ++ci) {
     auto chunk = chunks[ci];
-    auto cd = chunk->get_column_desc();
+    auto cd = chunk->getColumnDesc();
     if (!cd->columnType.is_fixlen_array()) {
       updateColumnMetadata(cd,
                            fragment,
@@ -1367,8 +1353,8 @@ void UpdelRoll::cancelUpdate() {
     CHECK(td);
     if (td->persistenceLevel != memoryLevel) {
       for (auto dit : dirtyChunks) {
-        catalog->getDataMgr().free(dit.first->get_buffer());
-        dit.first->set_buffer(nullptr);
+        catalog->getDataMgr().free(dit.first->getBuffer());
+        dit.first->setBuffer(nullptr);
       }
     }
   }

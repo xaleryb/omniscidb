@@ -118,11 +118,9 @@ class GlobalFileMgr : public AbstractBufferMgr {  // implements
 
   void init();
 
-  void getChunkMetadataVec(
-      std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec) override;
-  void getChunkMetadataVecForKeyPrefix(
-      std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec,
-      const ChunkKey& keyPrefix) override {
+  void getChunkMetadataVec(ChunkMetadataVector& chunkMetadataVec) override;
+  void getChunkMetadataVecForKeyPrefix(ChunkMetadataVector& chunkMetadataVec,
+                                       const ChunkKey& keyPrefix) override {
     return getFileMgr(keyPrefix)->getChunkMetadataVecForKeyPrefix(chunkMetadataVec,
                                                                   keyPrefix);
   }
@@ -161,7 +159,7 @@ class GlobalFileMgr : public AbstractBufferMgr {  // implements
   inline bool getDBConvert() const { return dbConvert_; }
   inline void setDBConvert(bool val) { dbConvert_ = val; }
 
-  void removeTableRelatedDS(const int db_id, const int tb_id);
+  void removeTableRelatedDS(const int db_id, const int tb_id) override;
   void setTableEpoch(const int db_id, const int tb_id, const int start_epoch);
   size_t getTableEpoch(const int db_id, const int tb_id);
 
