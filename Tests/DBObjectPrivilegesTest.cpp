@@ -41,6 +41,11 @@ inline void run_ddl_statement(const std::string& query) {
   QR::get()->runDDLStatement(query);
 }
 
+inline auto sql(std::string_view sql_stmts) {
+  return QR::get()->runMultipleStatements(std::string(sql_stmts),
+                                          ExecutorDeviceType::CPU);
+}
+
 }  // namespace
 
 struct Users {
@@ -249,6 +254,7 @@ struct ServerObject : public DBHandlerTestFixture {
       LOG(INFO) << "Test fixture not supported in distributed mode.";
       return;
     }
+    g_enable_fsi = true;
     DBHandlerTestFixture::SetUp();
     sql("CREATE SERVER test_server FOREIGN DATA WRAPPER omnisci_csv "
         "WITH (storage_type = 'LOCAL_FILE', base_path = '/test_path/');");
@@ -261,6 +267,7 @@ struct ServerObject : public DBHandlerTestFixture {
     }
     sql("DROP SERVER IF EXISTS test_server;");
     DBHandlerTestFixture::TearDown();
+    g_enable_fsi = false;
   }
 };
 
@@ -332,6 +339,20 @@ TEST_F(GrantSyntax, MultiRoleGrantRevoke) {
   check_grant();
   ASSERT_NO_THROW(run_ddl_statement("REVOKE Gunners, Sudens FROM Juventus, Bayern"));
   check_revoke();
+}
+
+class InvalidGrantSyntax : public DBHandlerTestFixture {};
+
+TEST_F(InvalidGrantSyntax, InvalidGrantSyntax) {
+  std::string error_message;
+  if (g_aggregator) {
+    error_message = "Exception: Syntax error at: ON";
+  } else {
+    error_message = "Syntax error at: ON";
+  }
+
+  queryAndAssertException("GRANT SELECT, INSERT, ON TABLE tbl TO Arsenal, Juventus;",
+                          error_message);
 }
 
 TEST(UserRoles, InvalidGrantsRevokesTest) {
@@ -2475,27 +2496,68 @@ TEST(SysCatalog, SwitchDatabase) {
   static std::string dbname3{dbname + "3"};
 
   // cleanup
-  struct CleanupGuard {
-    ~CleanupGuard() {
-      run_ddl_statement("DROP DATABASE IF EXISTS " + dbname3 + ";");
-      run_ddl_statement("DROP DATABASE IF EXISTS " + dbname2 + ";");
-      run_ddl_statement("DROP DATABASE IF EXISTS " + dbname + ";");
-      run_ddl_statement("DROP USER " + username + ";");
-    }
-  } cleanupGuard;
+  try {
+    sql("DROP DATABASE IF EXISTS " + dbname + ";");
+  } catch (...) {
+  }
+  try {
+    sql("DROP DATABASE IF EXISTS " + dbname2 + ";");
+  } catch (...) {
+  }
+  try {
+    sql("DROP DATABASE IF EXISTS " + dbname3 + ";");
+  } catch (...) {
+  }
+  try {
+    sql("DROP USER " + username + ";");
+  } catch (...) {
+  }
 
   // setup
-  run_ddl_statement("CREATE USER " + username + " (password = 'password');");
-  run_ddl_statement("CREATE DATABASE " + dbname + "(owner='" + username + "');");
-  run_ddl_statement("CREATE DATABASE " + dbname2 + "(owner='" + username + "');");
-  run_ddl_statement("CREATE DATABASE " + dbname3 + "(owner='" + username + "');");
-  run_ddl_statement("REVOKE ACCESS ON DATABASE " + dbname3 + " FROM " + username + ";");
+  sql("CREATE USER " + username + " (password = 'password');");
+  sql("CREATE DATABASE " + dbname + "(owner='" + username + "');");
+  sql("CREATE DATABASE " + dbname2 + "(owner='" + username + "');");
+  sql("CREATE DATABASE " + dbname3 + "(owner='" + username + "');");
+  sql("REVOKE ACCESS ON DATABASE " + dbname3 + " FROM " + username + ";");
 
   // test some attempts to switch database
   ASSERT_NO_THROW(sys_cat.switchDatabase(dbname, username));
   ASSERT_NO_THROW(sys_cat.switchDatabase(dbname, username));
   ASSERT_NO_THROW(sys_cat.switchDatabase(dbname2, username));
   ASSERT_THROW(sys_cat.switchDatabase(dbname3, username), std::runtime_error);
+
+  // // distributed test
+  // // NOTE(sy): disabling for now due to consistency errors
+  // if (DQR* dqr = dynamic_cast<DQR*>(QR::get()); g_aggregator && dqr) {
+  //   static const std::string tname{"swdb_test_table"};
+  //   LeafAggregator* agg = dqr->getLeafAggregator();
+  //   agg->switch_database(dqr->getSession()->get_session_id(), dbname);
+  //   sql("CREATE TABLE " + tname + "(i INTEGER);");
+  //   ASSERT_NO_THROW(sql("SELECT i FROM " + tname + ";"));
+  //   agg->switch_database(dqr->getSession()->get_session_id(), dbname2);
+  //   ASSERT_ANY_THROW(agg->leafCatalogConsistencyCheck(*dqr->getSession()));
+  //   agg->switch_database(dqr->getSession()->get_session_id(), dbname);
+  //   ASSERT_NO_THROW(sql("DROP TABLE " + tname + ";"));
+  //   agg->switch_database(dqr->getSession()->get_session_id(), OMNISCI_DEFAULT_DB);
+  // }
+
+  // cleanup
+  try {
+    sql("DROP DATABASE IF EXISTS " + dbname + ";");
+  } catch (...) {
+  }
+  try {
+    sql("DROP DATABASE IF EXISTS " + dbname2 + ";");
+  } catch (...) {
+  }
+  try {
+    sql("DROP DATABASE IF EXISTS " + dbname3 + ";");
+  } catch (...) {
+  }
+  try {
+    sql("DROP USER " + username + ";");
+  } catch (...) {
+  }
 }
 
 namespace {
@@ -2504,7 +2566,7 @@ void compare_user_lists(const std::vector<std::string>& expected,
                         const std::list<Catalog_Namespace::UserMetadata>& actual) {
   ASSERT_EQ(expected.size(), actual.size());
   size_t i = 0;
-  for (const auto user : actual) {
+  for (const auto& user : actual) {
     ASSERT_EQ(expected[i++], user.userName);
   }
 }
@@ -2706,6 +2768,56 @@ TEST(Login, Deactivation) {
 
   run_ddl_statement("DROP USER active_user;");
   run_ddl_statement("DROP USER deactivated_user;");
+}
+
+class GetDbObjectsForGranteeTest : public DBHandlerTestFixture {
+ protected:
+  void SetUp() override {
+    DBHandlerTestFixture::SetUp();
+    sql("CREATE USER test_user (password = 'test_pass');");
+  }
+
+  void TearDown() override {
+    sql("DROP USER test_user;");
+    DBHandlerTestFixture::TearDown();
+  }
+};
+
+TEST_F(GetDbObjectsForGranteeTest, UserWithGrantAllOnDatabase) {
+  g_enable_fsi = false;
+  sql("GRANT ALL ON DATABASE omnisci TO test_user;");
+
+  const auto& [db_handler, session_id] = getDbHandlerAndSessionId();
+  std::vector<TDBObject> db_objects{};
+  db_handler->get_db_objects_for_grantee(db_objects, session_id, "test_user");
+
+  std::unordered_set<TDBObjectType::type> privilege_types{};
+  for (const auto& db_object : db_objects) {
+    ASSERT_EQ("omnisci", db_object.objectName);
+    ASSERT_EQ(TDBObjectType::DatabaseDBObjectType, db_object.objectType);
+    ASSERT_EQ("test_user", db_object.grantee);
+
+    if (db_object.privilegeObjectType == TDBObjectType::DatabaseDBObjectType) {
+      // The first two items represent CREATE and DROP DATABASE privileges, which are not
+      // granted
+      std::vector<bool> expected_privileges{false, false, true, true};
+      ASSERT_EQ(expected_privileges, db_object.privs);
+    } else {
+      ASSERT_TRUE(std::all_of(db_object.privs.begin(),
+                              db_object.privs.end(),
+                              [](bool has_privilege) { return has_privilege; }));
+    }
+    privilege_types.emplace(db_object.privilegeObjectType);
+  }
+
+  ASSERT_FALSE(privilege_types.find(TDBObjectType::DatabaseDBObjectType) ==
+               privilege_types.end());
+  ASSERT_FALSE(privilege_types.find(TDBObjectType::TableDBObjectType) ==
+               privilege_types.end());
+  ASSERT_FALSE(privilege_types.find(TDBObjectType::DashboardDBObjectType) ==
+               privilege_types.end());
+  ASSERT_FALSE(privilege_types.find(TDBObjectType::ViewDBObjectType) ==
+               privilege_types.end());
 }
 
 int main(int argc, char* argv[]) {

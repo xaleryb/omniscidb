@@ -39,11 +39,12 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "Catalog/Catalog.h"
 #include "Catalog/TableDescriptor.h"
-#include "Chunk/Chunk.h"
+#include "DataMgr/Chunk/Chunk.h"
 #include "Fragmenter/Fragmenter.h"
 #include "Import/CopyParams.h"
 #include "Shared/Logger.h"
@@ -233,14 +234,14 @@ class TypedImportBuffer : boost::noncopyable {
 
   void addDouble(const double v) { double_buffer_->push_back(v); }
 
-  void addString(const std::string& v) { string_buffer_->push_back(v); }
+  void addString(const std::string_view v) { string_buffer_->emplace_back(v); }
 
-  void addGeoString(const std::string& v) { geo_string_buffer_->push_back(v); }
+  void addGeoString(const std::string_view v) { geo_string_buffer_->emplace_back(v); }
 
   void addArray(const ArrayDatum& v) { array_buffer_->push_back(v); }
 
   std::vector<std::string>& addStringArray() {
-    string_array_buffer_->push_back(std::vector<std::string>());
+    string_array_buffer_->emplace_back();
     return string_array_buffer_->back();
   }
 
@@ -457,14 +458,16 @@ class TypedImportBuffer : boost::noncopyable {
                           BadRowsTracker* bad_rows_tracker);
 
   void add_value(const ColumnDescriptor* cd,
-                 const std::string& val,
+                 const std::string_view val,
                  const bool is_null,
                  const CopyParams& copy_params,
                  const int64_t replicate_count = 0);
+
   void add_value(const ColumnDescriptor* cd,
                  const TDatum& val,
                  const bool is_null,
                  const int64_t replicate_count = 0);
+
   void pop_value();
 
   int64_t get_replicate_count() const { return replicate_count_; }
@@ -509,11 +512,19 @@ class TypedImportBuffer : boost::noncopyable {
 };
 
 class Loader {
+  using LoadCallbackType =
+      std::function<bool(const std::vector<std::unique_ptr<TypedImportBuffer>>&,
+                         std::vector<DataBlockPtr>&,
+                         size_t)>;
+
  public:
-  Loader(Catalog_Namespace::Catalog& c, const TableDescriptor* t)
+  Loader(Catalog_Namespace::Catalog& c,
+         const TableDescriptor* t,
+         LoadCallbackType load_callback = nullptr)
       : catalog_(c)
       , table_desc_(t)
-      , column_descs_(c.getAllColumnMetadataForTable(t->tableId, false, false, true)) {
+      , column_descs_(c.getAllColumnMetadataForTable(t->tableId, false, false, true))
+      , load_callback_(load_callback) {
     init();
   }
 
@@ -566,6 +577,7 @@ class Loader {
   Catalog_Namespace::Catalog& catalog_;
   const TableDescriptor* table_desc_;
   std::list<const ColumnDescriptor*> column_descs_;
+  LoadCallbackType load_callback_;
   Fragmenter_Namespace::InsertData insert_data_;
   std::map<int, StringDictionary*> dict_map_;
 

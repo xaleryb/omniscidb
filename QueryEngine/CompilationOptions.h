@@ -85,8 +85,20 @@ struct ExecutionOptions {
   bool multifrag_result = false;
 
   static ExecutionOptions defaults() {
-    return ExecutionOptions{
-        false, true, false, false, true, false, false, false, 0, false, false, 1.0};
+    return ExecutionOptions{false,
+                            true,
+                            false,
+                            false,
+                            true,
+                            false,
+                            false,
+                            false,
+                            0,
+                            false,
+                            false,
+                            1.0,
+                            false,
+                            1000};
   }
 
   ExecutionOptions with_multifrag_result(bool enable = true) const {
