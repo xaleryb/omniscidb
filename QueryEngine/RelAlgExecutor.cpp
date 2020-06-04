@@ -664,6 +664,7 @@ void RelAlgExecutor::executeRelAlgStep(const RaExecutionSequence& seq,
   const auto logical_union = dynamic_cast<const RelLogicalUnion*>(body);
   if (logical_union) {
     exec_desc.setResult(executeUnion(logical_union,
+                                     seq,
                                      co,
                                      eo_work_unit.with_preserve_order(true),
                                      render_info,
