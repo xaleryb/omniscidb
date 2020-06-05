@@ -335,6 +335,11 @@ std::vector<ColumnDetails> DBEngine::getTableDetails(const std::string& table_na
   return engine->getTableDetails(table_name);
 }
 
+std::vector<std::string> DBEngine::getTables() {
+  DBEngineImpl* engine = getImpl(this);
+  return engine->getTables();
+}
+
 /** Cursor downcasting methods */
 
 inline CursorImpl* getImpl(Cursor* ptr) {

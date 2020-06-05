@@ -5,6 +5,9 @@ target_link_libraries(DBEngine QueryRunner QueryEngine DataMgr ${Arrow_LIBRARIES
 set(INSTALL_PATH "${CMAKE_INSTALL_PREFIX}")
 install(TARGETS DBEngine DESTINATION ${INSTALL_PATH})
 
+add_executable(EmbeddedDbTest EmbeddedDbTest.cpp)
+target_link_libraries(EmbeddedDbTest DBEngine)
+
 find_program(PYTHON "python3")
 IF(PYTHON)
     set(SETUP_PY    "${CMAKE_CURRENT_BINARY_DIR}/setup.py")
