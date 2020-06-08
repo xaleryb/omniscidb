@@ -15,10 +15,13 @@
  */
 
 #include "DBEngine.h"
+#include <arrow/api.h>
 #include <boost/filesystem.hpp>
+#include "DataMgr/ForeignStorage/ArrowCsvForeignStorage.h"
 #include "QueryEngine/ArrowResultSet.h"
-#include "QueryRunner/QueryRunner.h"
 #include "QueryEngine/Execute.h"
+#include "QueryRunner/QueryRunner.h"
+#include "Parser/ParserNode.h"
 
 namespace EmbeddedDatabase {
 
@@ -72,7 +75,7 @@ class CursorImpl : public Cursor {
         if (auto data_mgr = data_mgr_.lock()) {
           if (!converter_) {
             converter_ = std::make_unique<ArrowResultSetConverter>(
-              result_set_, data_mgr, ExecutorDeviceType::CPU, 0, col_names_, row_count);
+                result_set_, data_mgr, ExecutorDeviceType::CPU, 0, col_names_, row_count);
           }
           record_batch_ = converter_->convertToArrow();
           return record_batch_;
@@ -125,6 +128,7 @@ class DBEngineImpl : public DBEngine {
     }
     SystemParameters mapd_parms;
     std::string data_path = base_path + OMNISCI_DATA_PATH;
+    registerArrowForeignStorage();
     try {
       logger::LogOptions log_options("DBE");
       log_options.set_base_path(base_path);
@@ -178,6 +182,21 @@ class DBEngineImpl : public DBEngine {
     } else {
       std::cerr << "DBE:executeDDL: query_runner is NULL" << std::endl;
     }
+  }
+
+  void createArrowTable(std::string name, std::shared_ptr<arrow::Table> table) {
+    setArrowTable(name, table);
+    try {
+      TableDescriptor td;
+      td.storageType = std::string("ARROW:" + name);
+      std::list<ColumnDescriptor> cols;
+      std::vector<Parser::SharedDictionaryDef> dictionaries;
+      query_runner_->getCatalog()->createTable(td, cols, dictionaries, false);
+    } catch (...) {
+      releaseArrowTable(name);
+      throw;
+    }
+    releaseArrowTable(name);
   }
 
   Cursor* executeDML(const std::string& query) {
@@ -298,7 +317,9 @@ class DBEngineImpl : public DBEngine {
  *
  * @param sPath Path to the existing database
  */
-DBEngine* DBEngine::create(std::string path, int calcite_port, bool enable_columnar_output) {
+DBEngine* DBEngine::create(std::string path,
+                           int calcite_port,
+                           bool enable_columnar_output) {
   g_enable_columnar_output = enable_columnar_output;
   return new DBEngineImpl(path, calcite_port);
 }
