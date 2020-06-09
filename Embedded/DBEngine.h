@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <arrow/api.h>
 #include "DBETypes.h"
+#include <arrow/table.h>
 
 namespace EmbeddedDatabase {
 
@@ -43,7 +43,8 @@ class DBEngine {
   static DBEngine* create(std::string path, int calcite_port,  bool enable_columnar_output);
   std::vector<std::string> getTables();
   std::vector<ColumnDetails> getTableDetails(const std::string& table_name);
-
+  void createArrowTable(std::string name, std::shared_ptr<arrow::Table> table);
+  
  protected:
   DBEngine() {}
   DBEngine(const DBEngine&) = delete;

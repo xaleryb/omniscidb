@@ -15,5 +15,14 @@
  */
 
 #pragma once
+#include <arrow/api.h>
+#include <memory>
+#include <string>
 
 void registerArrowCsvForeignStorage(void);
+
+void registerArrowForeignStorage(void);
+
+void setArrowTable(std::string name, std::shared_ptr<arrow::Table> table);
+
+void releaseArrowTable(std::string name);
