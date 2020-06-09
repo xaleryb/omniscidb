@@ -261,7 +261,7 @@ static SQLTypeInfo getOmnisciType(const arrow::DataType& type) {
       return SQLTypeInfo(kFLOAT, false);
     case Type::DOUBLE:
       return SQLTypeInfo(kDOUBLE, false);
-    case Type::BINARY:
+    case Type::STRING:
       // TODO: check utf8 and add dictionary encoding
       return SQLTypeInfo(kTEXT, false);
     case Type::DECIMAL:

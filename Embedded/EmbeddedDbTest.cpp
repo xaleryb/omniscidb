@@ -20,6 +20,11 @@
 #include <iostream>
 #include "DBEngine.h"
 
+#include <arrow/api.h>
+#include <arrow/csv/reader.h>
+#include <arrow/io/file.h>
+#include "Shared/ArrowUtil.h"
+
 using namespace EmbeddedDatabase;
 
 int main(int argc, char* argv[]) {
@@ -35,10 +40,9 @@ int main(int argc, char* argv[]) {
       "Directory path to OmniSci catalogs")(
       "calcite-port",
       po::value<int>(&calcite_port)->default_value(calcite_port),
-      "Calcite port")(
-      "columnar-output",
-      po::value<bool>(&columnar_output)->default_value(columnar_output),
-      "Enable columnar_output");
+      "Calcite port")("columnar-output",
+                      po::value<bool>(&columnar_output)->default_value(columnar_output),
+                      "Enable columnar_output");
 
   po::positional_options_description positionalOptions;
   positionalOptions.add("data", 1);
@@ -67,32 +71,47 @@ int main(int argc, char* argv[]) {
   }
   std::string catalogs_path = base_path + "/mapd_catalogs";
   if (!boost::filesystem::exists(catalogs_path)) {
-      std::cerr << "OmniSci catalogs is not  initialized at " + base_path  << std::endl;
-      return 1;
+    std::cerr << "OmniSci catalogs is not  initialized at " + base_path << std::endl;
+    return 1;
   }
 
   try {
     DBEngine* dbe = DBEngine::create(base_path, calcite_port, columnar_output);
     if (dbe) {
-        for (auto& table_name : dbe->getTables()) {
-            std::cout << table_name << std::endl;
-            auto schema = dbe->getTableDetails(table_name);
-            for (auto& item : schema) {
-                std::cout << item.col_name << std::endl;
-            }
-            std::cout << std::endl;
-            Cursor* cursor = dbe->executeDML("select * from " + table_name);
-            if (cursor) {
-                std::cout << cursor->getRowCount()<< " rows selected" << std::endl;
-                std::shared_ptr<arrow::RecordBatch> rbatch = cursor->getArrowRecordBatch();
-            } else {
-                std::cerr << "Cursor is NULL" << std::endl;
-            }
-        }
-        delete dbe;
-    } else {
-        std::cerr << "DBEngine is NULL" << std::endl;
+      auto memory_pool = arrow::default_memory_pool();
+      auto arrow_parse_options = arrow::csv::ParseOptions::Defaults();
+      auto arrow_read_options = arrow::csv::ReadOptions::Defaults();
+      auto arrow_convert_options = arrow::csv::ConvertOptions::Defaults();
+      std::shared_ptr<arrow::io::ReadableFile> inp;
+      auto file_result = arrow::io::ReadableFile::Open("/localdisk/artemale/test.csv");
+      ARROW_THROW_NOT_OK(file_result.status());
+      inp = file_result.ValueOrDie();
+      auto table_reader_result = arrow::csv::TableReader::Make(memory_pool,
+                                                               inp,
+                                                               arrow_read_options,
+                                                               arrow_parse_options,
+                                                               arrow_convert_options);
+      ARROW_THROW_NOT_OK(table_reader_result.status());
+      auto table_reader = table_reader_result.ValueOrDie();
+      std::shared_ptr<arrow::Table> arrowTable;
+      auto arrow_table_result = table_reader->Read();
+      ARROW_THROW_NOT_OK(arrow_table_result.status());
+      arrowTable = arrow_table_result.ValueOrDie();
+      dbe->createArrowTable("test", arrowTable);
+
+      auto schema = dbe->getTableDetails("test");
+      for (auto& item : schema) {
+        std::cout << item.col_name << std::endl;
+      }
+      Cursor* cursor = dbe->executeDML("select * from test");
+      if (cursor) {
+        std::cout << cursor->getRowCount() << " rows selected" << std::endl;
+        std::shared_ptr<arrow::RecordBatch> rbatch = cursor->getArrowRecordBatch();
+      } else {
+        std::cerr << "Cursor is NULL" << std::endl;
+      }
     }
+    delete dbe;
   } catch (std::exception& e) {
     std::cerr << "Exception: " << e.what() << "\n";
   }

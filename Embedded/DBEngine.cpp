@@ -18,10 +18,13 @@
 #include <arrow/api.h>
 #include <boost/filesystem.hpp>
 #include "DataMgr/ForeignStorage/ArrowCsvForeignStorage.h"
+#include "Fragmenter/FragmentDefaultValues.h"
+#include "Parser/ParserNode.h"
 #include "QueryEngine/ArrowResultSet.h"
 #include "QueryEngine/Execute.h"
 #include "QueryRunner/QueryRunner.h"
-#include "Parser/ParserNode.h"
+#include "Catalog/SysCatalog.h"
+
 
 namespace EmbeddedDatabase {
 
@@ -187,11 +190,28 @@ class DBEngineImpl : public DBEngine {
   void createArrowTable(std::string name, std::shared_ptr<arrow::Table> table) {
     setArrowTable(name, table);
     try {
+      auto session = query_runner_->getSession();
       TableDescriptor td;
+      td.tableName = name;
+      td.userId = session->get_currentUser().userId;
       td.storageType = std::string("ARROW:" + name);
+      td.persistenceLevel = Data_Namespace::MemoryLevel::CPU_LEVEL;
+      td.isView = false;
+      td.fragmenter = nullptr;
+      td.fragType = Fragmenter_Namespace::FragmenterType::INSERT_ORDER;
+      td.maxFragRows = DEFAULT_FRAGMENT_ROWS;
+      td.maxChunkSize = DEFAULT_MAX_CHUNK_SIZE;
+      td.fragPageSize = DEFAULT_PAGE_SIZE;
+      td.maxRows = DEFAULT_MAX_ROWS;
+      td.keyMetainfo = "[]";
+
       std::list<ColumnDescriptor> cols;
       std::vector<Parser::SharedDictionaryDef> dictionaries;
-      query_runner_->getCatalog()->createTable(td, cols, dictionaries, false);
+      auto catalog = query_runner_->getCatalog();
+      // nColumns
+      catalog->createTable(td, cols, dictionaries, false);
+      Catalog_Namespace::SysCatalog::instance().createDBObject(
+          session->get_currentUser(), td.tableName, TableDBObjectType, *catalog);
     } catch (...) {
       releaseArrowTable(name);
       throw;
@@ -349,6 +369,11 @@ void DBEngine::executeDDL(std::string query) {
 Cursor* DBEngine::executeDML(std::string query) {
   DBEngineImpl* engine = getImpl(this);
   return engine->executeDML(query);
+}
+
+void DBEngine::createArrowTable(std::string name, std::shared_ptr<arrow::Table> table) {
+  DBEngineImpl* engine = getImpl(this);
+  return engine->createArrowTable(name, table);
 }
 
 std::vector<ColumnDetails> DBEngine::getTableDetails(const std::string& table_name) {
