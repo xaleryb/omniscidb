@@ -1670,7 +1670,8 @@ bool is_gpu_shared_mem_supported(const QueryMemoryDescriptor* query_mem_desc_ptr
                                  const RelAlgExecutionUnit& ra_exe_unit,
                                  const CudaMgr_Namespace::CudaMgr* cuda_mgr,
                                  const ExecutorDeviceType device_type,
-                                 const unsigned gpu_blocksize) {
+                                 const unsigned gpu_blocksize,
+                                 const unsigned num_blocks_per_mp) {
   if (device_type == ExecutorDeviceType::CPU) {
     return false;
   }
@@ -1680,12 +1681,12 @@ bool is_gpu_shared_mem_supported(const QueryMemoryDescriptor* query_mem_desc_ptr
   CHECK(query_mem_desc_ptr);
   CHECK(cuda_mgr);
   /*
-   *  We only use shared memory strategy if GPU hardware provides native shared
-   *memory atomics support. From CUDA Toolkit documentation:
-   *https://docs.nvidia.com/cuda/pascal-tuning-guide/index.html#atomic-ops "Like
-   *Maxwell, Pascal [and Volta] provides native shared memory atomic operations
-   *for 32-bit integer arithmetic, along with native 32 or 64-bit compare-and-swap
-   *(CAS)."
+   * We only use shared memory strategy if GPU hardware provides native shared
+   * memory atomics support. From CUDA Toolkit documentation:
+   * https://docs.nvidia.com/cuda/pascal-tuning-guide/index.html#atomic-ops "Like
+   * Maxwell, Pascal [and Volta] provides native shared memory atomic operations
+   * for 32-bit integer arithmetic, along with native 32 or 64-bit compare-and-swap
+   * (CAS)."
    *
    **/
   if (!cuda_mgr->isArchMaxwellOrLaterForAll()) {
@@ -1741,8 +1742,9 @@ bool is_gpu_shared_mem_supported(const QueryMemoryDescriptor* query_mem_desc_ptr
     if (query_mem_desc_ptr->hasKeylessHash() &&
         query_mem_desc_ptr->countDistinctDescriptorsLogicallyEmpty() &&
         !query_mem_desc_ptr->useStreamingTopN()) {
-      const size_t shared_memory_threshold_bytes =
-          std::min(g_gpu_smem_threshold, cuda_mgr->getMaxSharedMemoryForAll());
+      const size_t shared_memory_threshold_bytes = std::min(
+          g_gpu_smem_threshold == 0 ? SIZE_MAX : g_gpu_smem_threshold,
+          cuda_mgr->getMinSharedMemoryPerBlockForAllDevices() / num_blocks_per_mp);
       const auto output_buffer_size =
           query_mem_desc_ptr->getRowSize() * query_mem_desc_ptr->getEntryCount();
       if (output_buffer_size > shared_memory_threshold_bytes) {
@@ -1754,7 +1756,10 @@ bool is_gpu_shared_mem_supported(const QueryMemoryDescriptor* query_mem_desc_ptr
       // TODO: relax this if necessary
       const auto target_infos =
           target_exprs_to_infos(ra_exe_unit.target_exprs, *query_mem_desc_ptr);
-      std::unordered_set<SQLAgg> supported_aggs{kCOUNT, kMIN, kMAX, kSUM, kAVG};
+      std::unordered_set<SQLAgg> supported_aggs{kCOUNT};
+      if (g_enable_smem_grouped_non_count_agg) {
+        supported_aggs = {kCOUNT, kMIN, kMAX, kSUM, kAVG};
+      }
       if (std::find_if(target_infos.begin(),
                        target_infos.end(),
                        [&supported_aggs](const TargetInfo& ti) {
@@ -1812,8 +1817,8 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
                                   ra_exe_unit,
                                   cuda_mgr,
                                   co.device_type,
-                                  cuda_mgr ? this->blockSize() : 1);
-
+                                  cuda_mgr ? this->blockSize() : 1,
+                                  cuda_mgr ? this->numBlocksPerMP() : 1);
   if (gpu_shared_mem_optimization) {
     // disable interleaved bins optimization on the GPU
     query_mem_desc->setHasInterleavedBinsOnGpu(false);
@@ -1823,6 +1828,7 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
                                                              query_mem_desc.get())) +
                        " out of " + std::to_string(g_gpu_smem_threshold) + " bytes).";
   }
+
   const GpuSharedMemoryContext gpu_smem_context(
       get_shared_memory_size(gpu_shared_mem_optimization, query_mem_desc.get()));
 

@@ -2370,6 +2370,16 @@ TEST(Select, Case) {
     c("SELECT y AS key0, SUM(CASE WHEN x > 7 THEN x / (x - 7) ELSE 99 END) FROM test "
       "GROUP BY key0 ORDER BY key0;",
       dt);
+    ASSERT_NO_THROW(run_multiple_agg(
+        "SELECT y AS key0, CASE WHEN y > 7 THEN STDDEV(x) ELSE 99 END FROM test "
+        "GROUP BY y ORDER BY y;",
+        dt,
+        false));
+    ASSERT_NO_THROW(run_multiple_agg(
+        "SELECT y AS key0, CASE WHEN y > 7 THEN 1 ELSE STDDEV(x) END FROM test "
+        "GROUP BY y ORDER BY y;",
+        dt,
+        false));
     c("SELECT CASE WHEN str IN ('str1', 'str3', 'str8') THEN 'foo' WHEN str IN ('str2', "
       "'str4', 'str9') THEN 'bar' "
       "ELSE 'baz' END AS bucketed_str, COUNT(*) AS n FROM query_rewrite_test GROUP BY "
@@ -2446,6 +2456,26 @@ TEST(Select, Case) {
     c("WITH distinct_x AS (SELECT x FROM test GROUP BY x) SELECT SUM(CASE WHEN x = 7 "
       "THEN -32767 ELSE -1 END) FROM distinct_x",
       dt);
+    ASSERT_NO_THROW(run_multiple_agg(
+        "WITH distinct_x AS (SELECT x FROM test GROUP BY x) SELECT CASE WHEN x = 7 "
+        "THEN STDDEV(x) ELSE -1 END FROM distinct_x GROUP BY x;",
+        dt,
+        false));
+    ASSERT_NO_THROW(run_multiple_agg(
+        "WITH distinct_x AS (SELECT x FROM test GROUP BY x) SELECT CASE WHEN x = 7 "
+        "THEN -32767 ELSE STDDEV(x) END FROM distinct_x GROUP BY x;",
+        dt,
+        false));
+    ASSERT_NO_THROW(run_multiple_agg(
+        "WITH distinct_x AS (SELECT x FROM test GROUP BY x) SELECT CASE WHEN x = 7 "
+        "THEN -32767 ELSE STDDEV(x) END as V FROM distinct_x GROUP BY x ORDER BY V;",
+        dt,
+        false));
+    ASSERT_NO_THROW(run_multiple_agg(
+        "WITH distinct_x AS (SELECT x FROM test GROUP BY x) SELECT CASE WHEN x = 7 "
+        "THEN STDDEV(x) ELSE -1 END as V FROM distinct_x GROUP BY x ORDER BY V;",
+        dt,
+        false));
     c("WITH distinct_x AS (SELECT x FROM test GROUP BY x) SELECT AVG(CASE WHEN x = 7 "
       "THEN -32767 ELSE -1 END) FROM distinct_x",
       dt);
@@ -2953,6 +2983,99 @@ void check_one_date_trunc_group_with_agg(const ResultSet& rows,
 }
 
 }  // namespace
+
+TEST(Select, TimeSyntaxCheck) {
+  for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
+    SKIP_NO_GPU();
+
+    ASSERT_EQ(1325376000L,
+              v<int64_t>(run_simple_agg("SELECT DATE_TRUNC(year, CAST('2012-05-08 "
+                                        "20:15:12' AS TIMESTAMP)) FROM test limit 1;",
+                                        dt)));
+    ASSERT_EQ(1325376000L,
+              v<int64_t>(run_simple_agg("SELECT DATE_TRUNC('year', CAST('2012-05-08 "
+                                        "20:15:12' AS TIMESTAMP)) FROM test limit 1;",
+                                        dt)));
+    ASSERT_EQ(1325376000L,
+              v<int64_t>(run_simple_agg("SELECT PG_DATE_TRUNC(year, CAST('2012-05-08 "
+                                        "20:15:12' AS TIMESTAMP)) FROM test limit 1;",
+                                        dt)));
+    ASSERT_EQ(1325376000L,
+              v<int64_t>(run_simple_agg("SELECT PG_DATE_TRUNC('year', CAST('2012-05-08 "
+                                        "20:15:12' AS TIMESTAMP)) FROM test limit 1;",
+                                        dt)));
+    ASSERT_EQ(2007,
+              v<int64_t>(run_simple_agg("SELECT PG_EXTRACT('year', CAST('2007-10-30 "
+                                        "12:15:32' AS TIMESTAMP)) FROM test;",
+                                        dt)));
+    ASSERT_EQ(2007,
+              v<int64_t>(run_simple_agg("SELECT PG_EXTRACT(YEAR, CAST('2007-10-30 "
+                                        "12:15:32' AS TIMESTAMP)) FROM test;",
+                                        dt)));
+    ASSERT_EQ(2007,
+              v<int64_t>(run_simple_agg("SELECT extract('year' from CAST('2007-10-30 "
+                                        "12:15:32' AS TIMESTAMP)) FROM test;",
+                                        dt)));
+    ASSERT_EQ(2007,
+              v<int64_t>(run_simple_agg("SELECT extract(year from CAST('2007-10-30 "
+                                        "12:15:32' AS TIMESTAMP)) FROM test;",
+                                        dt)));
+    ASSERT_EQ(2007,
+              v<int64_t>(run_simple_agg("SELECT DATEPART('year', CAST('2007-10-30 "
+                                        "12:15:32' AS TIMESTAMP)) FROM test;",
+                                        dt)));
+    ASSERT_EQ(2007,
+              v<int64_t>(run_simple_agg("SELECT DATEPART(YEAR, CAST('2007-10-30 "
+                                        "12:15:32' AS TIMESTAMP)) FROM test;",
+                                        dt)));
+    ASSERT_EQ(
+        3,
+        v<int64_t>(run_simple_agg("SELECT DATEDIFF('year', CAST('2006-01-07 00:00:00' as "
+                                  "TIMESTAMP), CAST('2009-01-07 00:00:00' AS "
+                                  "TIMESTAMP)) FROM TEST LIMIT 1;",
+                                  dt)));
+    ASSERT_EQ(
+        3,
+        v<int64_t>(run_simple_agg("SELECT DATEDIFF(YEAR, CAST('2006-01-07 00:00:00' as "
+                                  "TIMESTAMP), CAST('2009-01-07 00:00:00' AS "
+                                  "TIMESTAMP)) FROM TEST LIMIT 1;",
+                                  dt)));
+    ASSERT_EQ(
+        1,
+        v<int64_t>(run_simple_agg("SELECT DATEADD('day', 1, CAST('2017-05-31' AS DATE)) "
+                                  "= TIMESTAMP '2017-06-01 0:00:00' from test limit 1;",
+                                  dt)));
+    ASSERT_EQ(
+        1,
+        v<int64_t>(run_simple_agg("SELECT DATEADD(DAY, 1, CAST('2017-05-31' AS DATE)) "
+                                  "= TIMESTAMP '2017-06-01 0:00:00' from test limit 1;",
+                                  dt)));
+    ASSERT_EQ(
+        1,
+        v<int64_t>(run_simple_agg(
+            "SELECT TIMESTAMPADD('year', 1, TIMESTAMP '2008-02-29 1:11:11') = TIMESTAMP "
+            "'2009-02-28 1:11:11' from test limit 1;",
+            dt)));
+    ASSERT_EQ(
+        1,
+        v<int64_t>(run_simple_agg(
+            "SELECT TIMESTAMPADD(YEAR, 1, TIMESTAMP '2008-02-29 1:11:11') = TIMESTAMP "
+            "'2009-02-28 1:11:11' from test limit 1;",
+            dt)));
+    ASSERT_EQ(
+        128885,
+        v<int64_t>(run_simple_agg(
+            "SELECT TIMESTAMPDIFF('minute', TIMESTAMP '2003-02-01 0:00:00', TIMESTAMP "
+            "'2003-05-01 12:05:55') FROM TEST LIMIT 1;",
+            dt)));
+    ASSERT_EQ(
+        128885,
+        v<int64_t>(run_simple_agg(
+            "SELECT TIMESTAMPDIFF(minute, TIMESTAMP '2003-02-01 0:00:00', TIMESTAMP "
+            "'2003-05-01 12:05:55') FROM TEST LIMIT 1;",
+            dt)));
+  }
+}
 
 TEST(Select, Time) {
   for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
@@ -6925,6 +7048,15 @@ TEST(Select, Empty) {
     // Empty subquery results
     c("SELECT x, SUM(y) FROM emptytab WHERE x IN (SELECT x FROM emptytab GROUP "
       "BY x HAVING SUM(f) > 1.0) GROUP BY x ORDER BY x ASC;",
+      dt);
+  }
+}
+
+TEST(Update, Empty) {
+  for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
+    SKIP_NO_GPU();
+    c("UPDATE emptytab SET x = (SELECT x FROM test_inner WHERE emptytab.x = "
+      "test_inner.x);",
       dt);
   }
 }
@@ -11596,6 +11728,62 @@ TEST(Select, TimestampPrecisionFormat) {
   }
 }
 
+TEST(Select, TimestampPrecisionOverflowUnderflow) {
+  for (const auto& dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
+    SKIP_NO_GPU();
+    ASSERT_EQ(1,
+              v<int64_t>(
+                  run_simple_agg("select count(*) from ts_overflow_underflow where (a >= "
+                                 "TIMESTAMP(0) '2272-10-25 19:21:56' and a "
+                                 "<= TIMESTAMP(0) '2274-10-25 19:21:56');",
+                                 dt)));
+    ASSERT_EQ(1,
+              v<int64_t>(
+                  run_simple_agg("select count(*) from ts_overflow_underflow where (a >= "
+                                 "TIMESTAMP(3) '2272-10-25 19:21:56.000000000' and a "
+                                 "<= TIMESTAMP(3) '2274-10-25 19:21:56.000000000');",
+                                 dt)));
+    ASSERT_EQ(1,
+              v<int64_t>(
+                  run_simple_agg("select count(*) from ts_overflow_underflow where (a >= "
+                                 "TIMESTAMP(6) '2272-10-25 19:21:56.000000000' and a "
+                                 "<= TIMESTAMP(6) '2274-10-25 19:21:56.000000000');",
+                                 dt)));
+    ASSERT_EQ(1,
+              v<int64_t>(
+                  run_simple_agg("select count(*) from ts_overflow_underflow where (b >= "
+                                 "TIMESTAMP(3) '2272-10-25 19:21:56.000000000' and b "
+                                 "<= TIMESTAMP(3) '2274-10-25 19:21:56.000000000');",
+                                 dt)));
+    ASSERT_EQ(2,
+              v<int64_t>(
+                  run_simple_agg("select count(*) from ts_overflow_underflow where (b >= "
+                                 "TIMESTAMP(6) '2262-10-25 19:21:56.000000000' and b "
+                                 "<= TIMESTAMP(6) '2274-10-25 19:21:56.000000000');",
+                                 dt)));
+    ASSERT_THROW(run_simple_agg("select count(*) from ts_overflow_underflow where (b >= "
+                                "TIMESTAMP(9) '2272-10-25 19:21:56.000000000' and b "
+                                "<= TIMESTAMP(9) '2274-10-25 19:21:56.000000000');",
+                                dt),
+                 std::runtime_error);
+    ASSERT_THROW(run_simple_agg("select count(*) from ts_overflow_underflow where (a >= "
+                                "TIMESTAMP(9) '2272-10-25 19:21:56.000000000' "
+                                "and a <= TIMESTAMP(9) '2274-10-25 19:21:56.000000000');",
+                                dt),
+                 std::runtime_error);
+    ASSERT_THROW(run_simple_agg("select count(*) from ts_overflow_underflow where (a >= "
+                                "TIMESTAMP(9) '2252-10-25 19:21:56.000000000' "
+                                "and a <= TIMESTAMP(9) '2261-10-25 19:21:56.000000000');",
+                                dt),
+                 std::runtime_error);
+    ASSERT_THROW(run_simple_agg("select count(*) from ts_overflow_underflow where (b >= "
+                                "TIMESTAMP(9) '2252-10-25 19:21:56.000000000' "
+                                "and b <= TIMESTAMP(9) '2261-10-25 19:21:56.000000000');",
+                                dt),
+                 std::runtime_error);
+  }
+}
+
 namespace {
 
 void validate_timestamp_agg(const ResultSet& row,
@@ -14478,14 +14666,13 @@ TEST(Select, GeoSpatial_Basics) {
                                 dt),
                  std::runtime_error);
     // Unsupported aggs
-    EXPECT_THROW(run_simple_agg("SELECT MIN(p) FROM geospatial_test;", dt),
-                 std::runtime_error);
-    EXPECT_THROW(run_simple_agg("SELECT MAX(p) FROM geospatial_test;", dt),
-                 std::runtime_error);
-    EXPECT_THROW(run_simple_agg("SELECT AVG(p) FROM geospatial_test;", dt),
-                 std::runtime_error);
-    EXPECT_THROW(run_simple_agg("SELECT SUM(p) FROM geospatial_test;", dt),
-                 std::runtime_error);
+    EXPECT_ANY_THROW(run_simple_agg("SELECT MIN(p) FROM geospatial_test;", dt));
+    EXPECT_ANY_THROW(run_simple_agg("SELECT MAX(p) FROM geospatial_test;", dt));
+    EXPECT_ANY_THROW(run_simple_agg("SELECT AVG(p) FROM geospatial_test;", dt));
+    EXPECT_ANY_THROW(run_simple_agg("SELECT SUM(p) FROM geospatial_test;", dt));
+    EXPECT_ANY_THROW(run_simple_agg(
+        "SELECT COUNT(*) FROM geospatial_test a, geospatial_test b WHERE a.p = b.p;",
+        dt));
   }
 }
 
@@ -17780,6 +17967,45 @@ int create_and_populate_rounding_table() {
   return 0;
 }
 
+int create_and_populate_datetime_overflow_table() {
+  try {
+    const std::string drop_stmt{"DROP TABLE IF EXISTS ts_overflow_underflow;"};
+    run_ddl_statement(drop_stmt);
+    g_sqlite_comparator.query(drop_stmt);
+
+    const std::string create_stmt{
+        "CREATE TABLE ts_overflow_underflow (a TIMESTAMP(0), b DATE);"};
+    run_ddl_statement(create_stmt);
+    g_sqlite_comparator.query(create_stmt);
+
+    const std::string insert_valid_1{
+        "INSERT INTO ts_overflow_underflow VALUES('2273-01-01 23:12:12', '2273-01-01');"};
+    const std::string insert_valid_2{
+        "INSERT INTO ts_overflow_underflow VALUES('2263-01-01 00:00:00', '2263-01-01');"};
+    const std::string insert_valid_3{
+        "INSERT INTO ts_overflow_underflow VALUES('09/21/1676 00:12:43', '09/21/1676');"};
+    const std::string insert_valid_4{
+        "INSERT INTO ts_overflow_underflow VALUES('09/21/1677 00:00:43', '09/21/1677');"};
+    const std::string insert_null{
+        "INSERT INTO ts_overflow_underflow VALUES(null, null);"};
+
+    run_multiple_agg(insert_valid_1, ExecutorDeviceType::CPU);
+    run_multiple_agg(insert_valid_2, ExecutorDeviceType::CPU);
+    run_multiple_agg(insert_valid_3, ExecutorDeviceType::CPU);
+    run_multiple_agg(insert_valid_4, ExecutorDeviceType::CPU);
+    run_multiple_agg(insert_null, ExecutorDeviceType::CPU);
+    g_sqlite_comparator.query(insert_valid_1);
+    g_sqlite_comparator.query(insert_valid_2);
+    g_sqlite_comparator.query(insert_valid_3);
+    g_sqlite_comparator.query(insert_valid_4);
+    g_sqlite_comparator.query(insert_null);
+  } catch (...) {
+    LOG(ERROR) << "Failed to (re-)create table 'ts_overflow_underflow'";
+    return -EEXIST;
+  }
+  return 0;
+}
+
 int create_and_populate_tables(const bool use_temporary_tables,
                                const bool with_delete_support = true) {
   try {
@@ -18707,6 +18933,11 @@ int create_and_populate_tables(const bool use_temporary_tables,
   int err = create_and_populate_window_func_table();
   if (err) {
     return err;
+  }
+
+  int ts_overflow_result = create_and_populate_datetime_overflow_table();
+  if (ts_overflow_result) {
+    return ts_overflow_result;
   }
 
   return 0;

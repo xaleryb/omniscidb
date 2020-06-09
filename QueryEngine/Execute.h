@@ -97,6 +97,7 @@ extern bool g_enable_multifrag_rs;
 extern bool g_enable_runtime_query_interrupt;
 extern unsigned g_runtime_query_interrupt_frequency;
 extern size_t g_gpu_smem_threshold;
+extern bool g_enable_smem_grouped_non_count_agg;
 extern bool g_enable_smem_non_grouped_agg;
 
 class QueryCompilationDescriptor;
@@ -423,6 +424,7 @@ class Executor {
 
   int8_t warpSize() const;
   unsigned gridSize() const;
+  unsigned numBlocksPerMP() const;
   unsigned blockSize() const;
 
  private:

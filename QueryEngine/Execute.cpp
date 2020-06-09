@@ -109,8 +109,13 @@ bool g_enable_multifrag_rs{false};
 bool g_enable_runtime_query_interrupt{false};
 unsigned g_runtime_query_interrupt_frequency{1000};
 size_t g_gpu_smem_threshold{
-    4096};  // GPU shared memory threshold (in bytes), if larger buffer sizes are required
-            // we do not use GPU shared memory optimizations
+    4096};  // GPU shared memory threshold (in bytes), if larger
+            // buffer sizes are required we do not use GPU shared
+            // memory optimizations Setting this to 0 means unlimited
+            // (subject to other dynamically calculated caps)
+bool g_enable_smem_grouped_non_count_agg{
+    true};  // enable use of shared memory when performing group-by with select non-count
+            // aggregates
 bool g_enable_smem_non_grouped_agg{
     true};  // enable optimizations for using GPU shared memory in implementation of
             // non-grouped aggregates
@@ -1637,11 +1642,9 @@ void fill_entries_for_empty_input(std::vector<TargetInfo>& target_infos,
       const auto& count_distinct_desc =
           query_mem_desc.getCountDistinctDescriptor(target_idx);
       if (count_distinct_desc.impl_type_ == CountDistinctImplType::Bitmap) {
-        auto count_distinct_buffer = static_cast<int8_t*>(
-            checked_calloc(count_distinct_desc.bitmapPaddedSizeBytes(), 1));
         CHECK(row_set_mem_owner);
-        row_set_mem_owner->addCountDistinctBuffer(
-            count_distinct_buffer, count_distinct_desc.bitmapPaddedSizeBytes(), true);
+        auto count_distinct_buffer = row_set_mem_owner->allocateCountDistinctBuffer(
+            count_distinct_desc.bitmapPaddedSizeBytes());
         entry.push_back(reinterpret_cast<int64_t>(count_distinct_buffer));
         continue;
       }
@@ -3004,8 +3007,15 @@ unsigned Executor::gridSize() const {
   CHECK(catalog_);
   const auto cuda_mgr = catalog_->getDataMgr().getCudaMgr();
   CHECK(cuda_mgr);
-  const auto& dev_props = cuda_mgr->getAllDeviceProperties();
-  return grid_size_x_ ? grid_size_x_ : 2 * dev_props.front().numMPs;
+  return grid_size_x_ ? grid_size_x_ : 2 * cuda_mgr->getMinNumMPsForAllDevices();
+}
+
+unsigned Executor::numBlocksPerMP() const {
+  CHECK(catalog_);
+  const auto cuda_mgr = catalog_->getDataMgr().getCudaMgr();
+  CHECK(cuda_mgr);
+  return grid_size_x_ ? std::ceil(grid_size_x_ / cuda_mgr->getMinNumMPsForAllDevices())
+                      : 2;
 }
 
 unsigned Executor::blockSize() const {
@@ -3110,13 +3120,32 @@ RelAlgExecutionUnit Executor::addDeletedColumn(const RelAlgExecutionUnit& ra_exe
 }
 
 namespace {
-
-int64_t get_hpt_scaled_value(const int64_t& val,
-                             const int32_t& ldim,
-                             const int32_t& rdim) {
+// Note(Wamsi): `get_hpt_overflow_underflow_safe_scaled_value` will return `true` for safe
+// scaled epoch value and `false` for overflow/underflow values as the first argument of
+// return type.
+std::tuple<bool, int64_t, int64_t> get_hpt_overflow_underflow_safe_scaled_values(
+    const int64_t chunk_min,
+    const int64_t chunk_max,
+    const SQLTypeInfo& lhs_type,
+    const SQLTypeInfo& rhs_type) {
+  const int32_t ldim = lhs_type.get_dimension();
+  const int32_t rdim = rhs_type.get_dimension();
   CHECK(ldim != rdim);
-  return ldim > rdim ? val / DateTimeUtils::get_timestamp_precision_scale(ldim - rdim)
-                     : val * DateTimeUtils::get_timestamp_precision_scale(rdim - ldim);
+  const auto scale = DateTimeUtils::get_timestamp_precision_scale(abs(rdim - ldim));
+  if (ldim > rdim) {
+    // LHS type precision is more than RHS col type. No chance of overflow/underflow.
+    return {true, chunk_min / scale, chunk_max / scale};
+  }
+
+  int64_t upscaled_chunk_min;
+  int64_t upscaled_chunk_max;
+
+  if (__builtin_mul_overflow(chunk_min, scale, &upscaled_chunk_min) ||
+      __builtin_mul_overflow(chunk_max, scale, &upscaled_chunk_max)) {
+    return std::make_tuple(false, chunk_min, chunk_max);
+  }
+
+  return std::make_tuple(true, upscaled_chunk_min, upscaled_chunk_max);
 }
 
 }  // namespace
@@ -3188,14 +3217,30 @@ std::pair<bool, int64_t> Executor::skipFragment(
          rhs_const->get_type_info().is_high_precision_timestamp())) {
       // If original timestamp lhs col has different precision,
       // column metadata holds value in original precision
-      // therefore adjust value to match rhs precision
-      const auto lhs_dimen = lhs_col->get_type_info().get_dimension();
-      const auto rhs_dimen = rhs_const->get_type_info().get_dimension();
-      chunk_min = get_hpt_scaled_value(chunk_min, lhs_dimen, rhs_dimen);
-      chunk_max = get_hpt_scaled_value(chunk_max, lhs_dimen, rhs_dimen);
+      // therefore adjust rhs value to match lhs precision
+
+      // Note(Wamsi): We adjust rhs const value instead of lhs value to not
+      // artificially limit the lhs column range. RHS overflow/underflow is already
+      // been validated in `TimeGM::get_overflow_underflow_safe_epoch`.
+      bool is_valid;
+      std::tie(is_valid, chunk_min, chunk_max) =
+          get_hpt_overflow_underflow_safe_scaled_values(
+              chunk_min, chunk_max, lhs_col->get_type_info(), rhs_const->get_type_info());
+      if (!is_valid) {
+        VLOG(4) << "Overflow/Underflow detecting in fragments skipping logic.\nChunk min "
+                   "value: "
+                << std::to_string(chunk_min)
+                << "\nChunk max value: " << std::to_string(chunk_max)
+                << "\nLHS col precision is: "
+                << std::to_string(lhs_col->get_type_info().get_dimension())
+                << "\nRHS precision is: "
+                << std::to_string(rhs_const->get_type_info().get_dimension()) << ".";
+        return {false, -1};
+      }
     }
     CodeGenerator code_generator(this);
     const auto rhs_val = code_generator.codegenIntConst(rhs_const)->getSExtValue();
+
     switch (comp_expr->get_optype()) {
       case kGE:
         if (chunk_max < rhs_val) {

@@ -1,0 +1,77 @@
+{% set name = "omniscidb-cpu" %}
+{% set version = "5.4.0_dev" %}
+# TODO version parser from CMakeLists.txt
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  path: ../..
+
+build:
+  number: 1
+  skip: True  # [win]
+
+requirements:
+  build:
+    - go-cgo
+    - {{ compiler('cxx') }}   # [not osx]
+    - {{ compiler('c') }}     # [not osx]
+    # we use clang++ from clangdev as a compiler
+    - clangxx
+    - clangdev
+    - cmake
+    - make
+    - maven
+    - llvmdev 9.*
+
+  host:
+    - arrow-cpp 0.16.*
+    - llvmdev 9.*
+    # for some reason, librdkafka 1.4+ triggers dependency conflicts
+    - librdkafka <1.4
+    - bisonpp
+    - blosc
+    - boost-cpp
+    - clangdev
+    - double-conversion
+    - flex
+    - gflags
+    - glog
+    - llvm
+    - libarchive
+    - libgdal
+    - libkml
+    - libpng
+    - ncurses
+    - openldap
+    - openssl
+    - snappy
+    - thrift-cpp
+  run:
+    # omnscidb Load-time UDF support calls clang++
+    - clangxx 9.*
+    - openjdk 8
+    - boost-cpp
+    - bzip2
+    - ncurses
+    - xz
+    - zlib
+  run_constrained:
+    - arrow-cpp-proc
+
+
+about:
+  home: https://www.omnisci.com/
+  license: Apache-2.0
+  license_family: Apache
+  license_file: LICENSE.md
+  summary: 'The OmniSci database'
+
+  description: |
+    OmniSciDB is an in-memory, column store, SQL relational database 
+    that was designed from the ground up to run on GPUs.
+  doc_url: https://www.omnisci.com/docs/latest/
+  dev_url: https://github.com/omnisci/omniscidb
+
