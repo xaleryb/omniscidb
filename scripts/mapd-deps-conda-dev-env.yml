@@ -11,10 +11,14 @@ dependencies:
   - gcc_linux-64
   - libgdal    >=2.3
   - arrow-cpp  <0.17.0
+  - pyarrow    <0.17.0
   - thrift-cpp  0.13.*
   - llvmdev     9.*
   - librdkafka <1.4
   - openjdk     8.*
+  - libpng
+  - tbb-devel
+  - cython
   - cmake
   - make
   - go-cgo
@@ -28,7 +32,6 @@ dependencies:
   - glog
   - libarchive
   - libkml
-  - libpng
   - libiconv
   - blosc
   - ncurses

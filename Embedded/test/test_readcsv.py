@@ -1,0 +1,13 @@
+import os
+import numpy as np
+import pyarrow as pa
+from pyarrow import csv
+import dbe
+
+d = dbe.PyDbEngine('data', 9091)
+root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+table = csv.read_csv(root+"/Tests/Import/datafiles/santander_top1000.csv")
+assert table
+print(table.to_pandas().head())
+d.consumeArrowTable("santander", table)
+r = d.executeDML("select count(*) from santander");

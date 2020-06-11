@@ -191,6 +191,12 @@ cdef class PyDbEngine:
         obj.c_cursor = self.c_dbe.executeDML(bytes(query, 'utf-8'));
         return obj;
 
+    def consumeArrowTable(self, name, table):
+        cdef shared_ptr[CTable] t = pyarrow_unwrap_table(table)
+        cdef string n = bytes(name, 'utf-8')
+        assert t.get() and not n.empty()
+        self.c_dbe.createArrowTable(n, t)
+
     def select_df(self, query):
         obj = PyCursor();
         obj.c_cursor = self.c_dbe.executeDML(bytes(query, 'utf-8'));

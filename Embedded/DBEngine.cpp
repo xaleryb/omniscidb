@@ -187,14 +187,14 @@ class DBEngineImpl : public DBEngine {
     }
   }
 
-  void createArrowTable(std::string name, std::shared_ptr<arrow::Table> table) {
+  void createArrowTable(const std::string &name, std::shared_ptr<arrow::Table> &table) {
     setArrowTable(name, table);
     try {
       auto session = query_runner_->getSession();
       TableDescriptor td;
       td.tableName = name;
       td.userId = session->get_currentUser().userId;
-      td.storageType = std::string("ARROW:" + name);
+      td.storageType = "ARROW:" + name;
       td.persistenceLevel = Data_Namespace::MemoryLevel::CPU_LEVEL;
       td.isView = false;
       td.fragmenter = nullptr;
@@ -337,7 +337,7 @@ class DBEngineImpl : public DBEngine {
  *
  * @param sPath Path to the existing database
  */
-DBEngine* DBEngine::create(std::string path,
+DBEngine* DBEngine::create(const std::string &path,
                            int calcite_port,
                            bool enable_columnar_output) {
   g_enable_columnar_output = enable_columnar_output;
@@ -361,17 +361,17 @@ void DBEngine::reset() {
   engine->reset();
 }
 
-void DBEngine::executeDDL(std::string query) {
+void DBEngine::executeDDL(const std::string &query) {
   DBEngineImpl* engine = getImpl(this);
   engine->executeDDL(query);
 }
 
-Cursor* DBEngine::executeDML(std::string query) {
+Cursor* DBEngine::executeDML(const std::string &query) {
   DBEngineImpl* engine = getImpl(this);
   return engine->executeDML(query);
 }
 
-void DBEngine::createArrowTable(std::string name, std::shared_ptr<arrow::Table> table) {
+void DBEngine::createArrowTable(const std::string &name, std::shared_ptr<arrow::Table> &table) {
   DBEngineImpl* engine = getImpl(this);
   return engine->createArrowTable(name, table);
 }
