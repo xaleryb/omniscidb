@@ -17,7 +17,7 @@
 #include "DBEngine.h"
 #include <arrow/api.h>
 #include <boost/filesystem.hpp>
-#include "DataMgr/ForeignStorage/ArrowCsvForeignStorage.h"
+#include "DataMgr/ForeignStorage/ArrowForeignStorage.h"
 #include "Fragmenter/FragmentDefaultValues.h"
 #include "Parser/ParserNode.h"
 #include "QueryEngine/ArrowResultSet.h"
