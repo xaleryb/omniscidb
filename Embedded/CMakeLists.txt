@@ -2,8 +2,6 @@ add_library(DBEngine SHARED DBETypes.cpp DBEngine.cpp DBEngine.h DBETypes.h)
 
 target_link_libraries(DBEngine QueryRunner QueryEngine DataMgr ${Arrow_LIBRARIES} ${Boost_LIBRARIES} ${CMAKE_DL_LIBS} ${TBB_LIBS})
 
-#install(TARGETS DBEngine DESTINATION "${CMAKE_INSTALL_PREFIX}/lib")  -- done by seyup.py install
-
 add_executable(EmbeddedDbTest EmbeddedDbTest.cpp)
 target_link_libraries(EmbeddedDbTest DBEngine)
 
@@ -18,17 +16,16 @@ IF(PYTHON)
 
     add_custom_command(OUTPUT ${OUTPUT}
         DEPENDS DBEngine ${SETUP_PY} ${CMAKE_CURRENT_SOURCE_DIR}/DBEngine.h ${CMAKE_CURRENT_SOURCE_DIR}/dbe.pyx ${CMAKE_CURRENT_SOURCE_DIR}/DBEngine.pxd
-        COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && python3 setup.py build_ext -I ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && python3 setup.py build_ext -g -f -I ${CMAKE_CURRENT_SOURCE_DIR}
         )
 
     add_custom_target(Python ALL DEPENDS ${OUTPUT})
 
     add_custom_target(editable-install
-        "cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -e --prefix=${CMAKE_INSTALL_PATH} ."
+        cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -e .
         DEPENDS Python)
 
-    install(CODE "execute_process(COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && python3 setup.py install -f --prefix=${CMAKE_INSTALL_PREFIX})"
-            COMPONENT python_install)
+    install(CODE "execute_process(COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && python3 setup.py install -f)")
 
 ENDIF(PYTHON)
 
