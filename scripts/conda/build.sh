@@ -82,6 +82,6 @@ rm -rf data
 mkdir data
 # do lightweight testing here, make sanity_tests should go to under test env
 omnisci_initdb -f data
-#omnisci_server --enable-fsi --db-query-list SampleData/db-query-list-flights.sql --exit-after-warmup
-#rm -rf data
+#TODO: omnisci_server --enable-fsi --db-query-list SampleData/db-query-list-flights.sql --exit-after-warmup
+#TODO: rm -rf data
 popd

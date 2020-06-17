@@ -15,6 +15,8 @@ if(DEFINED ENV{CONDA_PREFIX})
   # Adding `--sysroot=...` resolves `no member named 'signbit' in the global namespace` error:
   set(CMAKE_SYSROOT "$ENV{CONDA_BUILD_SYSROOT}")
   set(CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
+  set(CMAKE_INSTALL_PREFIX "$ENV{CONDA_PREFIX}")
+  link_directories("$ENV{CONDA_PREFIX}/lib")  # resolves link issue for zlib 
   # Adding `-I$BUILD_SYSROOT_INLCUDE` resolves `cassert file not found` error:
   include_directories(SYSTEM "$ENV{CONDA_BUILD_SYSROOT}/usr/include")
 endif(DEFINED ENV{CONDA_PREFIX})
