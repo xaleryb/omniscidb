@@ -160,39 +160,56 @@ cdef class PyDbEngine:
 
     def __cinit__(self, path, port, enable_columnar_output=True):
         try:
-            bpath = bytes(path, 'utf-8')
-            self.c_dbe = DBEngine.create(bpath, port, enable_columnar_output)
+            #bpath = bytes(path, 'utf-8')
+            self.c_dbe = DBEngine.create(str(path), int(port), enable_columnar_output)
+            assert not self.closed
         except OSError as err:
-            print("OS error: {0}".format(err))
+            print("DBEngine: OS error: {0}".format(err))
+            raise
         except ValueError:
-            print("Could not convert data to an integer.")
+            print("DBEngine: ValueError: Could not convert data to an integer.")
+            raise
         except:
-            print("Unexpected error:", sys.exc_info()[0], sys.exc_info()[1])
+            print("DBEngine: Unexpected error while constructing", sys.exc_info()[0], sys.exc_info()[1])
+            raise
 
     def __dealloc__(self):
+        assert not self.closed
         self.c_dbe.reset()
         del self.c_dbe
+        self.c_dbe = NULL
 
     @property
     def closed(self):
-        return False
+        return self.c_dbe == NULL
 
     def close(self):
         pass
 
     def executeDDL(self, query):
         try:
+            assert not self.closed
             self.c_dbe.executeDDL(bytes(query, 'utf-8'))
         except Exception, e:
             os.abort()
 
     def executeDML(self, query):
         obj = PyCursor();
+        assert not self.closed
         obj.c_cursor = self.c_dbe.executeDML(bytes(query, 'utf-8'));
         return obj;
 
+    def consumeArrowTable(self, name, table):
+        assert not self.closed
+        cdef shared_ptr[CTable] t = pyarrow_unwrap_table(table)
+        cdef string n = bytes(name, 'utf-8')
+        assert t.get() and not n.empty()
+        assert not self.closed
+        self.c_dbe.createArrowTable(n, t)
+
     def select_df(self, query):
         obj = PyCursor();
+        assert not self.closed
         obj.c_cursor = self.c_dbe.executeDML(bytes(query, 'utf-8'));
         prb = obj.getArrowRecordBatch()
         df = prb.to_pandas()

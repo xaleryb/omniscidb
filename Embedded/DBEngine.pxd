@@ -7,6 +7,7 @@ from libcpp cimport bool, nullptr_t, nullptr
 from libcpp.pair cimport pair
 from libcpp.vector cimport vector
 from cython.operator cimport dereference as deref
+from pyarrow.lib cimport CTable
 
 cdef extern from "arrow/api.h" namespace "arrow" nogil:
     cdef cppclass CRecordBatch" arrow::RecordBatch":
@@ -86,6 +87,7 @@ cdef extern from "DBEngine.h" namespace 'EmbeddedDatabase':
 #        shared_ptr[ResultSet] executeDML(string)
         vector[string] getTables()
         vector[ColumnDetails] getTableDetails(string)
+        void createArrowTable(string, shared_ptr[CTable]&)
         void reset()
         @staticmethod
         DBEngine* create(string, int, bool)

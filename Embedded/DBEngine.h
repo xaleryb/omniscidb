@@ -38,12 +38,12 @@ class Cursor {
 class DBEngine {
  public:
   void reset();
-  void executeDDL(std::string query);
-  Cursor* executeDML(std::string query);
-  static DBEngine* create(std::string path, int calcite_port,  bool enable_columnar_output);
+  void executeDDL(const std::string& query);
+  Cursor* executeDML(const std::string& query);
+  static DBEngine* create(const std::string &path, int calcite_port,  bool enable_columnar_output);
   std::vector<std::string> getTables();
   std::vector<ColumnDetails> getTableDetails(const std::string& table_name);
-  void createArrowTable(std::string name, std::shared_ptr<arrow::Table> table);
+  void createArrowTable(const std::string&, std::shared_ptr<arrow::Table> &table);
   
  protected:
   DBEngine() {}

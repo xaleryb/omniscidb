@@ -7,7 +7,7 @@ import pyarrow as pa
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 dbe = Extension("dbe",
-                ["dbe.pyx"],
+                ["@CMAKE_CURRENT_SOURCE_DIR@/dbe.pyx"],
                 language='c++17',
                 include_dirs=[
                   np.get_include(),
@@ -17,7 +17,7 @@ dbe = Extension("dbe",
                   "@CMAKE_CURRENT_SOURCE_DIR@"
                 ],
                 library_dirs=pa.get_library_dirs() + ['.'],
-                runtime_library_dirs=pa.get_library_dirs() + ['$ORIGIN/../../'], # lib/python3.*/site-packages/../../
+                runtime_library_dirs=pa.get_library_dirs() + ['$ORIGIN/../../'],
                 libraries=pa.get_libraries() + ['DBEngine', 'boost_system'],
                 extra_compile_args=['-std=c++17'],
               )
@@ -29,13 +29,14 @@ setup(
   name = 'dbe',
   version='0.1',
   ext_modules = cythonize(dbe,
-    compiler_directives={'c_string_type': "str", 'c_string_encoding': "utf8", 'language_level': "3"}
+    compiler_directives={'c_string_type': "str", 'c_string_encoding': "utf8", 'language_level': "3"},
+    include_path=["@CMAKE_CURRENT_SOURCE_DIR@"],
   ),
   data_files=[
     ("lib", ["$<TARGET_FILE:DBEngine>"]),
     ('include', [
-      "DBEngine.h",
-      "DBEngine.pxd",
+      "@CMAKE_CURRENT_SOURCE_DIR@/DBEngine.h",
+      "@CMAKE_CURRENT_SOURCE_DIR@/DBEngine.pxd",
     ])
   ],
 )
