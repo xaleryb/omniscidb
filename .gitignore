@@ -84,3 +84,4 @@ data/
 # IntelliJ/CLion settings files
 .idea
 *.iml
+.ccls-cache
