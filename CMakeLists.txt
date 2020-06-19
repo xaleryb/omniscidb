@@ -11,8 +11,6 @@ if("${CMAKE_VERSION}" VERSION_GREATER 3.11.999)
   cmake_policy(SET CMP0074 NEW)
 endif()
 
-link_libraries(z) # workaround to fix linking error with libz
-
 find_program(CCACHE_EXE ccache)
 if(CCACHE_EXE)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_EXE}")
