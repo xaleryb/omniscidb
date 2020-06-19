@@ -17,7 +17,6 @@
 #ifndef QUERYENGINE_TABLEGENERATIONS_H
 #define QUERYENGINE_TABLEGENERATIONS_H
 
-#include <cstdint>
 #include <unordered_map>
 
 struct TableGeneration {

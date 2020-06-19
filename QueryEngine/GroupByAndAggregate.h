@@ -21,7 +21,6 @@
 #include "ColumnarResults.h"
 #include "CompilationOptions.h"
 #include "GpuMemUtils.h"
-#include "GpuSharedMemoryContext.h"
 #include "InputMetadata.h"
 #include "QueryExecutionContext.h"
 #include "Rendering/RenderInfo.h"
@@ -120,6 +119,11 @@ struct ColRangeInfo {
 struct KeylessInfo {
   const bool keyless;
   const int32_t target_index;
+  const bool shared_mem_support;  // TODO(Saman) remove, all aggregate operations should
+                                  // eventually be potentially done with shared memory.
+                                  // The decision will be made when the query memory
+                                  // descriptor is created, not here. This member just
+                                  // indicates the possibility.
 };
 
 class GroupByAndAggregate {
@@ -135,8 +139,7 @@ class GroupByAndAggregate {
   bool codegen(llvm::Value* filter_result,
                llvm::BasicBlock* sc_false,
                const QueryMemoryDescriptor& query_mem_desc,
-               const CompilationOptions& co,
-               const GpuSharedMemoryContext& gpu_smem_context);
+               const CompilationOptions& co);
 
   static void addTransientStringLiterals(
       const RelAlgExecutionUnit& ra_exe_unit,
@@ -165,6 +168,10 @@ class GroupByAndAggregate {
     bool chain_to_next_;
     DiamondCodegen* parent_;
   };
+
+  bool supportedTypeForGpuSharedMemUsage(const SQLTypeInfo& target_type_info) const;
+
+  static bool supportedExprForGpuSharedMemUsage(Analyzer::Expr* expr);
 
   bool gpuCanHandleOrderEntries(const std::list<Analyzer::OrderEntry>& order_entries);
 
@@ -243,7 +250,6 @@ class GroupByAndAggregate {
                        const std::vector<llvm::Value*>& agg_out_vec,
                        const QueryMemoryDescriptor& query_mem_desc,
                        const CompilationOptions& co,
-                       const GpuSharedMemoryContext& gpu_smem_context,
                        DiamondCodegen& diamond_codegen);
 
   llvm::Value* codegenWindowRowPointer(const Analyzer::WindowFunction* window_func,

@@ -24,7 +24,6 @@
 #include "CodeCache.h"
 #include "DateTimeUtils.h"
 #include "Descriptors/QueryFragmentDescriptor.h"
-#include "GpuSharedMemoryContext.h"
 #include "GroupByAndAggregate.h"
 #include "JoinHashTable.h"
 #include "LoopControlFlow/JoinLoop.h"
@@ -37,15 +36,14 @@
 #include "TargetMetaInfo.h"
 #include "WindowContext.h"
 
+#include "../Chunk/Chunk.h"
 #include "../Shared/Logger.h"
 #include "../Shared/SystemParameters.h"
-#include "../Shared/mapd_shared_mutex.h"
 #include "../Shared/measure.h"
 #include "../Shared/thread_count.h"
 #include "../StringDictionary/LruCache.hpp"
 #include "../StringDictionary/StringDictionary.h"
 #include "../StringDictionary/StringDictionaryProxy.h"
-#include "DataMgr/Chunk/Chunk.h"
 
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Value.h>
@@ -96,14 +94,11 @@ extern bool g_enable_lazy_fetch;
 extern bool g_enable_multifrag_rs;
 extern bool g_enable_runtime_query_interrupt;
 extern unsigned g_runtime_query_interrupt_frequency;
-extern size_t g_gpu_smem_threshold;
-extern bool g_enable_smem_non_grouped_agg;
 
 class QueryCompilationDescriptor;
 using QueryCompilationDescriptorOwned = std::unique_ptr<QueryCompilationDescriptor>;
 class QueryMemoryDescriptor;
 using QueryMemoryDescriptorOwned = std::unique_ptr<QueryMemoryDescriptor>;
-using InterruptFlagMap = std::map<std::string, bool>;
 
 extern void read_udf_gpu_module(const std::string& udf_ir_filename);
 extern void read_udf_cpu_module(const std::string& udf_ir_filename);
@@ -222,7 +217,7 @@ inline const ColumnarResults* rows_to_columnar_results(
 inline std::vector<Analyzer::Expr*> get_exprs_not_owned(
     const std::vector<std::shared_ptr<Analyzer::Expr>>& exprs) {
   std::vector<Analyzer::Expr*> exprs_not_owned;
-  for (const auto& expr : exprs) {
+  for (const auto expr : exprs) {
     exprs_not_owned.push_back(expr.get());
   }
   return exprs_not_owned;
@@ -372,8 +367,6 @@ class Executor {
 
   static void clearMemory(const Data_Namespace::MemoryLevel memory_level);
 
-  static size_t getArenaBlockSize();
-
   StringDictionaryProxy* getStringDictionaryProxy(
       const int dictId,
       const std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
@@ -412,12 +405,8 @@ class Executor {
 
   void registerActiveModule(void* module, const int device_id) const;
   void unregisterActiveModule(void* module, const int device_id) const;
-  void interrupt(const std::string& query_session = "",
-                 const std::string& interrupt_session = "");
+  void interrupt(std::string query_session = "", std::string interrupt_session = "");
   void resetInterrupt();
-
-  // only for testing usage
-  void enableRuntimeQueryInterrupt(const unsigned interrupt_freq) const;
 
   static const size_t high_scan_limit{32000000};
 
@@ -466,7 +455,6 @@ class Executor {
     std::unordered_map<int, CgenState::LiteralValues> literal_values;
     bool output_columnar;
     std::string llvm_ir;
-    GpuSharedMemoryContext gpu_smem_context;
   };
 
   bool isArchPascalOrLater(const ExecutorDeviceType dt) const {
@@ -832,8 +820,7 @@ class Executor {
   bool compileBody(const RelAlgExecutionUnit& ra_exe_unit,
                    GroupByAndAggregate& group_by_and_aggregate,
                    const QueryMemoryDescriptor& query_mem_desc,
-                   const CompilationOptions& co,
-                   const GpuSharedMemoryContext& gpu_smem_context = {});
+                   const CompilationOptions& co);
 
   void createErrorCheckControlFlow(llvm::Function* query_func,
                                    bool run_with_dynamic_watchdog,
@@ -919,29 +906,14 @@ class Executor {
   void setupCaching(const std::unordered_set<PhysicalInput>& phys_inputs,
                     const std::unordered_set<int>& phys_table_ids);
 
-  template <typename SESSION_MAP_LOCK>
-  void setCurrentQuerySession(const std::string& query_session,
-                              SESSION_MAP_LOCK& write_lock);
-  template <typename SESSION_MAP_LOCK>
-  std::string& getCurrentQuerySession(SESSION_MAP_LOCK& read_lock);
-  template <typename SESSION_MAP_LOCK>
-  bool checkCurrentQuerySession(const std::string& candidate_query_session,
-                                SESSION_MAP_LOCK& read_lock);
-  template <typename SESSION_MAP_LOCK>
-  void invalidateQuerySession(SESSION_MAP_LOCK& write_lock);
-  template <typename SESSION_MAP_LOCK>
-  bool addToQuerySessionList(const std::string& query_session,
-                             SESSION_MAP_LOCK& write_lock);
-  template <typename SESSION_MAP_LOCK>
-  bool removeFromQuerySessionList(const std::string& query_session,
-                                  SESSION_MAP_LOCK& write_lock);
-  template <typename SESSION_MAP_LOCK>
-  void setQuerySessionAsInterrupted(const std::string& query_session,
-                                    SESSION_MAP_LOCK& write_lock);
-  template <typename SESSION_MAP_LOCK>
-  bool checkIsQuerySessionInterrupted(const std::string& query_session,
-                                      SESSION_MAP_LOCK& read_lock);
-  mapd_shared_mutex& getSessionLock();
+  void setCurrentQuerySession(const std::string& query_session);
+  std::string& getCurrentQuerySession();
+  bool checkCurrentQuerySession(const std::string& candidate_query_session);
+  void invalidateQuerySession();
+  bool addToQuerySessionList(const std::string& query_session);
+  bool removeFromQuerySessionList(const std::string& query_session);
+  void setQuerySessionAsInterrupted(const std::string& query_session);
+  bool checkIsQuerySessionInterrupted(const std::string& query_session);
 
  private:
   std::vector<std::pair<void*, void*>> getCodeFromCache(const CodeCacheKey&,
@@ -988,7 +960,7 @@ class Executor {
   mutable std::mutex gpu_active_modules_mutex_;
   mutable uint32_t gpu_active_modules_device_mask_;
   mutable void* gpu_active_modules_[max_gpu_count];
-  std::atomic<bool> interrupted_;
+  bool interrupted_;
 
   mutable std::shared_ptr<StringDictionaryProxy> lit_str_dict_proxy_;
   mutable std::mutex str_dict_mutex_;
@@ -1000,7 +972,7 @@ class Executor {
 
   static const size_t baseline_threshold{
       1000000};  // if a perfect hash needs more entries, use baseline
-  static const size_t code_cache_size{1000};
+  static const size_t code_cache_size{10000};
 
   const unsigned block_size_x_;
   const unsigned grid_size_x_;
@@ -1015,10 +987,10 @@ class Executor {
   AggregatedColRange agg_col_range_cache_;
   StringDictionaryGenerations string_dictionary_generations_;
   TableGenerations table_generations_;
-  static mapd_shared_mutex executor_session_mutex_;
+  static std::mutex executor_session_mutex_;
   static std::string current_query_session_;
   // a pair of <query_session, interrupted_flag>
-  static InterruptFlagMap queries_interrupt_flag_;
+  static std::map<std::string, bool> queries_interrupt_flag_;
 
   static std::map<int, std::shared_ptr<Executor>> executors_;
   static std::atomic_flag execute_spin_lock_;

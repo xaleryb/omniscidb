@@ -48,11 +48,10 @@ size_t StringNoneEncoder::getNumElemsForBytesInsertData(
   return n - start_idx;
 }
 
-std::shared_ptr<ChunkMetadata> StringNoneEncoder::appendData(
-    const std::vector<std::string>* srcData,
-    const int start_idx,
-    const size_t numAppendElems,
-    const bool replicating) {
+ChunkMetadata StringNoneEncoder::appendData(const std::vector<std::string>* srcData,
+                                            const int start_idx,
+                                            const size_t numAppendElems,
+                                            const bool replicating) {
   CHECK(index_buf);  // index_buf must be set before this.
   size_t index_size = numAppendElems * sizeof(StringOffsetT);
   if (num_elems_ == 0) {
@@ -83,9 +82,10 @@ std::shared_ptr<ChunkMetadata> StringNoneEncoder::appendData(
 
   size_t inbuf_size =
       std::min(std::max(index_size, data_size), (size_t)MAX_INPUT_BUF_SIZE);
-  auto inbuf = std::make_unique<int8_t[]>(inbuf_size);
+  auto inbuf = new int8_t[inbuf_size];
+  std::unique_ptr<int8_t[]> gc_inbuf(inbuf);
   for (size_t num_appended = 0; num_appended < numAppendElems;) {
-    StringOffsetT* p = reinterpret_cast<StringOffsetT*>(inbuf.get());
+    StringOffsetT* p = (StringOffsetT*)inbuf;
     size_t i;
     for (i = 0; num_appended < numAppendElems && i < inbuf_size / sizeof(StringOffsetT);
          i++, num_appended++) {
@@ -93,7 +93,7 @@ std::shared_ptr<ChunkMetadata> StringNoneEncoder::appendData(
           last_offset + (*srcData)[replicating ? 0 : num_appended + start_idx].length();
       last_offset = p[i];
     }
-    index_buf->append(inbuf.get(), i * sizeof(StringOffsetT));
+    index_buf->append(inbuf, i * sizeof(StringOffsetT));
   }
 
   for (size_t num_appended = 0; num_appended < numAppendElems;) {
@@ -105,7 +105,7 @@ std::shared_ptr<ChunkMetadata> StringNoneEncoder::appendData(
       if (len > inbuf_size) {
         // for large strings, append on its own
         if (size > 0) {
-          buffer_->append(inbuf.get(), size);
+          buffer_->append(inbuf, size);
         }
         size = 0;
         buffer_->append((int8_t*)(*srcData)[replicating ? 0 : i].data(), len);
@@ -114,7 +114,7 @@ std::shared_ptr<ChunkMetadata> StringNoneEncoder::appendData(
       } else if (size + len > inbuf_size) {
         break;
       }
-      char* dest = reinterpret_cast<char*>(inbuf.get()) + size;
+      char* dest = (char*)inbuf + size;
       if (len > 0) {
         (*srcData)[replicating ? 0 : i].copy(dest, len);
         size += len;
@@ -123,7 +123,7 @@ std::shared_ptr<ChunkMetadata> StringNoneEncoder::appendData(
       }
     }
     if (size > 0) {
-      buffer_->append(inbuf.get(), size);
+      buffer_->append(inbuf, size);
     }
   }
   // make sure buffer_ is flushed even if no new data is appended to it
@@ -133,7 +133,7 @@ std::shared_ptr<ChunkMetadata> StringNoneEncoder::appendData(
   }
 
   num_elems_ += numAppendElems;
-  auto chunk_metadata = std::make_shared<ChunkMetadata>();
-  getMetadata(chunk_metadata);
-  return chunk_metadata;
+  ChunkMetadata chunkMetadata;
+  getMetadata(chunkMetadata);
+  return chunkMetadata;
 }

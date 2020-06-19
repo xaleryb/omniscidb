@@ -307,7 +307,7 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateLiteral(
         Analyzer::ExpressionPtrVector args;
         // defaulting to valid sub-type for convenience
         target_ti.set_subtype(kBOOLEAN);
-        return makeExpr<Analyzer::ArrayExpr>(target_ti, args, true);
+        return makeExpr<Analyzer::ArrayExpr>(target_ti, args, -1, true);
       }
       return makeExpr<Analyzer::Constant>(rex_literal->getTargetType(), true, Datum{0});
     }
@@ -1364,15 +1364,20 @@ Analyzer::ExpressionPtr RelAlgTranslator::translateArrayFunction(
         sql_type.set_precision(first_element_logical_type.get_precision());
       }
 
-      return makeExpr<Analyzer::ArrayExpr>(sql_type, translated_function_args);
+      feature_stash_.setCPUOnlyExecutionRequired();
+      return makeExpr<Analyzer::ArrayExpr>(
+          sql_type, translated_function_args, feature_stash_.getAndBumpArrayExprCount());
     } else {
       // defaulting to valid sub-type for convenience
       sql_type.set_subtype(kBOOLEAN);
-      return makeExpr<Analyzer::ArrayExpr>(sql_type, translated_function_args);
+      return makeExpr<Analyzer::ArrayExpr>(
+          sql_type, translated_function_args, feature_stash_.getAndBumpArrayExprCount());
     }
   } else {
+    feature_stash_.setCPUOnlyExecutionRequired();
     return makeExpr<Analyzer::ArrayExpr>(rex_function->getType(),
-                                         translateFunctionArgs(rex_function));
+                                         translateFunctionArgs(rex_function),
+                                         feature_stash_.getAndBumpArrayExprCount());
   }
 }
 
@@ -1578,16 +1583,6 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateFunction(
     }
   }
   ret_ti.set_notnull(arguments_not_null);
-
-  // set encoding of certain Extension Function return values
-  if (func_resolve(rex_function->getName(),
-                   "reg_hex_horiz_pixel_bin_packed"sv,
-                   "reg_hex_vert_pixel_bin_packed"sv,
-                   "rect_pixel_bin_packed"sv)) {
-    CHECK(ret_ti.get_type() == kINT);
-    ret_ti.set_compression(kENCODING_PACKED_PIXEL_COORD);
-  }
-
   return makeExpr<Analyzer::FunctionOper>(ret_ti, rex_function->getName(), arg_expr_list);
 }
 

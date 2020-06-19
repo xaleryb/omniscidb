@@ -930,8 +930,7 @@ SQLException - if a database access error occurs
     // create a rowset for the result
     TRowSet rowSet = new TRowSet(rowDesc, null, columnsList, true);
 
-    TQueryResult result = new TQueryResult(
-            rowSet, 0, 0, null, null, true, com.omnisci.thrift.server.TQueryType.UNKNOWN);
+    TQueryResult result = new TQueryResult(rowSet, 0, 0, null);
 
     OmniSciResultSet tab = new OmniSciResultSet(result, "GetTables");
     return tab;
@@ -994,8 +993,7 @@ SQLException - if a database access error occurs
     // create a rowset for the result
     TRowSet rowSet = new TRowSet(rowDesc, null, columnsList, true);
 
-    TQueryResult result = new TQueryResult(
-            rowSet, 0, 0, null, null, true, com.omnisci.thrift.server.TQueryType.UNKNOWN);
+    TQueryResult result = new TQueryResult(rowSet, 0, 0, null);
 
     OmniSciResultSet schemas = new OmniSciResultSet(result, "getSchemas");
     return schemas;
@@ -1039,8 +1037,7 @@ SQLException - if a database access error occurs
     // create a rowset for the result
     TRowSet rowSet = new TRowSet(rowDesc, null, columnsList, true);
 
-    TQueryResult result = new TQueryResult(
-            rowSet, 0, 0, null, null, true, com.omnisci.thrift.server.TQueryType.UNKNOWN);
+    TQueryResult result = new TQueryResult(rowSet, 0, 0, null);
 
     OmniSciResultSet tab = new OmniSciResultSet(result, "getTableTypes");
 
@@ -1235,8 +1232,7 @@ each row is a column description Throws: SQLException - if a database access err
     // create a rowset for the result
     TRowSet rowSet = new TRowSet(rowDesc, null, columnsList, true);
 
-    TQueryResult result = new TQueryResult(
-            rowSet, 0, 0, null, null, true, com.omnisci.thrift.server.TQueryType.UNKNOWN);
+    TQueryResult result = new TQueryResult(rowSet, 0, 0, null);
 
     OmniSciResultSet cols = new OmniSciResultSet(result, "getColumns");
     return cols;
@@ -1272,8 +1268,7 @@ each row is a column description Throws: SQLException - if a database access err
       columnsList.add(schemaCol);
     }
     TRowSet rowSet = new TRowSet(rowDesc, null, columnsList, true);
-    TQueryResult result = new TQueryResult(
-            rowSet, 0, 0, null, null, true, com.omnisci.thrift.server.TQueryType.UNKNOWN);
+    TQueryResult result = new TQueryResult(rowSet, 0, 0, null);
     OmniSciResultSet cols = new OmniSciResultSet(result, "getColumns");
     return cols;
   }
@@ -1385,8 +1380,7 @@ each row is a column description Throws: SQLException - if a database access err
     // create a rowset for the result
     TRowSet rowSet = new TRowSet(rowDesc, null, columnsList, true);
 
-    TQueryResult result = new TQueryResult(
-            rowSet, 0, 0, null, null, true, com.omnisci.thrift.server.TQueryType.UNKNOWN);
+    TQueryResult result = new TQueryResult(rowSet, 0, 0, null);
 
     OmniSciResultSet cols = new OmniSciResultSet(result, "getPrivileges");
     return cols;
@@ -1644,8 +1638,7 @@ SQLException - if a database access error occurs
     // create a rowset for the result
     TRowSet rowSet = new TRowSet(rowDesc, null, columnsList, true);
 
-    TQueryResult result = new TQueryResult(
-            rowSet, 0, 0, null, null, true, com.omnisci.thrift.server.TQueryType.UNKNOWN);
+    TQueryResult result = new TQueryResult(rowSet, 0, 0, null);
 
     OmniSciResultSet cols = new OmniSciResultSet(result, "getTypeInfo");
     return cols;

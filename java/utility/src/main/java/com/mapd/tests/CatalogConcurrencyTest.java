@@ -38,11 +38,8 @@ public class CatalogConcurrencyTest {
 
       logger.info("[" + tid + "]"
               + "CREATE " + tableName);
-      user.runSql("CREATE TABLE " + tableName + " (id text);");
+      user.runSql("CREATE TABLE " + tableName + " (id integer);");
       MapdAsserts.assertEqual(true, null != dba.get_table_details(tableName));
-      logger.info("[" + tid + "]"
-              + "INSERT INTO " + tableName);
-      user.runSql("INSERT INTO " + tableName + " VALUES(1);");
       dba.runSql("GRANT SELECT ON TABLE " + tableName + " TO bob;");
 
       logger.info("[" + tid + "]"

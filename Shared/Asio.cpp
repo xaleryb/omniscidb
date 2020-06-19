@@ -14,15 +14,24 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <thread>
 
-#include "Catalog/TableDescriptor.h"
+#include "Asio.h"
+#include "Shared/Logger.h"
 
-namespace foreign_storage {
-void inline validate_non_foreign_table_write(const TableDescriptor* table_descriptor) {
-  if (table_descriptor && table_descriptor->storageType == StorageType::FOREIGN_TABLE) {
-    throw std::runtime_error{
-        "DELETE, INSERT, OR UPDATE commands are not supported for foreign tables."};
-  }
+std::atomic<bool> Asio::running{true};
+boost::asio::io_service Asio::io_context;
+boost::asio::signal_set Asio::signals{Asio::io_context};
+
+void Asio::register_signal_handler(int signum,
+                                   void (*handler)(const boost::system::error_code&,
+                                                   int)) {
+  signals.add(signum);
+  signals.async_wait(handler);
 }
-}  // namespace foreign_storage
+
+void Asio::start() {
+  // start boost signal handler thread
+  std::thread t([] { io_context.run(); });
+  t.detach();
+}

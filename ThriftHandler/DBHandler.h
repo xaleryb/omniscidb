@@ -47,6 +47,7 @@
 #include "QueryEngine/JsonAccessors.h"
 #include "QueryEngine/TableGenerations.h"
 #include "QueryState.h"
+#include "Shared/ConfigResolve.h"
 #include "Shared/GenericTypeUtilities.h"
 #include "Shared/Logger.h"
 #include "Shared/StringTransform.h"
@@ -193,9 +194,6 @@ class DBHandler : public OmniSciIf {
   //         This block must be keep in sync with mapd.thrift and HAHandler.h
   //         Please keep in same order for easy check and cut and paste
   // Important ****
-  static void parser_with_error_handler(
-      const std::string& query_str,
-      std::list<std::unique_ptr<Parser::Stmt>>& parse_trees);
 
   void krb5_connect(TKrb5Session& session,
                     const std::string& token,
@@ -403,9 +401,6 @@ class DBHandler : public OmniSciIf {
                               const std::string& file_name,
                               const TCopyParams& copy_params) override;
   // distributed
-  int64_t query_get_outer_fragment_count(const TSessionId& session,
-                                         const std::string& select_query) override;
-
   void check_table_consistency(TTableMeta& _return,
                                const TSessionId& session,
                                const int32_t table_id) override;
@@ -413,8 +408,7 @@ class DBHandler : public OmniSciIf {
                    const TSessionId& leaf_session,
                    const TSessionId& parent_session,
                    const std::string& query_ra,
-                   const bool just_explain,
-                   const std::vector<int64_t>& outer_fragment_indices) override;
+                   const bool just_explain) override;
   void execute_query_step(TStepResult& _return,
                           const TPendingQuery& pending_query) override;
   void broadcast_serialized_rows(const TSerializedRows& serialized_rows,
@@ -531,11 +525,6 @@ class DBHandler : public OmniSciIf {
   Catalog_Namespace::SessionInfo get_session_copy(const TSessionId& session);
   std::shared_ptr<Catalog_Namespace::SessionInfo> get_session_copy_ptr(
       const TSessionId& session);
-
-  void get_tables_meta_impl(std::vector<TTableMeta>& _return,
-                            QueryStateProxy query_state_proxy,
-                            const Catalog_Namespace::SessionInfo& session_info,
-                            const bool with_table_locks = true);
 
  private:
   std::shared_ptr<Catalog_Namespace::SessionInfo> create_new_session(

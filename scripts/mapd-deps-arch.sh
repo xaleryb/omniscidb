@@ -18,7 +18,6 @@ yay -S \
     doxygen \
     gcc \
     gdal \
-    geos \
     git \
     glbinding \
     go \

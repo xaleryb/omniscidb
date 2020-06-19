@@ -29,10 +29,7 @@ RenderInfo::RenderInfo(
 const Catalog_Namespace::SessionInfo& RenderInfo::getSessionInfo() const {
   CHECK(false);
   static const Catalog_Namespace::SessionInfo tmp(
-      nullptr,
-      Catalog_Namespace::UserMetadata(-1, "", "", false, -1, false),
-      ExecutorDeviceType::CPU,
-      "");
+      nullptr, Catalog_Namespace::UserMetadata(), ExecutorDeviceType::CPU, "");
   return tmp;
 }
 

@@ -59,14 +59,6 @@ class CreateAndDropTableDdlTest : public DBHandlerTestFixture {
                                   const std::string& table_name,
                                   const std::string& columns,
                                   bool if_not_exists = false) {
-    return getCreateTableQuery(table_type, table_name, columns, {}, if_not_exists);
-  }
-
-  std::string getCreateTableQuery(const ddl_utils::TableType table_type,
-                                  const std::string& table_name,
-                                  const std::string& columns,
-                                  std::map<std::string, std::string> options,
-                                  bool if_not_exists = false) {
     std::string query{"CREATE "};
     if (table_type == ddl_utils::TableType::FOREIGN_TABLE) {
       query += "FOREIGN TABLE ";
@@ -77,22 +69,9 @@ class CreateAndDropTableDdlTest : public DBHandlerTestFixture {
       query += "IF NOT EXISTS ";
     }
     query += table_name + columns;
+
     if (table_type == ddl_utils::TableType::FOREIGN_TABLE) {
-      query += " SERVER omnisci_local_csv";
-      options["file_path"] = "'test_file.csv'";
-    }
-    if (!options.empty()) {
-      query += " WITH (";
-      bool is_first = true;
-      for (auto& [key, value] : options) {
-        if (is_first) {
-          is_first = false;
-        } else {
-          query += ", ";
-        }
-        query += key + " = " + value;
-      }
-      query += ")";
+      query += " SERVER omnisci_local_csv WITH (file_path = 'test_file.csv')";
     }
     query += ";";
     return query;
@@ -153,19 +132,17 @@ class CreateTableTest : public CreateAndDropTableDdlTest,
    * @param table_type - table type
    * @param table_name - expected table name
    * @param column_count - expected number of columns in the table
-   * @param user_id - id of user who owns the table. Default value is 0 (admin user id)
-   * @param max_fragment_size - expected maximum table fragment size
+   * @param user_id - id of user who owns the table. Default value of 0 (admin user id) is
    * used
    */
   void assertTableDetails(const TableDescriptor* td,
                           const ddl_utils::TableType table_type,
                           const std::string& table_name,
                           const int column_count,
-                          const int user_id = 0,
-                          const int max_fragment_size = DEFAULT_FRAGMENT_ROWS) {
+                          const int user_id = 0) {
     EXPECT_EQ(table_name, td->tableName);
     EXPECT_EQ(Fragmenter_Namespace::FragmenterType::INSERT_ORDER, td->fragType);
-    EXPECT_EQ(max_fragment_size, td->maxFragRows);
+    EXPECT_EQ(DEFAULT_FRAGMENT_ROWS, td->maxFragRows);
     EXPECT_EQ(DEFAULT_MAX_CHUNK_SIZE, td->maxChunkSize);
     EXPECT_EQ(DEFAULT_PAGE_SIZE, td->fragPageSize);
     EXPECT_EQ(DEFAULT_MAX_ROWS, td->maxRows);
@@ -187,6 +164,7 @@ class CreateTableTest : public CreateAndDropTableDdlTest,
       ASSERT_TRUE(foreign_table->options.find("FILE_PATH") !=
                   foreign_table->options.end());
       EXPECT_EQ("test_file.csv", foreign_table->options.find("FILE_PATH")->second);
+      EXPECT_EQ(size_t(1), foreign_table->options.size());
       EXPECT_EQ("omnisci_local_csv", foreign_table->foreign_server->name);
     } else {
       EXPECT_EQ(column_count + 2, td->nColumns);  // +2 for rowid and $deleted$ columns
@@ -1079,22 +1057,6 @@ TEST_P(CreateTableTest, AuthorizedUser) {
   assertColumnDetails(expected_attributes, column);
 }
 
-TEST_P(CreateTableTest, WithFragmentSizeOption) {
-  sql(getCreateTableQuery(
-      GetParam(), "test_table", "(col1 INTEGER)", {{"fragment_size", "10"}}));
-
-  auto& catalog = getCatalog();
-  auto table = catalog.getMetadataForTable("test_table", false);
-  assertTableDetails(table, GetParam(), "test_table", 1, 0, 10);
-
-  auto column = catalog.getMetadataForColumn(table->tableId, "col1");
-  ColumnAttributes expected_attributes{};
-  expected_attributes.column_name = "col1";
-  expected_attributes.size = 4;
-  expected_attributes.type = kINT;
-  assertColumnDetails(expected_attributes, column);
-}
-
 INSTANTIATE_TEST_SUITE_P(CreateAndDropTableDdlTest,
                          CreateTableTest,
                          testing::Values(ddl_utils::TableType::TABLE,
@@ -1108,7 +1070,8 @@ class NegativePrecisionOrDimensionTest
       public testing::WithParamInterface<std::tuple<ddl_utils::TableType, std::string>> {
 };
 
-TEST_P(NegativePrecisionOrDimensionTest, NegativePrecisionOrDimension) {
+// TODO: Enable after addressing parser memory management issues
+TEST_P(NegativePrecisionOrDimensionTest, DISABLED_NegativePrecisionOrDimension) {
   const auto& [table_type, data_type] = GetParam();
   try {
     sql(getCreateTableQuery(table_type, "test_table", "(col1 " + data_type + "(-1))"));
@@ -1199,34 +1162,6 @@ TEST_F(CreateForeignTableTest, DefaultParquetFileServerName) {
   ASSERT_NE(nullptr, getCatalog().getMetadataForTable("test_foreign_table", false));
 }
 
-TEST_F(CreateForeignTableTest, InvalidTableOption) {
-  std::string query{
-      "CREATE FOREIGN TABLE test_foreign_table(col1 INTEGER) "
-      "SERVER omnisci_local_csv WITH (invalid_option = 'value');"};
-  queryAndAssertException(query,
-                          "Exception: Invalid foreign table option \"INVALID_OPTION\".");
-}
-
-TEST_F(CreateForeignTableTest, WrongTableOptionCharacterSize) {
-  std::string query{
-      "CREATE FOREIGN TABLE test_foreign_table(col1 INTEGER) "
-      "SERVER omnisci_local_csv WITH (delimiter = ',,');"};
-  queryAndAssertException(query,
-                          "Exception: Value of \"DELIMITER\" foreign table option has "
-                          "the wrong number of characters. "
-                          "Expected 1 character(s).");
-}
-
-TEST_F(CreateForeignTableTest, InvalidTableOptionBooleanValue) {
-  std::string query{
-      "CREATE FOREIGN TABLE test_foreign_table(col1 INTEGER) "
-      "SERVER omnisci_local_csv WITH (header = 'value');"};
-  queryAndAssertException(
-      query,
-      "Exception: Invalid boolean value specified for \"HEADER\" foreign table option. "
-      "Value must be either 'true' or 'false'.");
-}
-
 TEST_F(CreateForeignTableTest, FsiDisabled) {
   g_enable_fsi = false;
   std::string query = getCreateTableQuery(
@@ -1295,7 +1230,8 @@ TEST_P(DropTableTest, AuthorizedUser) {
   ASSERT_EQ(nullptr, getCatalog().getMetadataForTable("test_table", false));
 }
 
-TEST_P(CreateTableTest, InvalidSyntax) {
+// TODO: Enable after addressing parser memory management issues
+TEST_P(CreateTableTest, DISABLED_InvalidSyntax) {
   std::string query = getCreateTableQuery(
       GetParam(), "test_table", "(str TEXT ENCODING DICT(8), f FLOAT i INTEGER)");
   try {

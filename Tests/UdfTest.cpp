@@ -103,18 +103,6 @@ inline void run_ddl_statement(const std::string& query) {
   QR::get()->runDDLStatement(query);
 }
 
-CudaMgr_Namespace::NvidiaDeviceArch init_nvidia_device_arch() {
-#ifdef HAVE_CUDA
-  auto cuda_mgr = std::make_unique<CudaMgr_Namespace::CudaMgr>(/*num_gpus=*/0);
-  CHECK(cuda_mgr);
-  return cuda_mgr->getDeviceArch();
-#else
-  return CudaMgr_Namespace::NvidiaDeviceArch::Kepler;
-#endif
-}
-
-CudaMgr_Namespace::NvidiaDeviceArch g_device_arch = init_nvidia_device_arch();
-
 class SQLTestEnv : public ::testing::Environment {
  public:
   void SetUp() override {
@@ -124,8 +112,7 @@ class SQLTestEnv : public ::testing::Environment {
     }
 
     std::vector<std::string> udf_compiler_options{std::string("-D UDF_COMPILER_OPTION")};
-    UdfCompiler compiler(
-        udf_file.string(), g_device_arch, std::string(""), udf_compiler_options);
+    UdfCompiler compiler(udf_file.string(), std::string(""), udf_compiler_options);
     auto compile_result = compiler.compileUdf();
     EXPECT_EQ(compile_result, 0);
 
@@ -182,7 +169,7 @@ class UDFCompilerTest : public ::testing::Test {
 };
 
 TEST_F(UDFCompilerTest, CompileTest) {
-  UdfCompiler compiler(getUdfFileName(), g_device_arch);
+  UdfCompiler compiler(getUdfFileName());
   auto compile_result = compiler.compileUdf();
 
   EXPECT_EQ(compile_result, 0);
@@ -191,7 +178,7 @@ TEST_F(UDFCompilerTest, CompileTest) {
 }
 
 TEST_F(UDFCompilerTest, CompilerOptionTest) {
-  UdfCompiler compiler(getUdfFileName(), g_device_arch);
+  UdfCompiler compiler(getUdfFileName());
   auto compile_result = compiler.compileUdf();
 
   EXPECT_EQ(compile_result, 0);
@@ -206,15 +193,14 @@ TEST_F(UDFCompilerTest, CompilerOptionTest) {
 }
 
 TEST_F(UDFCompilerTest, CompilerPathTest) {
-  UdfCompiler compiler(
-      getUdfFileName(), g_device_arch, llvm::sys::findProgramByName("clang++").get());
+  UdfCompiler compiler(getUdfFileName(), llvm::sys::findProgramByName("clang++").get());
   auto compile_result = compiler.compileUdf();
 
   EXPECT_EQ(compile_result, 0);
 }
 
 TEST_F(UDFCompilerTest, CalciteRegistration) {
-  UdfCompiler compiler(getUdfFileName(), g_device_arch);
+  UdfCompiler compiler(getUdfFileName());
   auto compile_result = compiler.compileUdf();
 
   ASSERT_EQ(compile_result, 0);
@@ -241,7 +227,7 @@ TEST_F(UDFCompilerTest, CalciteRegistration) {
 }
 
 TEST_F(UDFCompilerTest, UdfQuery) {
-  UdfCompiler compiler(getUdfFileName(), g_device_arch);
+  UdfCompiler compiler(getUdfFileName());
   auto compile_result = compiler.compileUdf();
 
   ASSERT_EQ(compile_result, 0);

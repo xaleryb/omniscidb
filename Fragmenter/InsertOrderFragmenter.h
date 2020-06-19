@@ -26,7 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "DataMgr/Chunk/Chunk.h"
+#include "Chunk/Chunk.h"
 #include "DataMgr/MemoryLevel.h"
 #include "FragmentDefaultValues.h"
 #include "Fragmenter/AbstractFragmenter.h"

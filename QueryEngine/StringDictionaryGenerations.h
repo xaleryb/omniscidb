@@ -17,8 +17,6 @@
 #ifndef QUERYENGINE_STRINGDICTIONARYGENERATION_H
 #define QUERYENGINE_STRINGDICTIONARYGENERATION_H
 
-#include <unistd.h>
-#include <cstdint>
 #include <unordered_map>
 
 class StringDictionaryGenerations {

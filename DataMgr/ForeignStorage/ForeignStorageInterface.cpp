@@ -94,7 +94,7 @@ void ForeignStorageBufferMgr::fetchBuffer(const ChunkKey& key,
 }
 
 void ForeignStorageBufferMgr::getChunkMetadataVecForKeyPrefix(
-    ChunkMetadataVector& chunkMetadataVec,
+    std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec,
     const ChunkKey& keyPrefix) {
   mapd_unique_lock<mapd_shared_mutex> chunk_index_write_lock(
       chunk_index_mutex_);  // is this guarding the right structure?  it look slike we
@@ -119,16 +119,14 @@ void ForeignStorageBufferMgr::getChunkMetadataVecForKeyPrefix(
         subkey[4] = 2;
         auto& index_buf = *(chunk_index_.find(subkey)->second);
         auto bs = index_buf.size() / index_buf.sql_type.get_size();
-        auto chunk_metadata =
-            std::make_shared<ChunkMetadata>(type, size, bs, ChunkStats{});
-        chunkMetadataVec.emplace_back(chunk_key, chunk_metadata);
+        ChunkMetadata m{type, size, bs, ChunkStats{}};
+        chunkMetadataVec.emplace_back(chunk_key, m);
       }
     } else {
       const auto& buffer = *chunk_it->second;
-      auto chunk_metadata = std::make_shared<ChunkMetadata>();
-      chunk_metadata->sqlType = buffer.sql_type;
-      buffer.encoder->getMetadata(chunk_metadata);
-      chunkMetadataVec.emplace_back(chunk_key, chunk_metadata);
+      ChunkMetadata m{buffer.sql_type};
+      buffer.encoder->getMetadata(m);
+      chunkMetadataVec.emplace_back(chunk_key, m);
     }
     chunk_it++;
   }

@@ -77,7 +77,7 @@ class FsiSchemaTest : public testing::Test {
 
     ASSERT_GT(foreign_server->id, 0);
     ASSERT_EQ(server_name, foreign_server->name);
-    ASSERT_EQ(data_wrapper, foreign_server->data_wrapper_type);
+    ASSERT_EQ(data_wrapper, foreign_server->data_wrapper.name);
     ASSERT_EQ(user_id, foreign_server->user_id);
 
     ASSERT_TRUE(
@@ -213,12 +213,11 @@ TEST_F(DefaultForeignServersTest, DefaultServersAreCreatedWhenFsiIsEnabled) {
 
   assertExpectedDefaultServer(catalog.get(),
                               "omnisci_local_csv",
-                              foreign_storage::DataWrapperType::CSV,
+                              foreign_storage::DataWrapper::CSV_WRAPPER_NAME,
                               OMNISCI_ROOT_USER_ID);
-
   assertExpectedDefaultServer(catalog.get(),
                               "omnisci_local_parquet",
-                              foreign_storage::DataWrapperType::PARQUET,
+                              foreign_storage::DataWrapper::PARQUET_WRAPPER_NAME,
                               OMNISCI_ROOT_USER_ID);
 }
 

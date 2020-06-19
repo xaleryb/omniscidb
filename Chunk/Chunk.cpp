@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 OmniSci, Inc.
+ * Copyright 2017 MapD Technologies, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,10 @@
  * @author Wei Hong <wei@mapd.com>
  */
 
-#include "DataMgr/Chunk/Chunk.h"
-#include "DataMgr/ArrayNoneEncoder.h"
-#include "DataMgr/FixedLengthArrayNoneEncoder.h"
-#include "DataMgr/StringNoneEncoder.h"
+#include "Chunk.h"
+#include "../DataMgr/ArrayNoneEncoder.h"
+#include "../DataMgr/FixedLengthArrayNoneEncoder.h"
+#include "../DataMgr/StringNoneEncoder.h"
 
 namespace Chunk_NS {
 std::shared_ptr<Chunk> Chunk::getChunk(const ColumnDescriptor* cd,
@@ -41,8 +41,7 @@ bool Chunk::isChunkOnDevice(DataMgr* data_mgr,
                             const ChunkKey& key,
                             const MemoryLevel mem_level,
                             const int device_id) {
-  if (column_desc_->columnType.is_varlen() &&
-      !column_desc_->columnType.is_fixlen_array()) {
+  if (column_desc->columnType.is_varlen() && !column_desc->columnType.is_fixlen_array()) {
     ChunkKey subKey = key;
     ChunkKey indexKey(subKey);
     indexKey.push_back(1);
@@ -61,49 +60,48 @@ void Chunk::getChunkBuffer(DataMgr* data_mgr,
                            const int device_id,
                            const size_t num_bytes,
                            const size_t num_elems) {
-  if (column_desc_->columnType.is_varlen() &&
-      !column_desc_->columnType.is_fixlen_array()) {
+  if (column_desc->columnType.is_varlen() && !column_desc->columnType.is_fixlen_array()) {
     ChunkKey subKey = key;
-    subKey.push_back(1);  // 1 for the main buffer_
-    buffer_ = data_mgr->getChunkBuffer(subKey, mem_level, device_id, num_bytes);
+    subKey.push_back(1);  // 1 for the main buffer
+    buffer = data_mgr->getChunkBuffer(subKey, mem_level, device_id, num_bytes);
     subKey.pop_back();
-    subKey.push_back(2);  // 2 for the index buffer_
-    index_buf_ = data_mgr->getChunkBuffer(
+    subKey.push_back(2);  // 2 for the index buffer
+    index_buf = data_mgr->getChunkBuffer(
         subKey,
         mem_level,
         device_id,
         (num_elems + 1) * sizeof(StringOffsetT));  // always record n+1 offsets so string
                                                    // length can be calculated
-    switch (column_desc_->columnType.get_type()) {
+    switch (column_desc->columnType.get_type()) {
       case kARRAY: {
-        auto array_encoder = dynamic_cast<ArrayNoneEncoder*>(buffer_->encoder.get());
-        CHECK(array_encoder);
-        array_encoder->setIndexBuffer(index_buf_);
+        ArrayNoneEncoder* array_encoder =
+            dynamic_cast<ArrayNoneEncoder*>(buffer->encoder.get());
+        array_encoder->set_index_buf(index_buf);
         break;
       }
       case kTEXT:
       case kVARCHAR:
       case kCHAR: {
-        CHECK_EQ(kENCODING_NONE, column_desc_->columnType.get_compression());
-        auto str_encoder = dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
-        CHECK(str_encoder);
-        str_encoder->setIndexBuffer(index_buf_);
+        CHECK_EQ(kENCODING_NONE, column_desc->columnType.get_compression());
+        StringNoneEncoder* str_encoder =
+            dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
+        str_encoder->set_index_buf(index_buf);
         break;
       }
       case kPOINT:
       case kLINESTRING:
       case kPOLYGON:
       case kMULTIPOLYGON: {
-        auto str_encoder = dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
-        CHECK(str_encoder);
-        str_encoder->setIndexBuffer(index_buf_);
+        StringNoneEncoder* str_encoder =
+            dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
+        str_encoder->set_index_buf(index_buf);
         break;
       }
       default:
-        UNREACHABLE();
+        CHECK(false);
     }
   } else {
-    buffer_ = data_mgr->getChunkBuffer(key, mem_level, device_id, num_bytes);
+    buffer = data_mgr->getChunkBuffer(key, mem_level, device_id, num_bytes);
   }
 }
 
@@ -112,16 +110,15 @@ void Chunk::createChunkBuffer(DataMgr* data_mgr,
                               const MemoryLevel mem_level,
                               const int device_id,
                               const size_t page_size) {
-  if (column_desc_->columnType.is_varlen() &&
-      !column_desc_->columnType.is_fixlen_array()) {
+  if (column_desc->columnType.is_varlen() && !column_desc->columnType.is_fixlen_array()) {
     ChunkKey subKey = key;
-    subKey.push_back(1);  // 1 for the main buffer_
-    buffer_ = data_mgr->createChunkBuffer(subKey, mem_level, device_id, page_size);
+    subKey.push_back(1);  // 1 for the main buffer
+    buffer = data_mgr->createChunkBuffer(subKey, mem_level, device_id, page_size);
     subKey.pop_back();
-    subKey.push_back(2);  // 2 for the index buffer_
-    index_buf_ = data_mgr->createChunkBuffer(subKey, mem_level, device_id, page_size);
+    subKey.push_back(2);  // 2 for the index buffer
+    index_buf = data_mgr->createChunkBuffer(subKey, mem_level, device_id, page_size);
   } else {
-    buffer_ = data_mgr->createChunkBuffer(key, mem_level, device_id, page_size);
+    buffer = data_mgr->createChunkBuffer(key, mem_level, device_id, page_size);
   }
 }
 
@@ -130,26 +127,26 @@ size_t Chunk::getNumElemsForBytesInsertData(const DataBlockPtr& src_data,
                                             const size_t start_idx,
                                             const size_t byte_limit,
                                             const bool replicating) {
-  CHECK(column_desc_->columnType.is_varlen());
-  switch (column_desc_->columnType.get_type()) {
+  CHECK(column_desc->columnType.is_varlen());
+  switch (column_desc->columnType.get_type()) {
     case kARRAY: {
-      if (column_desc_->columnType.get_size() > 0) {
+      if (column_desc->columnType.get_size() > 0) {
         FixedLengthArrayNoneEncoder* array_encoder =
-            dynamic_cast<FixedLengthArrayNoneEncoder*>(buffer_->encoder.get());
+            dynamic_cast<FixedLengthArrayNoneEncoder*>(buffer->encoder.get());
         return array_encoder->getNumElemsForBytesInsertData(
             src_data.arraysPtr, start_idx, num_elems, byte_limit, replicating);
       }
       ArrayNoneEncoder* array_encoder =
-          dynamic_cast<ArrayNoneEncoder*>(buffer_->encoder.get());
+          dynamic_cast<ArrayNoneEncoder*>(buffer->encoder.get());
       return array_encoder->getNumElemsForBytesInsertData(
           src_data.arraysPtr, start_idx, num_elems, byte_limit, replicating);
     }
     case kTEXT:
     case kVARCHAR:
     case kCHAR: {
-      CHECK_EQ(kENCODING_NONE, column_desc_->columnType.get_compression());
+      CHECK_EQ(kENCODING_NONE, column_desc->columnType.get_compression());
       StringNoneEncoder* str_encoder =
-          dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
+          dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
       return str_encoder->getNumElemsForBytesInsertData(
           src_data.stringsPtr, start_idx, num_elems, byte_limit, replicating);
     }
@@ -158,7 +155,7 @@ size_t Chunk::getNumElemsForBytesInsertData(const DataBlockPtr& src_data,
     case kPOLYGON:
     case kMULTIPOLYGON: {
       StringNoneEncoder* str_encoder =
-          dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
+          dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
       return str_encoder->getNumElemsForBytesInsertData(
           src_data.stringsPtr, start_idx, num_elems, byte_limit, replicating);
     }
@@ -168,22 +165,22 @@ size_t Chunk::getNumElemsForBytesInsertData(const DataBlockPtr& src_data,
   }
 }
 
-std::shared_ptr<ChunkMetadata> Chunk::appendData(DataBlockPtr& src_data,
-                                                 const size_t num_elems,
-                                                 const size_t start_idx,
-                                                 const bool replicating) {
-  const auto& ti = column_desc_->columnType;
+ChunkMetadata Chunk::appendData(DataBlockPtr& src_data,
+                                const size_t num_elems,
+                                const size_t start_idx,
+                                const bool replicating) {
+  const auto& ti = column_desc->columnType;
   if (ti.is_varlen()) {
     switch (ti.get_type()) {
       case kARRAY: {
         if (ti.get_size() > 0) {
           FixedLengthArrayNoneEncoder* array_encoder =
-              dynamic_cast<FixedLengthArrayNoneEncoder*>(buffer_->encoder.get());
+              dynamic_cast<FixedLengthArrayNoneEncoder*>(buffer->encoder.get());
           return array_encoder->appendData(
               src_data.arraysPtr, start_idx, num_elems, replicating);
         }
         ArrayNoneEncoder* array_encoder =
-            dynamic_cast<ArrayNoneEncoder*>(buffer_->encoder.get());
+            dynamic_cast<ArrayNoneEncoder*>(buffer->encoder.get());
         return array_encoder->appendData(
             src_data.arraysPtr, start_idx, num_elems, replicating);
       }
@@ -192,7 +189,7 @@ std::shared_ptr<ChunkMetadata> Chunk::appendData(DataBlockPtr& src_data,
       case kCHAR: {
         CHECK_EQ(kENCODING_NONE, ti.get_compression());
         StringNoneEncoder* str_encoder =
-            dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
+            dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
         return str_encoder->appendData(
             src_data.stringsPtr, start_idx, num_elems, replicating);
       }
@@ -201,7 +198,7 @@ std::shared_ptr<ChunkMetadata> Chunk::appendData(DataBlockPtr& src_data,
       case kPOLYGON:
       case kMULTIPOLYGON: {
         StringNoneEncoder* str_encoder =
-            dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
+            dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
         return str_encoder->appendData(
             src_data.stringsPtr, start_idx, num_elems, replicating);
       }
@@ -209,36 +206,35 @@ std::shared_ptr<ChunkMetadata> Chunk::appendData(DataBlockPtr& src_data,
         CHECK(false);
     }
   }
-  return buffer_->encoder->appendData(src_data.numbersPtr, num_elems, ti, replicating);
+  return buffer->encoder->appendData(src_data.numbersPtr, num_elems, ti, replicating);
 }
 
-void Chunk::unpinBuffer() {
-  if (buffer_) {
-    buffer_->unPin();
+void Chunk::unpin_buffer() {
+  if (buffer != nullptr) {
+    buffer->unPin();
   }
-  if (index_buf_) {
-    index_buf_->unPin();
+  if (index_buf != nullptr) {
+    index_buf->unPin();
   }
 }
 
-void Chunk::initEncoder() {
-  buffer_->initEncoder(column_desc_->columnType);
-  if (column_desc_->columnType.is_varlen() &&
-      !column_desc_->columnType.is_fixlen_array()) {
-    switch (column_desc_->columnType.get_type()) {
+void Chunk::init_encoder() {
+  buffer->initEncoder(column_desc->columnType);
+  if (column_desc->columnType.is_varlen() && !column_desc->columnType.is_fixlen_array()) {
+    switch (column_desc->columnType.get_type()) {
       case kARRAY: {
         ArrayNoneEncoder* array_encoder =
-            dynamic_cast<ArrayNoneEncoder*>(buffer_->encoder.get());
-        array_encoder->setIndexBuffer(index_buf_);
+            dynamic_cast<ArrayNoneEncoder*>(buffer->encoder.get());
+        array_encoder->set_index_buf(index_buf);
         break;
       }
       case kTEXT:
       case kVARCHAR:
       case kCHAR: {
-        CHECK_EQ(kENCODING_NONE, column_desc_->columnType.get_compression());
+        CHECK_EQ(kENCODING_NONE, column_desc->columnType.get_compression());
         StringNoneEncoder* str_encoder =
-            dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
-        str_encoder->setIndexBuffer(index_buf_);
+            dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
+        str_encoder->set_index_buf(index_buf);
         break;
       }
       case kPOINT:
@@ -246,8 +242,8 @@ void Chunk::initEncoder() {
       case kPOLYGON:
       case kMULTIPOLYGON: {
         StringNoneEncoder* str_encoder =
-            dynamic_cast<StringNoneEncoder*>(buffer_->encoder.get());
-        str_encoder->setIndexBuffer(index_buf_);
+            dynamic_cast<StringNoneEncoder*>(buffer->encoder.get());
+        str_encoder->set_index_buf(index_buf);
         break;
       }
       default:
@@ -256,24 +252,24 @@ void Chunk::initEncoder() {
   }
 }
 
-ChunkIter Chunk::begin_iterator(const std::shared_ptr<ChunkMetadata>& chunk_metadata,
+ChunkIter Chunk::begin_iterator(const ChunkMetadata& chunk_metadata,
                                 int start_idx,
                                 int skip) const {
   ChunkIter it;
-  it.type_info = column_desc_->columnType;
+  it.type_info = column_desc->columnType;
   it.skip = skip;
-  it.skip_size = column_desc_->columnType.get_size();
+  it.skip_size = column_desc->columnType.get_size();
   if (it.skip_size < 0) {  // if it's variable length
     it.current_pos = it.start_pos =
-        index_buf_->getMemoryPtr() + start_idx * sizeof(StringOffsetT);
-    it.end_pos = index_buf_->getMemoryPtr() + index_buf_->size() - sizeof(StringOffsetT);
-    it.second_buf = buffer_->getMemoryPtr();
+        index_buf->getMemoryPtr() + start_idx * sizeof(StringOffsetT);
+    it.end_pos = index_buf->getMemoryPtr() + index_buf->size() - sizeof(StringOffsetT);
+    it.second_buf = buffer->getMemoryPtr();
   } else {
-    it.current_pos = it.start_pos = buffer_->getMemoryPtr() + start_idx * it.skip_size;
-    it.end_pos = buffer_->getMemoryPtr() + buffer_->size();
+    it.current_pos = it.start_pos = buffer->getMemoryPtr() + start_idx * it.skip_size;
+    it.end_pos = buffer->getMemoryPtr() + buffer->size();
     it.second_buf = nullptr;
   }
-  it.num_elems = chunk_metadata->numElements;
+  it.num_elems = chunk_metadata.numElements;
   return it;
 }
 }  // namespace Chunk_NS

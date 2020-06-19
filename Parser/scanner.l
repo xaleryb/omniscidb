@@ -12,7 +12,6 @@
 #include "parser.h"
 
 #define yylval (dynamic_cast<SQLLexer*>(this)->yylval)
-#define parsed_str_tokens_ (dynamic_cast<SQLLexer*>(this)->parsed_str_tokens_)
 
 using namespace std;
 
@@ -176,19 +175,16 @@ WORK          TOK(WORK)
 [;] { BEGIN 0; return yytext[0]; }
 
   /* validate type */
-"CLUSTER"	{ yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext); TOK(CLUSTER) }
+"CLUSTER"	{ yylval.stringval = new std::string(yytext); TOK(CLUSTER) }
 
 	/* names */
-[A-Za-z_][A-Za-z0-9\$_]*	{
-  yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext);
-  TOK(NAME)
-}
+[A-Za-z_][A-Za-z0-9\$_]*	{ yylval.stringval = new std::string(yytext); TOK(NAME) }
 
   /* names with dashes */
-[A-Za-z_][A-Za-z0-9\$_\-]*	{ yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext); TOK(DASHEDNAME) }
+[A-Za-z_][A-Za-z0-9\$_\-]*	{ yylval.stringval = new std::string(yytext); TOK(DASHEDNAME) }
 
 	/* emails */
-([^[:space:]\"]+|\".+\")@[A-Za-z0-9][A-Za-z0-9\-\.]*\.[A-Za-z]+	{ yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext); TOK(EMAIL) }
+([^[:space:]\"]+|\".+\")@[A-Za-z0-9][A-Za-z0-9\-\.]*\.[A-Za-z]+	{ yylval.stringval = new std::string(yytext); TOK(EMAIL) }
 
 	/* parameters */
 ":"[A-Za-z][A-Za-z0-9_]*	TOK(PARAMETER)
@@ -198,12 +194,12 @@ WORK          TOK(WORK)
 -?[0-9]+ { yylval.intval = atoll(yytext); TOK(INTNUM) }
 -?[0-9]+"."[0-9]* |
 -?"."[0-9]*		{
-		yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext);
+		yylval.stringval = new std::string(yytext);
     // numeric and decimal precisions cannot exceed 19
-    if (yylval.stringval->get()->length() < 20) {
+    if (yylval.stringval->length() < 20) {
             return SQLParser::FIXEDNUM;
     }
-    delete yylval.stringval->release();
+    delete yylval.stringval;
     // otherwise return as double
     yylval.doubleval = std::stod(yytext);
     return SQLParser::DOUBLE;
@@ -217,8 +213,8 @@ WORK          TOK(WORK)
 	/* strings */
 <STATE_CREATE_AS>(.|\n|\r)+[ \n\t\r]+/([Ww][Ii][Tt]) {
     int len = yyleng;
-    yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext, len);
-    boost::trim(*yylval.stringval->get());
+    yylval.stringval = new std::string(yytext, len);
+    boost::trim(*yylval.stringval);
     
     BEGIN 0;
     return SQLParser::SELECTSTRING;
@@ -232,8 +228,8 @@ WORK          TOK(WORK)
     if (boost::regex_search(tmp, what, keyword)) {
       REJECT;
     } else {
-      yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext, len);
-      boost::trim(*yylval.stringval->get());
+      yylval.stringval = new std::string(yytext, len);
+      boost::trim(*yylval.stringval);
       BEGIN 0;
       return SQLParser::SELECTSTRING;
     }
@@ -247,8 +243,8 @@ WORK          TOK(WORK)
     if (boost::regex_search(tmp, what, keyword)) {
       REJECT;
     } else {
-      yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext, len);
-      boost::trim(*yylval.stringval->get());
+      yylval.stringval = new std::string(yytext, len);
+      boost::trim(*yylval.stringval);
       BEGIN 0;
       return SQLParser::SELECTSTRING;
     }
@@ -257,10 +253,10 @@ WORK          TOK(WORK)
 #~#.*#~# {
 		int len = yyleng - 6;
 		if (len > 0) {
-			yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, yytext + 3, len);
-			boost::trim(*yylval.stringval->get());
+			yylval.stringval = new std::string(yytext + 3, len);
+			boost::trim(*yylval.stringval);
 		} else {
-			yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, "");
+			yylval.stringval = new std::string("");
 		}
 		return SQLParser::FWDSTR;
 	}
@@ -306,7 +302,7 @@ WORK          TOK(WORK)
       }
       escape_removed[j] = '\0';
 
-      yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, std::string{escape_removed});
+      yylval.stringval = new std::string(escape_removed);
       return SQLParser::STRING;
     }
     else
@@ -359,7 +355,7 @@ WORK          TOK(WORK)
       }
       escape_removed[j] = '\0';
 
-      yylval.stringval = TrackedPtr<std::string>::make(parsed_str_tokens_, std::string{escape_removed});
+      yylval.stringval = new std::string(escape_removed);
       return SQLParser::QUOTED_IDENTIFIER;
     }
     else

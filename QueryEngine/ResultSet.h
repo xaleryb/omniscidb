@@ -25,8 +25,8 @@
 #ifndef QUERYENGINE_RESULTSET_H
 #define QUERYENGINE_RESULTSET_H
 
+#include "../Chunk/Chunk.h"
 #include "CardinalityEstimator.h"
-#include "DataMgr/Chunk/Chunk.h"
 #include "ResultSetBufferAccessors.h"
 #include "TargetValue.h"
 
@@ -828,7 +828,7 @@ class ResultSet {
   mutable size_t fetched_so_far_;
   size_t drop_first_;
   size_t keep_first_;
-  std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
+  const std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
   std::vector<uint32_t> permutation_;
   int64_t queue_time_ms_;
   int64_t render_time_ms_;
@@ -947,6 +947,4 @@ GroupValueInfo get_group_value_reduction(int64_t* groups_buffer,
                                          const size_t that_entry_count,
                                          const uint32_t row_size_quad);
 
-std::vector<int64_t> initialize_target_values_for_storage(
-    const std::vector<TargetInfo>& targets);
 #endif  // QUERYENGINE_RESULTSET_H

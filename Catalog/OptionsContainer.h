@@ -29,27 +29,15 @@ namespace foreign_storage {
 struct OptionsContainer {
   std::map<std::string, std::string, std::less<>> options;
 
-  OptionsContainer() {}
-
-  OptionsContainer(const std::map<std::string, std::string, std::less<>>& options)
-      : options(options) {}
-
-  OptionsContainer(const std::string& options_str) { populateOptionsMap(options_str); }
-
   void populateOptionsMap(const rapidjson::Value& ddl_options) {
     CHECK(ddl_options.IsObject());
     for (const auto& member : ddl_options.GetObject()) {
-      std::string key = to_upper(member.name.GetString());
-      std::string value = member.value.GetString();
-      options[key] = value;
+      options[to_upper(member.name.GetString())] = member.value.GetString();
     }
   }
 
-  void populateOptionsMap(const std::string& options_json, bool clear = false) {
+  void populateOptionsMap(const std::string& options_json) {
     CHECK(!options_json.empty());
-    if (clear) {
-      options.clear();
-    }
     rapidjson::Document options;
     options.Parse(options_json);
     populateOptionsMap(options);

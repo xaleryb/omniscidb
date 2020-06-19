@@ -264,7 +264,6 @@ popd
 
 # Geo Support
 install_gdal
-install_geos
 
 # TBB
 install_tbb static

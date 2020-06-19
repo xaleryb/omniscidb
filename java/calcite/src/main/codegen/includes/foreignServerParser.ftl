@@ -50,60 +50,6 @@ SqlCreate SqlCreateServer(Span s, boolean replace) :
 }
 
 /*
- * Alter an existing foreign server using one of four variants with the
- * following syntax:
- *
- * ALTER SERVER <server_name> [ WITH (<param> = <value> [, ... ] ) ]
- * ALTER SERVER <server_name> OWNER TO <new_owner>
- * ALTER SERVER <server_name> RENAME TO <new_server_name>
- * ALTER SERVER <server_name> SET FOREIGN DATA WRAPPER <foreign_data_wrapper_name>
- */
-SqlDdl SqlAlterServer(Span s) :
-{
-    SqlAlterServer.Builder sqlAlterServerBuilder = new SqlAlterServer.Builder();
-    SqlIdentifier serverName;
-    SqlIdentifier sqlIdentifier;
-}
-{
-    <ALTER> <SERVER>
-    serverName=CompoundIdentifier()
-    {
-        sqlAlterServerBuilder.setServerName(serverName.toString());
-    }
-    (
-        <OWNER> <TO> 
-        sqlIdentifier=CompoundIdentifier()
-        { 
-            sqlAlterServerBuilder.setNewOwner(sqlIdentifier.toString());
-            sqlAlterServerBuilder.setAlterType(SqlAlterServer.AlterType.CHANGE_OWNER);
-        }
-    |
-        <RENAME> <TO>
-        sqlIdentifier=CompoundIdentifier()
-        {
-            sqlAlterServerBuilder.setNewServerName(sqlIdentifier.toString());
-            sqlAlterServerBuilder.setAlterType(SqlAlterServer.AlterType.RENAME_SERVER);
-        }
-    |
-        <SET> <FOREIGN> <DATA> <WRAPPER>
-        sqlIdentifier=CompoundIdentifier()
-        {
-            sqlAlterServerBuilder.setDataWrapper(sqlIdentifier.toString());
-            sqlAlterServerBuilder.setAlterType(SqlAlterServer.AlterType.SET_DATA_WRAPPER);
-        }
-    |
-        Options(sqlAlterServerBuilder) 
-        {
-            sqlAlterServerBuilder.setAlterType(SqlAlterServer.AlterType.SET_OPTIONS);
-        }
-    )
-    {
-        sqlAlterServerBuilder.setPos(s.end(this));
-        return sqlAlterServerBuilder.build();
-    }
-}
-
-/*
  * Drop a foreign server using the following syntax:
  *
  * DROP SERVER [ IF EXISTS ] <server_name>
@@ -121,24 +67,6 @@ SqlDrop SqlDropServer(Span s, boolean replace) :
         return new SqlDropServer(s.end(this), ifExists, serverName.toString());
     }
 }
-
-SqlDdl SqlShowForeignServers(Span s) :
-{
-    SqlShowForeignServers.Builder sqlShowForeignServersBuilder = new SqlShowForeignServers.Builder();
-}
-{
-    <SHOW> <SERVERS> 
-    
-    [
-        WhereClause(sqlShowForeignServersBuilder)
-    ]
-
-    {
-        sqlShowForeignServersBuilder.setPos(s.end(this));
-        return sqlShowForeignServersBuilder.build();
-    }
-}
-
 
 /*
  * Parse the IF NOT EXISTS keyphrase.
@@ -169,29 +97,29 @@ boolean IfExistsOpt() :
 }
 
 /*
- * Parse Server options.
+ * Parse the IF NOT EXISTS keyphrase.
  *
  * WITH ( <option> = <value> [, ... ] )
  */
-void Options(SqlOptionsBuilder sqlOptionsBuilder) :
+void Options(SqlCreateServer.Builder sqlCreateServerBuilder) :
 {
 }
 {
     <WITH> <LPAREN>
-    Option(sqlOptionsBuilder)
+    Option(sqlCreateServerBuilder)
     (
         <COMMA>
-        Option(sqlOptionsBuilder)
+        Option(sqlCreateServerBuilder)
     )*
     <RPAREN>
 }
 
 /*
- * Parse a Server option.
+ * Parse the IF NOT EXISTS keyphrase.
  *
- * <option> = <value>
+ * WITH ( <option> = <value> [, ... ] )
  */
-void Option(SqlOptionsBuilder sqlOptionsBuilder) :
+void Option(SqlCreateServer.Builder sqlCreateServerBuilder) :
 {
     final SqlIdentifier attribute;
     final SqlNode value;
@@ -201,38 +129,6 @@ void Option(SqlOptionsBuilder sqlOptionsBuilder) :
     <EQ>
     value = Literal()
     {
-        sqlOptionsBuilder.addOption(attribute.toString(), value.toString());
-    }
-}
-
-void WhereClause(SqlShowForeignServers.Builder sqlShowForeignServersBuilder) :
-{
-    SqlFilter.Chain chain;
-}
-{
-    <WHERE>
-    Predicate(sqlShowForeignServersBuilder, null)
-    (
-        (
-        <AND> { chain = SqlFilter.Chain.AND; } | <OR> { chain = SqlFilter.Chain.OR; }
-        )
-        Predicate(sqlShowForeignServersBuilder, chain)
-    )*
-}
-
-void Predicate(SqlShowForeignServers.Builder sqlShowForeignServersBuilder, SqlFilter.Chain chain) :
-{
-    final SqlIdentifier attribute;
-    final SqlFilter.Operation operation;
-    final SqlNode value;    
-}
-{ 
-    attribute=CompoundIdentifier()
-    (
-        <EQ> { operation = SqlFilter.Operation.EQUALS; } | <LIKE> { operation = SqlFilter.Operation.LIKE; }
-    )
-    value = Literal()
-    {
-        sqlShowForeignServersBuilder.addFilter(attribute.toString(), value.toString(), operation, chain);
+        sqlCreateServerBuilder.addOption(attribute.toString(), value.toString());
     }
 }

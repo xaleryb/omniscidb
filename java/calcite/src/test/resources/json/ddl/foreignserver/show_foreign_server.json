@@ -1,6 +1,0 @@
-{
-  "statementType": "DDL",
-  "payload": {
-    "command": "SHOW_SERVERS"
-  }
-}

@@ -23,7 +23,6 @@
 
 namespace foreign_storage {
 struct ForeignTable : public TableDescriptor, public OptionsContainer {
-  const ForeignServer* foreign_server;
-  static constexpr std::array<char const*, 1> supported_options{"FRAGMENT_SIZE"};
+  ForeignServer* foreign_server;
 };
 }  // namespace foreign_storage

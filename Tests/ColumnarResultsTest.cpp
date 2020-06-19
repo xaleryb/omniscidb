@@ -16,17 +16,14 @@
 
 #include "QueryEngine/ColumnarResults.h"
 #include "QueryEngine/Descriptors/RowSetMemoryOwner.h"
-#include "QueryEngine/Execute.h"
 #include "QueryEngine/ResultSet.h"
 #include "QueryEngine/TargetValue.h"
+#include "ResultSetTestUtils.h"
 #include "Shared/Logger.h"
 #include "Shared/TargetInfo.h"
-#include "Tests/ResultSetTestUtils.h"
-#include "Tests/TestHelpers.h"
+#include "TestHelpers.h"
 
 #include <gtest/gtest.h>
-
-extern bool g_is_test_env;
 
 class ColumnarResultsTester : public ColumnarResults {
  public:
@@ -69,8 +66,7 @@ void test_columnar_conversion(const std::vector<TargetInfo>& target_infos,
                               const QueryMemoryDescriptor& query_mem_desc,
                               const size_t non_empty_step_size,
                               const bool is_parallel_conversion = false) {
-  auto row_set_mem_owner =
-      std::make_shared<RowSetMemoryOwner>(Executor::getArenaBlockSize());
+  auto row_set_mem_owner = std::make_shared<RowSetMemoryOwner>();
   ResultSet result_set(
       target_infos, ExecutorDeviceType::CPU, query_mem_desc, row_set_mem_owner, nullptr);
 
@@ -162,8 +158,7 @@ TEST(Construct, Empty) {
   std::vector<TargetInfo> target_infos;
   std::vector<SQLTypeInfo> sql_type_infos;
   QueryMemoryDescriptor query_mem_desc;
-  auto row_set_mem_owner =
-      std::make_shared<RowSetMemoryOwner>(Executor::getArenaBlockSize());
+  auto row_set_mem_owner = std::make_shared<RowSetMemoryOwner>();
   ResultSet result_set(
       target_infos, ExecutorDeviceType::CPU, query_mem_desc, row_set_mem_owner, nullptr);
   ColumnarResultsTester columnar_results(
@@ -834,8 +829,6 @@ TEST(BaselineHashColumnar, TwoCol_32_32_MixedAggs_w_avg) {
 }
 
 int main(int argc, char** argv) {
-  g_is_test_env = true;
-
   TestHelpers::init_logger_stderr_only(argc, argv);
   testing::InitGoogleTest(&argc, argv);
 

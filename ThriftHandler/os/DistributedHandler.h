@@ -52,12 +52,6 @@ class MapDLeafHandler {
  private:
   MapDLeafHandler(DBHandler* mapd_handler) { CHECK(false); }
 
-  int64_t query_get_outer_fragment_count(const TSessionId& session,
-                                         const std::string& select_query) {
-    CHECK(false);
-    return -1;
-  };
-
   void check_table_consistency(TTableMeta& _return,
                                const TSessionId& session,
                                const int32_t table_id) {
@@ -68,8 +62,7 @@ class MapDLeafHandler {
                    const TSessionId& leaf_session,
                    const TSessionId& parent_session,
                    const std::string& query_ra,
-                   const bool just_explain,
-                   const std::vector<int64_t>& outer_fragment_indices) {
+                   const bool just_explain) {
     CHECK(false);
   }
 

@@ -55,6 +55,7 @@
 #include "ArrowImporter.h"
 #include "Import/DelimitedParserUtils.h"
 #include "QueryEngine/TypePunning.h"
+#include "QueryRunner/QueryRunner.h"
 #include "Shared/Logger.h"
 #include "Shared/SqlTypesLayout.h"
 #include "Shared/geo_compression.h"
@@ -64,7 +65,6 @@
 #include "Shared/mapd_glob.h"
 #include "Shared/mapdpath.h"
 #include "Shared/measure.h"
-#include "Shared/misc.h"
 #include "Shared/scope.h"
 #include "Shared/shard_key.h"
 #include "Shared/thread_count.h"
@@ -496,7 +496,7 @@ void TypedImportBuffer::addDictEncodedString(const std::vector<std::string>& str
 }
 
 void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
-                                  const std::string_view val,
+                                  const std::string& val,
                                   const bool is_null,
                                   const CopyParams& copy_params,
                                   const int64_t replicate_count) {
@@ -510,17 +510,15 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
         }
         addBoolean(inline_fixed_encoding_null_val(cd->columnType));
       } else {
-        auto ti = cd->columnType;
+        SQLTypeInfo ti = cd->columnType;
         Datum d = StringToDatum(val, ti);
-        addBoolean(static_cast<int8_t>(d.boolval));
+        addBoolean((int8_t)d.boolval);
       }
       break;
     }
     case kTINYINT: {
       if (!is_null && (isdigit(val[0]) || val[0] == '-')) {
-        auto ti = cd->columnType;
-        Datum d = StringToDatum(val, ti);
-        addTinyint(d.tinyintval);
+        addTinyint(std::stoi(val));
       } else {
         if (cd->columnType.get_notnull()) {
           throw std::runtime_error("NULL for column " + cd->columnName);
@@ -531,9 +529,7 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
     }
     case kSMALLINT: {
       if (!is_null && (isdigit(val[0]) || val[0] == '-')) {
-        auto ti = cd->columnType;
-        Datum d = StringToDatum(val, ti);
-        addSmallint(d.smallintval);
+        addSmallint(std::stoi(val));
       } else {
         if (cd->columnType.get_notnull()) {
           throw std::runtime_error("NULL for column " + cd->columnName);
@@ -544,9 +540,7 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
     }
     case kINT: {
       if (!is_null && (isdigit(val[0]) || val[0] == '-')) {
-        auto ti = cd->columnType;
-        Datum d = StringToDatum(val, ti);
-        addInt(d.intval);
+        addInt(std::stoi(val));
       } else {
         if (cd->columnType.get_notnull()) {
           throw std::runtime_error("NULL for column " + cd->columnName);
@@ -557,9 +551,7 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
     }
     case kBIGINT: {
       if (!is_null && (isdigit(val[0]) || val[0] == '-')) {
-        auto ti = cd->columnType;
-        Datum d = StringToDatum(val, ti);
-        addBigint(d.bigintval);
+        addBigint(std::stoll(val));
       } else {
         if (cd->columnType.get_notnull()) {
           throw std::runtime_error("NULL for column " + cd->columnName);
@@ -586,7 +578,7 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
     }
     case kFLOAT:
       if (!is_null && (val[0] == '.' || isdigit(val[0]) || val[0] == '-')) {
-        addFloat(static_cast<float>(std::atof(std::string(val).c_str())));
+        addFloat((float)std::atof(val.c_str()));
       } else {
         if (cd->columnType.get_notnull()) {
           throw std::runtime_error("NULL for column " + cd->columnName);
@@ -596,7 +588,7 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
       break;
     case kDOUBLE:
       if (!is_null && (val[0] == '.' || isdigit(val[0]) || val[0] == '-')) {
-        addDouble(std::atof(std::string(val).c_str()));
+        addDouble(std::atof(val.c_str()));
       } else {
         if (cd->columnType.get_notnull()) {
           throw std::runtime_error("NULL for column " + cd->columnName);
@@ -645,8 +637,7 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
       if (IS_STRING(ti.get_subtype())) {
         std::vector<std::string> string_vec;
         // Just parse string array, don't push it to buffer yet as we might throw
-        Importer_NS::delimited_parser::parse_string_array(
-            std::string(val), copy_params, string_vec);
+        Importer_NS::DelimitedParserUtils::parseStringArray(val, copy_params, string_vec);
         if (!is_null) {
           // TODO: add support for NULL string arrays
           if (ti.get_size() > 0) {
@@ -673,13 +664,13 @@ void TypedImportBuffer::add_value(const ColumnDescriptor* cd,
         }
       } else {
         if (!is_null) {
-          ArrayDatum d = StringToArray(std::string(val), ti, copy_params);
+          ArrayDatum d = StringToArray(val, ti, copy_params);
           if (d.is_null) {  // val could be "NULL"
             addArray(NullArray(ti));
           } else {
             if (ti.get_size() > 0 && static_cast<size_t>(ti.get_size()) != d.length) {
               throw std::runtime_error("Fixed length array for column " + cd->columnName +
-                                       " has incorrect length: " + std::string(val));
+                                       " has incorrect length: " + val);
             }
             addArray(d);
           }
@@ -1819,7 +1810,7 @@ static ImportStatus import_thread_delimited(
     const CopyParams& copy_params = importer->get_copy_params();
     const std::list<const ColumnDescriptor*>& col_descs = importer->get_column_descs();
     size_t begin =
-        delimited_parser::find_beginning(buffer, begin_pos, end_pos, copy_params);
+        DelimitedParserUtils::find_beginning(buffer, begin_pos, end_pos, copy_params);
     const char* thread_buf = buffer + begin_pos + begin;
     const char* thread_buf_end = buffer + end_pos;
     const char* buf_end = buffer + total_size;
@@ -1840,40 +1831,36 @@ static ImportStatus import_thread_delimited(
     for (const auto& p : import_buffers) {
       p->clear();
     }
-    std::vector<std::string_view> row;
+    std::vector<std::string> row;
     size_t row_index_plus_one = 0;
     for (const char* p = thread_buf; p < thread_buf_end; p++) {
       row.clear();
-      std::vector<std::unique_ptr<char[]>>
-          tmp_buffers;  // holds string w/ removed escape chars, etc
       if (DEBUG_TIMING) {
         us = measure<std::chrono::microseconds>::execution([&]() {
-          p = Importer_NS::delimited_parser::get_row(p,
-                                                     thread_buf_end,
-                                                     buf_end,
-                                                     copy_params,
-                                                     importer->get_is_array(),
-                                                     row,
-                                                     tmp_buffers,
-                                                     try_single_thread);
+          p = Importer_NS::DelimitedParserUtils::get_row(p,
+                                                         thread_buf_end,
+                                                         buf_end,
+                                                         copy_params,
+                                                         importer->get_is_array(),
+                                                         row,
+                                                         try_single_thread);
         });
         total_get_row_time_us += us;
       } else {
-        p = Importer_NS::delimited_parser::get_row(p,
-                                                   thread_buf_end,
-                                                   buf_end,
-                                                   copy_params,
-                                                   importer->get_is_array(),
-                                                   row,
-                                                   tmp_buffers,
-                                                   try_single_thread);
+        p = Importer_NS::DelimitedParserUtils::get_row(p,
+                                                       thread_buf_end,
+                                                       buf_end,
+                                                       copy_params,
+                                                       importer->get_is_array(),
+                                                       row,
+                                                       try_single_thread);
       }
       row_index_plus_one++;
       // Each POINT could consume two separate coords instead of a single WKT
       if (row.size() < num_cols || (num_cols + point_cols) < row.size()) {
         import_status.rows_rejected++;
         LOG(ERROR) << "Incorrect Row (expected " << num_cols << " columns, has "
-                   << row.size() << "): " << shared::printContainer(row);
+                   << row.size() << "): " << row;
         if (import_status.rows_rejected > copy_params.max_reject) {
           break;
         }
@@ -1944,13 +1931,13 @@ static ImportStatus import_thread_delimited(
                 // Invalid WKT, looks more like a scalar.
                 // Try custom POINT import: from two separate scalars rather than WKT
                 // string
-                double lon = std::atof(std::string(wkt).c_str());
+                double lon = std::atof(wkt.c_str());
                 double lat = NAN;
-                auto lat_str = row[import_idx];
+                std::string lat_str{row[import_idx]};
                 ++import_idx;
                 if (lat_str.size() > 0 &&
                     (lat_str[0] == '.' || isdigit(lat_str[0]) || lat_str[0] == '-')) {
-                  lat = std::atof(std::string(lat_str).c_str());
+                  lat = std::atof(lat_str.c_str());
                 }
                 // Swap coordinates if this table uses a reverse order: lat/lon
                 if (!copy_params.lonlat) {
@@ -2001,7 +1988,7 @@ static ImportStatus import_thread_delimited(
                   } else {
                     // extract geometry directly from WKT
                     if (!Geo_namespace::GeoTypesFactory::getGeoColumns(
-                            std::string(wkt),
+                            wkt,
                             import_ti,
                             coords,
                             bounds,
@@ -2069,7 +2056,7 @@ static ImportStatus import_thread_delimited(
           }
           import_status.rows_rejected++;
           LOG(ERROR) << "Input exception thrown: " << e.what()
-                     << ". Row discarded. Data: " << shared::printContainer(row);
+                     << ". Row discarded. Data: " << row;
         }
       };
 
@@ -2091,7 +2078,7 @@ static ImportStatus import_thread_delimited(
           }
         };
         OGRErr ogr_status = OGRGeometryFactory::createFromWkt(
-            collection_wkt.data(), nullptr, &ogr_geometry);
+            collection_wkt.c_str(), nullptr, &ogr_geometry);
         if (ogr_status != OGRERR_NONE) {
           throw std::runtime_error("Failed to convert WKT to geometry");
         }
@@ -2643,10 +2630,6 @@ bool Loader::loadImpl(
     const std::vector<std::unique_ptr<TypedImportBuffer>>& import_buffers,
     size_t row_count,
     bool checkpoint) {
-  if (load_callback_) {
-    auto data_blocks = get_data_block_pointers(import_buffers);
-    return load_callback_(import_buffers, data_blocks, row_count);
-  }
   if (table_desc_->nShards) {
     std::vector<OneShardBuffers> all_shard_import_buffers;
     std::vector<size_t> all_shard_row_counts;
@@ -2887,9 +2870,8 @@ void Detector::split_raw_data() {
   bool try_single_thread = false;
   for (const char* p = buf; p < buf_end; p++) {
     std::vector<std::string> row;
-    std::vector<std::unique_ptr<char[]>> tmp_buffers;
-    p = Importer_NS::delimited_parser::get_row(
-        p, buf_end, buf_end, copy_params, nullptr, row, tmp_buffers, try_single_thread);
+    p = Importer_NS::DelimitedParserUtils::get_row(
+        p, buf_end, buf_end, copy_params, nullptr, row, try_single_thread);
     raw_rows.push_back(row);
     if (try_single_thread) {
       break;
@@ -2900,9 +2882,8 @@ void Detector::split_raw_data() {
     raw_rows.clear();
     for (const char* p = buf; p < buf_end; p++) {
       std::vector<std::string> row;
-      std::vector<std::unique_ptr<char[]>> tmp_buffers;
-      p = Importer_NS::delimited_parser::get_row(
-          p, buf_end, buf_end, copy_params, nullptr, row, tmp_buffers, try_single_thread);
+      p = Importer_NS::DelimitedParserUtils::get_row(
+          p, buf_end, buf_end, copy_params, nullptr, row, try_single_thread);
       raw_rows.push_back(row);
     }
   }
@@ -3192,13 +3173,11 @@ void Importer::load(const std::vector<std::unique_ptr<TypedImportBuffer>>& impor
 }
 
 void Importer::checkpoint(const int32_t start_epoch) {
-  if (loader->getTableDesc()->storageType != StorageType::FOREIGN_TABLE) {
-    if (load_failed) {
-      // rollback to starting epoch - undo all the added records
-      loader->setTableEpoch(start_epoch);
-    } else {
-      loader->checkpoint();
-    }
+  if (load_failed) {
+    // rollback to starting epoch - undo all the added records
+    loader->setTableEpoch(start_epoch);
+  } else {
+    loader->checkpoint();
   }
 
   if (loader->getTableDesc()->persistenceLevel ==
@@ -3902,8 +3881,8 @@ ImportStatus Importer::importDelimited(const std::string& file_path,
   for (size_t i = 0; i < max_threads; i++) {
     import_buffers_vec.emplace_back();
     for (const auto cd : loader->get_column_descs()) {
-      import_buffers_vec[i].emplace_back(
-          std::make_unique<TypedImportBuffer>(cd, loader->getStringDict(cd)));
+      import_buffers_vec[i].push_back(std::unique_ptr<TypedImportBuffer>(
+          new TypedImportBuffer(cd, loader->getStringDict(cd))));
     }
   }
 
@@ -3949,7 +3928,7 @@ ImportStatus Importer::importDelimited(const std::string& file_path,
     while (size > 0) {
       unsigned int num_rows_this_buffer = 0;
       CHECK(scratch_buffer);
-      end_pos = delimited_parser::find_end(
+      end_pos = DelimitedParserUtils::find_end(
           scratch_buffer.get(), size, copy_params, num_rows_this_buffer);
 
       // unput residual
@@ -4952,25 +4931,16 @@ void RenderGroupAnalyzer::seedFromExistingTableContents(
   // start timer
   auto seedTimer = timer_start();
 
-  // start with a fresh tree
-  _rtree = nullptr;
-  _numRenderGroups = 0;
-
   // get the table descriptor
   const auto& cat = loader->getCatalog();
-  if (loader->getTableDesc()->storageType == StorageType::FOREIGN_TABLE) {
-    if (DEBUG_RENDER_GROUP_ANALYZER) {
-      LOG(INFO) << "DEBUG: Table is a foreign table";
-    }
-    _rtree = std::make_unique<RTree>();
-    CHECK(_rtree);
-    return;
-  }
-
   const std::string& tableName = loader->getTableDesc()->tableName;
   const auto td = cat.getMetadataForTable(tableName);
   CHECK(td);
   CHECK(td->fragmenter);
+
+  // start with a fresh tree
+  _rtree = nullptr;
+  _numRenderGroups = 0;
 
   // if the table is empty, just make an empty tree
   if (td->fragmenter->getFragmentsForQuery().getPhysicalNumTuples() == 0) {

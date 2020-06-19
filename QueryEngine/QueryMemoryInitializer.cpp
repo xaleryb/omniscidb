@@ -59,8 +59,7 @@ inline void check_total_bitmap_memory(const QueryMemoryDescriptor& query_mem_des
 }
 
 int64_t* alloc_group_by_buffer(const size_t numBytes,
-                               RenderAllocatorMap* render_allocator_map,
-                               RowSetMemoryOwner* mem_owner) {
+                               RenderAllocatorMap* render_allocator_map) {
   if (render_allocator_map) {
     // NOTE(adb): If we got here, we are performing an in-situ rendering query and are not
     // using CUDA buffers. Therefore we need to allocate result set storage using CPU
@@ -69,7 +68,7 @@ int64_t* alloc_group_by_buffer(const size_t numBytes,
     auto render_allocator_ptr = render_allocator_map->getRenderAllocator(gpu_idx);
     return reinterpret_cast<int64_t*>(render_allocator_ptr->alloc(numBytes));
   } else {
-    return reinterpret_cast<int64_t*>(mem_owner->allocate(numBytes));
+    return reinterpret_cast<int64_t*>(checked_malloc(numBytes));
   }
 }
 
@@ -221,11 +220,11 @@ QueryMemoryInitializer::QueryMemoryInitializer(
   CHECK_GE(group_buffer_size, size_t(0));
 
   const auto group_buffers_count = !query_mem_desc.isGroupBy() ? 1 : num_buffers_;
-  int64_t* group_by_buffer_template{nullptr};
+  std::unique_ptr<int64_t, CheckedAllocDeleter> group_by_buffer_template;
   if (!query_mem_desc.lazyInitGroups(device_type) && group_buffers_count > 1) {
-    group_by_buffer_template =
-        reinterpret_cast<int64_t*>(row_set_mem_owner_->allocate(group_buffer_size));
-    initGroupByBuffer(group_by_buffer_template,
+    group_by_buffer_template.reset(
+        static_cast<int64_t*>(checked_malloc(group_buffer_size)));
+    initGroupByBuffer(group_by_buffer_template.get(),
                       ra_exe_unit,
                       query_mem_desc,
                       device_type,
@@ -251,12 +250,12 @@ QueryMemoryInitializer::QueryMemoryInitializer(
   CHECK_GE(actual_group_buffer_size, group_buffer_size);
 
   for (size_t i = 0; i < group_buffers_count; i += step) {
-    auto group_by_buffer = alloc_group_by_buffer(
-        actual_group_buffer_size, render_allocator_map, row_set_mem_owner_.get());
+    auto group_by_buffer =
+        alloc_group_by_buffer(actual_group_buffer_size, render_allocator_map);
     if (!query_mem_desc.lazyInitGroups(device_type)) {
       if (group_by_buffer_template) {
         memcpy(group_by_buffer + index_buffer_qw,
-               group_by_buffer_template,
+               group_by_buffer_template.get(),
                group_buffer_size);
       } else {
         initGroupByBuffer(group_by_buffer + index_buffer_qw,
@@ -266,6 +265,9 @@ QueryMemoryInitializer::QueryMemoryInitializer(
                           output_columnar,
                           executor);
       }
+    }
+    if (!render_allocator_map) {
+      row_set_mem_owner_->addGroupByBuffer(group_by_buffer);
     }
     group_by_buffers_.push_back(group_by_buffer);
     for (size_t j = 1; j < step; ++j) {
@@ -337,13 +339,13 @@ QueryMemoryInitializer::QueryMemoryInitializer(
   CHECK_GE(actual_group_buffer_size, group_buffer_size);
 
   CHECK_EQ(num_buffers_, size_t(1));
-  auto group_by_buffer =
-      alloc_group_by_buffer(actual_group_buffer_size, nullptr, row_set_mem_owner.get());
+  auto group_by_buffer = alloc_group_by_buffer(actual_group_buffer_size, nullptr);
   if (!query_mem_desc.lazyInitGroups(device_type)) {
     initColumnarGroups(
         query_mem_desc, group_by_buffer + index_buffer_qw, init_agg_vals_, executor);
   }
   group_by_buffers_.push_back(group_by_buffer);
+  row_set_mem_owner_->addGroupByBuffer(group_by_buffer);
 
   const auto column_frag_offsets =
       get_col_frag_offsets(exe_unit.target_exprs, frag_offsets);
@@ -590,7 +592,6 @@ void QueryMemoryInitializer::allocateCountDistinctGpuMem(
   device_allocator_->zeroDeviceMem(reinterpret_cast<int8_t*>(count_distinct_bitmap_mem_),
                                    count_distinct_bitmap_mem_bytes_);
 
-  // TODO(adb): use allocator
   count_distinct_bitmap_crt_ptr_ = count_distinct_bitmap_host_mem_ =
       static_cast<int8_t*>(checked_malloc(count_distinct_bitmap_mem_bytes_));
   row_set_mem_owner_->addCountDistinctBuffer(

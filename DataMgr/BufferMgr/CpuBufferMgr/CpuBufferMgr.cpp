@@ -18,15 +18,26 @@
 
 #include "CudaMgr/CudaMgr.h"
 #include "DataMgr/BufferMgr/CpuBufferMgr/CpuBuffer.h"
-#include "Shared/ArenaAllocator.h"
 
 namespace Buffer_Namespace {
 
+CpuBufferMgr::CpuBufferMgr(const int device_id,
+                           const size_t max_buffer_size,
+                           CudaMgr_Namespace::CudaMgr* cuda_mgr,
+                           const size_t buffer_alloc_increment,
+                           const size_t page_size,
+                           AbstractBufferMgr* parent_mgr)
+    : BufferMgr(device_id, max_buffer_size, buffer_alloc_increment, page_size, parent_mgr)
+    , cuda_mgr_(cuda_mgr) {}
+
+CpuBufferMgr::~CpuBufferMgr() {
+  freeAllMem();
+}
+
 void CpuBufferMgr::addSlab(const size_t slab_size) {
-  CHECK(allocator_);
   slabs_.resize(slabs_.size() + 1);
   try {
-    slabs_.back() = reinterpret_cast<int8_t*>(allocator_->allocate(slab_size));
+    slabs_.back() = new int8_t[slab_size];
   } catch (std::bad_alloc&) {
     slabs_.resize(slabs_.size() - 1);
     throw FailedToCreateSlab(slab_size);
@@ -37,8 +48,9 @@ void CpuBufferMgr::addSlab(const size_t slab_size) {
 }
 
 void CpuBufferMgr::freeAllMem() {
-  CHECK(allocator_);
-  allocator_.reset(new Arena(max_slab_size_ + kArenaBlockOverhead));
+  for (auto buf_it = slabs_.begin(); buf_it != slabs_.end(); ++buf_it) {
+    delete[] * buf_it;
+  }
 }
 
 void CpuBufferMgr::allocateBuffer(BufferList::iterator seg_it,

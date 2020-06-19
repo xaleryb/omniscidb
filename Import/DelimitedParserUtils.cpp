@@ -17,12 +17,10 @@
 /*
  * @file DelimitedParserUtils.cpp
  * @author Mehmet Sariyuce <mehmet.sariyuce@omnisci.com>
- * @brief Implementation of delimited parser utils.
+ * @brief Implementation of DelimitedParserUtils class.
  */
 
 #include "Import/DelimitedParserUtils.h"
-
-#include <string_view>
 
 #include "Shared/Logger.h"
 #include "StringDictionary/StringDictionary.h"
@@ -57,11 +55,10 @@ inline void trim_quotes(const char*& field_begin,
 }  // namespace
 
 namespace Importer_NS {
-namespace delimited_parser {
-size_t find_beginning(const char* buffer,
-                      size_t begin,
-                      size_t end,
-                      const Importer_NS::CopyParams& copy_params) {
+size_t DelimitedParserUtils::find_beginning(const char* buffer,
+                                            size_t begin,
+                                            size_t end,
+                                            const Importer_NS::CopyParams& copy_params) {
   // @TODO(wei) line_delim is in quotes note supported
   if (begin == 0 || (begin > 0 && buffer[begin - 1] == copy_params.line_delim)) {
     return 0;
@@ -76,10 +73,10 @@ size_t find_beginning(const char* buffer,
   return i;
 }
 
-size_t find_end(const char* buffer,
-                size_t size,
-                const Importer_NS::CopyParams& copy_params,
-                unsigned int& num_rows_this_buffer) {
+size_t DelimitedParserUtils::find_end(const char* buffer,
+                                      size_t size,
+                                      const Importer_NS::CopyParams& copy_params,
+                                      unsigned int& num_rows_this_buffer) {
   size_t last_line_delim_pos = 0;
   if (copy_params.quoted) {
     const char* current = buffer;
@@ -130,15 +127,13 @@ size_t find_end(const char* buffer,
   return last_line_delim_pos + 1;
 }
 
-template <typename T>
-const char* get_row(const char* buf,
-                    const char* buf_end,
-                    const char* entire_buf_end,
-                    const Importer_NS::CopyParams& copy_params,
-                    const bool* is_array,
-                    std::vector<T>& row,
-                    std::vector<std::unique_ptr<char[]>>& tmp_buffers,
-                    bool& try_single_thread) {
+const char* DelimitedParserUtils::get_row(const char* buf,
+                                          const char* buf_end,
+                                          const char* entire_buf_end,
+                                          const Importer_NS::CopyParams& copy_params,
+                                          const bool* is_array,
+                                          std::vector<std::string>& row,
+                                          bool& try_single_thread) {
   const char* field = buf;
   const char* p;
   bool in_quote = false;
@@ -173,8 +168,7 @@ const char* get_row(const char* buf,
           trim_space(field, field_end);
           row.emplace_back(field, field_end - field);
         } else {
-          tmp_buffers.emplace_back(std::make_unique<char[]>(p - field + 1));
-          auto field_buf = tmp_buffers.back().get();
+          auto field_buf = std::make_unique<char[]>(p - field + 1);
           int j = 0, i = 0;
           for (; i < p - field; i++, j++) {
             if (has_escape && field[i] == copy_params.escape &&
@@ -185,8 +179,8 @@ const char* get_row(const char* buf,
               field_buf[j] = field[i];
             }
           }
-          const char* field_begin = field_buf;
-          const char* field_end = field_buf + j;
+          const char* field_begin = field_buf.get();
+          const char* field_end = field_buf.get() + j;
           trim_space(field_begin, field_end);
           trim_quotes(field_begin, field_end, copy_params);
           row.emplace_back(field_begin, field_end - field_begin);
@@ -219,27 +213,9 @@ const char* get_row(const char* buf,
   return p;
 }
 
-template const char* get_row(const char* buf,
-                             const char* buf_end,
-                             const char* entire_buf_end,
-                             const Importer_NS::CopyParams& copy_params,
-                             const bool* is_array,
-                             std::vector<std::string>& row,
-                             std::vector<std::unique_ptr<char[]>>& tmp_buffers,
-                             bool& try_single_thread);
-
-template const char* get_row(const char* buf,
-                             const char* buf_end,
-                             const char* entire_buf_end,
-                             const Importer_NS::CopyParams& copy_params,
-                             const bool* is_array,
-                             std::vector<std::string_view>& row,
-                             std::vector<std::unique_ptr<char[]>>& tmp_buffers,
-                             bool& try_single_thread);
-
-void parse_string_array(const std::string& s,
-                        const Importer_NS::CopyParams& copy_params,
-                        std::vector<std::string>& string_vec) {
+void DelimitedParserUtils::parseStringArray(const std::string& s,
+                                            const Importer_NS::CopyParams& copy_params,
+                                            std::vector<std::string>& string_vec) {
   if (s == copy_params.null_str || s == "NULL" || s.size() < 1 || s.empty()) {
     // TODO: should not convert NULL, empty arrays to {"NULL"},
     //       need to support NULL, empty properly
@@ -255,14 +231,12 @@ void parse_string_array(const std::string& s,
   bool try_single_thread = false;
   Importer_NS::CopyParams array_params = copy_params;
   array_params.delimiter = copy_params.array_delim;
-  std::vector<std::unique_ptr<char[]>> tmp_buffers;
   get_row(row.c_str(),
           row.c_str() + row.length(),
           row.c_str() + row.length(),
           array_params,
           nullptr,
           string_vec,
-          tmp_buffers,
           try_single_thread);
 
   for (size_t i = 0; i < string_vec.size(); ++i) {
@@ -275,6 +249,4 @@ void parse_string_array(const std::string& s,
     }
   }
 }
-
-}  // namespace delimited_parser
 }  // namespace Importer_NS

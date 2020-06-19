@@ -31,8 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "CudaMgr/CudaMgr.h"
-
 class UdfClangDriver {
  public:
   UdfClangDriver(const std::string&);
@@ -49,11 +47,8 @@ class UdfClangDriver {
 
 class UdfCompiler {
  public:
+  UdfCompiler(const std::string& udf_file_name, const std::string& clang_path = "");
   UdfCompiler(const std::string& udf_file_name,
-              CudaMgr_Namespace::NvidiaDeviceArch target_arch,
-              const std::string& clang_path = "");
-  UdfCompiler(const std::string& udf_file_name,
-              CudaMgr_Namespace::NvidiaDeviceArch target_arch,
               const std::string& clang_path,
               const std::vector<std::string> clang_options);
   int compileUdf();
@@ -69,7 +64,7 @@ class UdfCompiler {
   int compileToGpuByteCode(const char* udf_file_name, bool cpu_mode);
   int compileToCpuByteCode(const char* udf_file_name);
   void replaceExtn(std::string& s, const std::string& new_ext);
-  int compileFromCommandLine(const std::vector<std::string>& command_line);
+  int compileFromCommandLine(std::vector<const char*>& command_line);
   void readCompiledModules();
   void readGpuCompiledModule();
   void readCpuCompiledModule();
@@ -78,7 +73,6 @@ class UdfCompiler {
  private:
   std::string udf_file_name_;
   std::string udf_ast_file_name_;
-  CudaMgr_Namespace::NvidiaDeviceArch target_arch_;
   std::string clang_path_;
   std::vector<std::string> clang_options_;
 };

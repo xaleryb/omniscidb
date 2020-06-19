@@ -62,7 +62,6 @@
 #include "Shared/measure.h"
 #include "Shared/shard_key.h"
 #include "TableArchiver/TableArchiver.h"
-#include "Utils/FsiUtils.h"
 #include "gen-cpp/CalciteServer.h"
 #include "parser.h"
 
@@ -1474,7 +1473,6 @@ void InsertStmt::analyze(const Catalog_Namespace::Catalog& catalog,
   if (td->isView) {
     throw std::runtime_error("Insert to views is not supported yet.");
   }
-  foreign_storage::validate_non_foreign_table_write(td);
   query.set_result_table_id(td->tableId);
   std::list<int> result_col_list;
   if (column_list.empty()) {
@@ -2474,14 +2472,8 @@ std::list<ColumnDescriptor> LocalConnector::getColumnDescriptors(AggregatedResul
 void InsertIntoTableAsSelectStmt::populateData(QueryStateProxy query_state_proxy,
                                                bool validate_table) {
   auto const session = query_state_proxy.getQueryState().getConstSessionInfo();
-  auto& catalog = session->getCatalog();
-  const auto td_with_lock =
-      lockmgr::TableSchemaLockContainer<lockmgr::ReadLock>::acquireTableDescriptor(
-          catalog, table_name_);
-  const auto td = td_with_lock();
-  foreign_storage::validate_non_foreign_table_write(td);
-
   LocalConnector local_connector;
+
   bool populate_table = false;
 
   if (leafs_connector_) {
@@ -2493,6 +2485,7 @@ void InsertIntoTableAsSelectStmt::populateData(QueryStateProxy query_state_proxy
     }
   }
 
+  auto& catalog = session->getCatalog();
   auto get_target_column_descriptors = [this, &catalog](const TableDescriptor* td) {
     std::vector<const ColumnDescriptor*> target_column_descriptors;
     if (column_list_.empty()) {
@@ -2511,6 +2504,11 @@ void InsertIntoTableAsSelectStmt::populateData(QueryStateProxy query_state_proxy
 
     return target_column_descriptors;
   };
+
+  const auto td_with_lock =
+      lockmgr::TableSchemaLockContainer<lockmgr::ReadLock>::acquireTableDescriptor(
+          catalog, table_name_);
+  const auto td = td_with_lock();
 
   bool is_temporary = table_is_temporary(td);
 
@@ -3434,7 +3432,7 @@ void CopyTableStmt::execute(const Catalog_Namespace::SessionInfo& session,
 
   const TableDescriptor* td{nullptr};
   std::unique_ptr<lockmgr::TableSchemaLockContainer<lockmgr::ReadLock>> td_with_lock;
-  std::unique_ptr<lockmgr::WriteLock> insert_data_lock;
+  lockmgr::WriteLock insert_data_lock;
 
   auto& catalog = session.getCatalog();
 
@@ -3443,8 +3441,7 @@ void CopyTableStmt::execute(const Catalog_Namespace::SessionInfo& session,
         lockmgr::TableSchemaLockContainer<lockmgr::ReadLock>::acquireTableDescriptor(
             catalog, *table));
     td = (*td_with_lock)();
-    insert_data_lock = std::make_unique<lockmgr::WriteLock>(
-        lockmgr::InsertDataLockMgr::getWriteLockForTable(catalog, *table));
+    insert_data_lock = lockmgr::InsertDataLockMgr::getWriteLockForTable(catalog, *table);
   } catch (const std::runtime_error& e) {
     // noop
     // TODO(adb): We're really only interested in whether the table exists or not.
@@ -4162,35 +4159,7 @@ void RevokeRoleStmt::execute(const Catalog_Namespace::SessionInfo& session) {
   SysCatalog::instance().revokeRoleBatch(get_roles(), get_grantees());
 }
 
-void ShowCreateTableStmt::execute(const Catalog_Namespace::SessionInfo& session) {
-  using namespace Catalog_Namespace;
-
-  const auto execute_read_lock = mapd_shared_lock<mapd_shared_mutex>(
-      *legacylockmgr::LockMgr<mapd_shared_mutex, bool>::getMutex(
-          legacylockmgr::ExecutorOuterLock, true));
-
-  auto& catalog = session.getCatalog();
-  const TableDescriptor* td = catalog.getMetadataForTable(*table_);
-  if (!td) {
-    throw std::runtime_error("Table/View " + *table_ + " does not exist.");
-  }
-
-  DBObject dbObject(td->tableName, td->isView ? ViewDBObjectType : TableDBObjectType);
-  dbObject.loadKey(catalog);
-  std::vector<DBObject> privObjects = {dbObject};
-
-  if (!SysCatalog::instance().hasAnyPrivileges(session.get_currentUser(), privObjects)) {
-    throw std::runtime_error("Table/View " + *table_ + " does not exist.");
-  }
-  if (td->isView && !session.get_currentUser().isSuper) {
-    // TODO: we need to run a validate query to ensure the user has access to the
-    // underlying table, but we do not have any of the machinery in here. Disable for now,
-    // unless the current user is a super user.
-    throw std::runtime_error("SHOW CREATE TABLE not yet supported for views");
-  }
-
-  create_stmt_ = catalog.dumpCreateTable(td);
-}
+using dbl = std::numeric_limits<double>;
 
 void ExportQueryStmt::execute(const Catalog_Namespace::SessionInfo& session) {
   auto session_copy = session;
