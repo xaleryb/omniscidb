@@ -132,6 +132,7 @@ class DBEngineImpl : public DBEngine {
     SystemParameters mapd_parms;
     std::string data_path = base_path + OMNISCI_DATA_PATH;
     registerArrowForeignStorage();
+    registerArrowCsvForeignStorage();
     try {
       logger::LogOptions log_options("DBE");
       log_options.set_base_path(base_path);

@@ -63,15 +63,14 @@ cmake -S . -B build -Wno-dev \
     -DENABLE_JAVA_REMOTE_DEBUG=OFF\
     -DPREFER_STATIC_LIBS=OFF\
     -DENABLE_PROFILER=OFF\
-    -DENABLE_TESTS=OFF\
+    -DENABLE_TESTS=off\
     -DENABLE_FSI=ON\
-    -DENABLE_TBB=ON\
     -DENABLE_DBE=ON\
     || exit 1
 
 pushd build
 # preventing races by executing vulnerable targets first
-make PatchParser PatchScanner thrift_gen -j && make -j || \
+make mapd PatchParser PatchScanner thrift_gen mapd_java_components && make -j || \
      make --trace  # running sequentualy and enabling trace in case of failures
 make install || exit 1
 

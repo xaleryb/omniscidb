@@ -22,10 +22,10 @@ IF(PYTHON)
     add_custom_target(Python ALL DEPENDS ${OUTPUT})
 
     add_custom_target(editable-install
-        cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -e .
+        cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -v -e .
         DEPENDS Python)
 
-    install(CODE "execute_process(COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && python3 setup.py install -f)")
+    install(CODE "execute_process(COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -v -e .)")
 
 ENDIF(PYTHON)
 
