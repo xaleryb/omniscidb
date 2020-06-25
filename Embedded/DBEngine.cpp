@@ -17,14 +17,13 @@
 #include "DBEngine.h"
 #include <arrow/api.h>
 #include <boost/filesystem.hpp>
+#include "Catalog/SysCatalog.h"
 #include "DataMgr/ForeignStorage/ArrowForeignStorage.h"
 #include "Fragmenter/FragmentDefaultValues.h"
 #include "Parser/ParserNode.h"
 #include "QueryEngine/ArrowResultSet.h"
 #include "QueryEngine/Execute.h"
 #include "QueryRunner/QueryRunner.h"
-#include "Catalog/SysCatalog.h"
-
 
 namespace EmbeddedDatabase {
 
@@ -188,7 +187,7 @@ class DBEngineImpl : public DBEngine {
     }
   }
 
-  void createArrowTable(const std::string &name, std::shared_ptr<arrow::Table> &table) {
+  void createArrowTable(const std::string& name, std::shared_ptr<arrow::Table>& table) {
     setArrowTable(name, table);
     try {
       auto session = query_runner_->getSession();
@@ -240,6 +239,30 @@ class DBEngineImpl : public DBEngine {
       }
     } else {
       std::cerr << "DBE:executeDML: query_runner is NULL" << std::endl;
+    }
+    return nullptr;
+  }
+
+  Cursor* executeDMLwithRA(const std::string& query) {
+    if (query_runner_) {
+      try {
+        const auto execution_result =
+            query_runner_->runSelectQueryRA(query, ExecutorDeviceType::CPU, true, true);
+        auto targets = execution_result.getTargetsMeta();
+        std::vector<std::string> col_names;
+        for (const auto target : targets) {
+          col_names.push_back(target.get_resname());
+        }
+        auto rs = execution_result.getRows();
+        cursors_.emplace_back(new CursorImpl(rs, col_names, data_mgr_));
+        return cursors_.back();
+      } catch (std::exception const& e) {
+        std::cerr << "DBE:executeDMLwithRA: " << e.what() << std::endl;
+      } catch (...) {
+        std::cerr << "DBE:executeDMLwithRA: Unknown exception" << std::endl;
+      }
+    } else {
+      std::cerr << "DBE:executeDMLwithRA: query_runner is NULL" << std::endl;
     }
     return nullptr;
   }
@@ -338,7 +361,7 @@ class DBEngineImpl : public DBEngine {
  *
  * @param sPath Path to the existing database
  */
-DBEngine* DBEngine::create(const std::string &path,
+DBEngine* DBEngine::create(const std::string& path,
                            int calcite_port,
                            bool enable_columnar_output) {
   g_enable_columnar_output = enable_columnar_output;
@@ -362,17 +385,23 @@ void DBEngine::reset() {
   engine->reset();
 }
 
-void DBEngine::executeDDL(const std::string &query) {
+void DBEngine::executeDDL(const std::string& query) {
   DBEngineImpl* engine = getImpl(this);
   engine->executeDDL(query);
 }
 
-Cursor* DBEngine::executeDML(const std::string &query) {
+Cursor* DBEngine::executeDML(const std::string& query) {
   DBEngineImpl* engine = getImpl(this);
   return engine->executeDML(query);
 }
 
-void DBEngine::createArrowTable(const std::string &name, std::shared_ptr<arrow::Table> &table) {
+Cursor* DBEngine::executeDMLwithRA(const std::string& query) {
+  DBEngineImpl* engine = getImpl(this);
+  return engine->executeDMLwithRA(query);
+}
+
+void DBEngine::createArrowTable(const std::string& name,
+                                std::shared_ptr<arrow::Table>& table) {
   DBEngineImpl* engine = getImpl(this);
   return engine->createArrowTable(name, table);
 }

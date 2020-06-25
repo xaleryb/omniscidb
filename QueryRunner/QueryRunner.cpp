@@ -532,6 +532,48 @@ ExecutionResult QueryRunner::runSelectQuery(const std::string& query_str,
       .executeRelAlgQuery(co, eo, false, nullptr);
 }
 
+ExecutionResult QueryRunner::runSelectQueryRA(const std::string& query_str,
+                                              const ExecutorDeviceType device_type,
+                                              const bool hoist_literals,
+                                              const bool allow_loop_joins,
+                                              const bool just_explain) {
+  CHECK(session_info_);
+  CHECK(!Catalog_Namespace::SysCatalog::instance().isAggregator());
+  auto query_state = create_query_state(session_info_, query_str);
+  auto stdlog = STDLOG(query_state);
+  if (g_enable_filter_push_down) {
+    return run_select_query_with_filter_push_down(query_state->createQueryStateProxy(),
+                                                  device_type,
+                                                  hoist_literals,
+                                                  allow_loop_joins,
+                                                  just_explain,
+                                                  g_enable_filter_push_down);
+  }
+
+  const auto& cat = session_info_->getCatalog();
+  auto executor = Executor::getExecutor(cat.getCurrentDB().dbId);
+  CompilationOptions co = CompilationOptions::defaults(device_type);
+  co.opt_level = ExecutorOptLevel::LoopStrengthReduction;
+
+  ExecutionOptions eo = {g_enable_columnar_output,
+                         true,
+                         just_explain,
+                         allow_loop_joins,
+                         false,
+                         false,
+                         false,
+                         false,
+                         10000,
+                         false,
+                         false,
+                         g_gpu_mem_limit_percent,
+                         false,
+                         1000};
+  auto calcite_mgr = cat.getCalciteMgr();
+  return RelAlgExecutor(executor.get(), cat, query_str)
+      .executeRelAlgQuery(co, eo, false, nullptr);
+}
+
 const std::shared_ptr<std::vector<int32_t>>& QueryRunner::getCachedJoinHashTable(
     size_t idx) {
   return JoinHashTable::getCachedHashTable(idx);
