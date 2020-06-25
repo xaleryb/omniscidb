@@ -539,7 +539,9 @@ ExecutionResult QueryRunner::runSelectQueryRA(const std::string& query_str,
                                               const bool just_explain) {
   CHECK(session_info_);
   CHECK(!Catalog_Namespace::SysCatalog::instance().isAggregator());
-  auto query_state = create_query_state(session_info_, query_str);
+  const std::string exec_ra = "execute relalg";
+  auto actual_query = boost::trim_copy(query_str.substr(exec_ra.size()));
+  auto query_state = create_query_state(session_info_, actual_query);
   auto stdlog = STDLOG(query_state);
   if (g_enable_filter_push_down) {
     return run_select_query_with_filter_push_down(query_state->createQueryStateProxy(),
@@ -570,7 +572,7 @@ ExecutionResult QueryRunner::runSelectQueryRA(const std::string& query_str,
                          false,
                          1000};
   auto calcite_mgr = cat.getCalciteMgr();
-  return RelAlgExecutor(executor.get(), cat, query_str)
+  return RelAlgExecutor(executor.get(), cat, actual_query)
       .executeRelAlgQuery(co, eo, false, nullptr);
 }
 
