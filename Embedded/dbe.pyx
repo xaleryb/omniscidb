@@ -199,6 +199,12 @@ cdef class PyDbEngine:
         obj.c_cursor = self.c_dbe.executeDML(bytes(query, 'utf-8'));
         return obj;
 
+    def executeRA(self, query):
+        obj = PyCursor();
+        assert not self.closed
+        obj.c_cursor = self.c_dbe.executeRA(bytes(query, 'utf-8'));
+        return obj;
+
     def consumeArrowTable(self, name, table):
         assert not self.closed
         cdef shared_ptr[CTable] t = pyarrow_unwrap_table(table)
