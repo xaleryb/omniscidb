@@ -152,16 +152,14 @@ void ArrowForeignStorageBase::setNullValues(const std::vector<Frag>& fragments,
                 for (auto chunk_index = r1.begin(); chunk_index != r1.end();
                      ++chunk_index) {
                   auto chunk = arr_col_chunked_array->chunk(chunk_index).get();
+                  CHECK(chunk) << "chunk is null";
                   auto data = chunk->data()->buffers[1]->mutable_data();
+                  CHECK(data) << "data is null";
                   T* dataT = reinterpret_cast<T*>(data);
-                  const uint8_t* bitmap_data =
-                      arr_col_chunked_array->chunk(chunk_index)->null_bitmap_data();
-
-                  const int64_t length =
-                      arr_col_chunked_array->chunk(chunk_index)->length();
-                  const int64_t bitmap_length =
-                      arr_col_chunked_array->chunk(chunk_index)->null_bitmap()->size() -
-                      1;
+                  const uint8_t* bitmap_data = chunk->null_bitmap_data();
+                  const int64_t length = chunk->length();
+                  const int64_t bitmap_length = chunk->null_bitmap()->size() - 1;
+                  
                   for (int64_t bitmap_idx = 0; bitmap_idx < bitmap_length; ++bitmap_idx) {
                     T* res = dataT + bitmap_idx * 8;
                     for (int8_t bitmap_offset = 0; bitmap_offset < 8; ++bitmap_offset) {

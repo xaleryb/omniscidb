@@ -1,6 +1,7 @@
 add_library(DBEngine SHARED DBETypes.cpp DBEngine.cpp DBEngine.h DBETypes.h)
 
 target_link_libraries(DBEngine QueryRunner QueryEngine DataMgr ${Arrow_LIBRARIES} ${Boost_LIBRARIES} ${CMAKE_DL_LIBS} ${TBB_LIBS})
+install(TARGETS DBEngine DESTINATION lib)
 
 add_executable(EmbeddedDbTest EmbeddedDbTest.cpp)
 target_link_libraries(EmbeddedDbTest DBEngine)

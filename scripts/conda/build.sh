@@ -70,8 +70,8 @@ cmake -S . -B build -Wno-dev \
 
 pushd build
 # preventing races by executing vulnerable targets first
-make mapd PatchParser PatchScanner thrift_gen mapd_java_components && make -j || \
-     make --trace  # running sequentualy and enabling trace in case of failures
+make PatchParser PatchScanner thrift_gen
+make -j || make --trace || exit 1  # running sequentualy and enabling trace in case of failures
 make install || exit 1
 
 # copy initdb to mapd_initdb to avoid conflict with psql initdb

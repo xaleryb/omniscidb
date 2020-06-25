@@ -61,6 +61,6 @@ dropoff_ntacode TEXT ENCODING NONE,
 dropoff_ntaname TEXT ENCODING NONE,
 dropoff_puma BIGINT) WITH (storage_type='CSV:Tests/Import/datafiles/trips_with_headers_top1000.csv', fragment_size=100);""")
 print("DML")
-r = d.executeDML("select count(trip_id) from trips;")
+r = d.executeDML("select count(*) from trips;")
 print("done")
 assert r
