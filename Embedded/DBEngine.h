@@ -40,7 +40,7 @@ class DBEngine {
   void reset();
   void executeDDL(const std::string& query);
   Cursor* executeDML(const std::string& query);
-  Cursor* executeDMLwithRA(const std::string& query);
+  Cursor* executeRA(const std::string& query);
   static DBEngine* create(const std::string& path,
                           int calcite_port,
                           bool enable_columnar_output);

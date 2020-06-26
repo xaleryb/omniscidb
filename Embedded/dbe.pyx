@@ -199,10 +199,10 @@ cdef class PyDbEngine:
         obj.c_cursor = self.c_dbe.executeDML(bytes(query, 'utf-8'));
         return obj;
 
-    def executeDMLwithRA(self, query):
+    def executeRA(self, query):
         obj = PyCursor();
         assert not self.closed
-        obj.c_cursor = self.c_dbe.executeDMLwithRA(bytes(query, 'utf-8'));
+        obj.c_cursor = self.c_dbe.executeRA(bytes(query, 'utf-8'));
         return obj;
 
     def consumeArrowTable(self, name, table):

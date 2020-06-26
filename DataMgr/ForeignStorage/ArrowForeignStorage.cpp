@@ -154,7 +154,7 @@ void ArrowForeignStorageBase::setNullValues(const std::vector<Frag>& fragments,
                   auto chunk = arr_col_chunked_array->chunk(chunk_index).get();
                   CHECK(chunk) << " is null";
                   auto data = chunk->data()->buffers[1]->mutable_data();
-                  if (data) {
+                  if (data) {  // TODO: to be checked and possibly reimplemented
                     // CHECK(data) << " is null";
                     T* dataT = reinterpret_cast<T*>(data);
                     const uint8_t* bitmap_data = chunk->null_bitmap_data();

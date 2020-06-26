@@ -243,7 +243,7 @@ class DBEngineImpl : public DBEngine {
     return nullptr;
   }
 
-  Cursor* executeDMLwithRA(const std::string& query) {
+  Cursor* executeRA(const std::string& query) {
     if (query_runner_) {
       try {
         const auto execution_result =
@@ -257,12 +257,12 @@ class DBEngineImpl : public DBEngine {
         cursors_.emplace_back(new CursorImpl(rs, col_names, data_mgr_));
         return cursors_.back();
       } catch (std::exception const& e) {
-        std::cerr << "DBE:executeDMLwithRA: " << e.what() << std::endl;
+        std::cerr << "DBE:executeRA: " << e.what() << std::endl;
       } catch (...) {
-        std::cerr << "DBE:executeDMLwithRA: Unknown exception" << std::endl;
+        std::cerr << "DBE:executeRA: Unknown exception" << std::endl;
       }
     } else {
-      std::cerr << "DBE:executeDMLwithRA: query_runner is NULL" << std::endl;
+      std::cerr << "DBE:executeRA: query_runner is NULL" << std::endl;
     }
     return nullptr;
   }
@@ -395,9 +395,9 @@ Cursor* DBEngine::executeDML(const std::string& query) {
   return engine->executeDML(query);
 }
 
-Cursor* DBEngine::executeDMLwithRA(const std::string& query) {
+Cursor* DBEngine::executeRA(const std::string& query) {
   DBEngineImpl* engine = getImpl(this);
-  return engine->executeDMLwithRA(query);
+  return engine->executeRA(query);
 }
 
 void DBEngine::createArrowTable(const std::string& name,
