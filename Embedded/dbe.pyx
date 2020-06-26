@@ -203,8 +203,7 @@ cdef class PyDbEngine:
         obj = PyCursor();
         assert not self.closed
         obj.c_cursor = self.c_dbe.executeRA(bytes(query, 'utf-8'));
-        prb = obj.getArrowRecordBatch()
-        return prb.to_pandas()
+        return obj
 
     def consumeArrowTable(self, name, table):
         assert not self.closed
