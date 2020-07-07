@@ -1,42 +1,41 @@
 from Cython.Build import cythonize
-from distutils.core import setup, Extension
+#from distutils.core import setup, Extension
+from setuptools import Extension, setup
 
 import os
 import numpy as np
 import pyarrow as pa
 
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-dbe = Extension("dbe",
-                ["@CMAKE_CURRENT_SOURCE_DIR@/dbe.pyx"],
+srcdir = "@CMAKE_CURRENT_SOURCE_DIR@"
+dbe = Extension("omnidbe.dbe",
+                ["omnidbe/dbe.pyx"],
                 language='c++17',
                 include_dirs=[
                   np.get_include(),
                   pa.get_include(),
-                  root,
                   "@CMAKE_SOURCE_DIR@",
-                  "@CMAKE_CURRENT_SOURCE_DIR@"
+                  srcdir
                 ],
                 library_dirs=pa.get_library_dirs() + ['.'],
-                runtime_library_dirs=pa.get_library_dirs() + ['$ORIGIN/../../'],
+                runtime_library_dirs=pa.get_library_dirs() + ['$ORIGIN/../../../'],
                 libraries=pa.get_libraries() + ['DBEngine', 'boost_system'],
                 extra_compile_args=['-std=c++17'],
               )
-# Try uncommenting the following line on Linux
-# if you get weird linker errors or runtime crashes
-#    dbe.define_macros.append(("_GLIBCXX_USE_CXX11_ABI", "0"))
 
 setup(
-  name = 'dbe',
-  version='0.1',
+  name = 'omnidbe',
+  version='0.3',
   ext_modules = cythonize(dbe,
     compiler_directives={'c_string_type': "str", 'c_string_encoding': "utf8", 'language_level': "3"},
-    include_path=["@CMAKE_CURRENT_SOURCE_DIR@"],
-  ),
+    include_path=[srcdir]),
+  package_data = {
+    "omnidbe": ['__init__.py']
+  },
   data_files=[
-    ("lib", ["$<TARGET_FILE:DBEngine>"]),
+    #("lib", ["$<TARGET_FILE:DBEngine>"]),
     ('include', [
-      "@CMAKE_CURRENT_SOURCE_DIR@/DBEngine.h",
-      "@CMAKE_CURRENT_SOURCE_DIR@/DBEngine.pxd",
+      srcdir+"/DBEngine.h",
+      srcdir+"/DBEngine.pxd",
     ])
   ],
 )
