@@ -12,7 +12,8 @@ target_link_libraries(EmbeddedDbFSITest DBEngine)
 find_program(PYTHON "python3")
 IF(PYTHON)
     set(SETUP_PY    "${CMAKE_CURRENT_BINARY_DIR}/setup.py")
-    set(OUTPUT      "${CMAKE_CURRENT_BINARY_DIR}/dbe.cpp")
+    # Currently dbe.cpp is generated near dbe.pyx and not in build dir. This could be revised later
+    set(OUTPUT      "${CMAKE_CURRENT_SOURCE_DIR}/dbe.cpp")
 
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/setup.in.py" "${CMAKE_CURRENT_BINARY_DIR}/setup.py.in" @ONLY)
     # cannot be done in one step, splitting in configure_file and file commands
