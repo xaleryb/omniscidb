@@ -763,8 +763,11 @@ static SQLTypeInfo getOmnisciType(const arrow::DataType& type) {
       return SQLTypeInfo(kFLOAT, false);
     case Type::DOUBLE:
       return SQLTypeInfo(kDOUBLE, false);
-    case Type::STRING:
-      return SQLTypeInfo(kTEXT, false, kENCODING_DICT);
+    case Type::STRING: {
+      auto type = SQLTypeInfo(kTEXT, false, kENCODING_DICT);
+      type.set_comp_param(sizeof(uint32_t) * 8);
+      return type;
+    }
     case Type::DECIMAL: {
       const auto& decimal_type = static_cast<const arrow::DecimalType&>(type);
       return SQLTypeInfo(kDECIMAL, decimal_type.precision(), decimal_type.scale(), false);
