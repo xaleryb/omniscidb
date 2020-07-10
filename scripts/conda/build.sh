@@ -71,8 +71,8 @@ cmake -S . -B build -Wno-dev \
 
 pushd build
 # preventing races by executing vulnerable targets first
-make PatchParser PatchScanner thrift_gen -j && make -j || \
-     make --trace  # running sequentualy and enabling trace in case of failures
+make PatchParser PatchScanner thrift_gen
+make -j || make --trace || exit 1  # running sequentualy and enabling trace in case of failures
 make install || exit 1
 
 # copy initdb to mapd_initdb to avoid conflict with psql initdb
@@ -82,6 +82,6 @@ rm -rf data
 mkdir data
 # do lightweight testing here, make sanity_tests should go to under test env
 omnisci_initdb -f data
-#omnisci_server --enable-fsi --db-query-list SampleData/db-query-list-flights.sql --exit-after-warmup
-#rm -rf data
+#TODO: omnisci_server --enable-fsi --db-query-list SampleData/db-query-list-flights.sql --exit-after-warmup
+#TODO: rm -rf data
 popd

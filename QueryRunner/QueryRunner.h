@@ -130,6 +130,11 @@ class QueryRunner {
                                          const bool hoist_literals,
                                          const bool allow_loop_joins,
                                          const bool just_explain = false);
+  virtual ExecutionResult runSelectQueryRA(const std::string& query_str,
+                                         const ExecutorDeviceType device_type,
+                                         const bool hoist_literals,
+                                         const bool allow_loop_joins,
+                                         const bool just_explain = false);                                         
   virtual std::shared_ptr<ResultSet> runSQLWithAllowingInterrupt(
       const std::string& query_str,
       std::shared_ptr<Executor> executor,

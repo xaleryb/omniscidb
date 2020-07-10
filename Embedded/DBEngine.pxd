@@ -84,6 +84,7 @@ cdef extern from "DBEngine.h" namespace 'EmbeddedDatabase':
     cdef cppclass DBEngine:
         void executeDDL(string)
         Cursor* executeDML(string)
+        Cursor* executeRA(string)
 #        shared_ptr[ResultSet] executeDML(string)
         vector[string] getTables()
         vector[ColumnDetails] getTableDetails(string)

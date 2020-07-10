@@ -1,9 +1,13 @@
 add_library(DBEngine SHARED DBETypes.cpp DBEngine.cpp DBEngine.h DBETypes.h)
 
 target_link_libraries(DBEngine QueryRunner QueryEngine DataMgr ${Arrow_LIBRARIES} ${Boost_LIBRARIES} ${CMAKE_DL_LIBS} ${TBB_LIBS})
+install(TARGETS DBEngine DESTINATION lib)
 
 add_executable(EmbeddedDbTest EmbeddedDbTest.cpp)
 target_link_libraries(EmbeddedDbTest DBEngine)
+
+add_executable(EmbeddedDbFSITest EmbeddedDbFSITest.cpp)
+target_link_libraries(EmbeddedDbFSITest DBEngine)
 
 find_program(PYTHON "python3")
 IF(PYTHON)
@@ -22,10 +26,10 @@ IF(PYTHON)
     add_custom_target(Python ALL DEPENDS ${OUTPUT})
 
     add_custom_target(editable-install
-        cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -e .
+        cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -v -e .
         DEPENDS Python)
 
-    install(CODE "execute_process(COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && python3 setup.py install -f)")
+    install(CODE "execute_process(COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -v -e .)")
 
 ENDIF(PYTHON)
 

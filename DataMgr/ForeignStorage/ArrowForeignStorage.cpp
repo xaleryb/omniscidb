@@ -152,27 +152,32 @@ void ArrowForeignStorageBase::setNullValues(const std::vector<Frag>& fragments,
                 for (auto chunk_index = r1.begin(); chunk_index != r1.end();
                      ++chunk_index) {
                   auto chunk = arr_col_chunked_array->chunk(chunk_index).get();
-                  auto data = chunk->data()->buffers[1]->mutable_data();
-                  T* dataT = reinterpret_cast<T*>(data);
-                  const uint8_t* bitmap_data =
-                      arr_col_chunked_array->chunk(chunk_index)->null_bitmap_data();
-
-                  const int64_t length =
-                      arr_col_chunked_array->chunk(chunk_index)->length();
-                  const int64_t bitmap_length =
-                      arr_col_chunked_array->chunk(chunk_index)->null_bitmap()->size() -
-                      1;
-                  for (int64_t bitmap_idx = 0; bitmap_idx < bitmap_length; ++bitmap_idx) {
-                    T* res = dataT + bitmap_idx * 8;
-                    for (int8_t bitmap_offset = 0; bitmap_offset < 8; ++bitmap_offset) {
-                      res[bitmap_offset] +=
-                          null_value * ((~bitmap_data[bitmap_idx] >> bitmap_offset) & 1);
-                    }
+                  if (chunk->data()->null_count == chunk->data()->length) {
+                    // it means we will insert sentinel values in read function
+                    continue;
                   }
+                  auto data = chunk->data()->buffers[1]->mutable_data();
+                  if (data) {  // TODO: to be checked and possibly reimplemented
+                    // CHECK(data) << " is null";
+                    T* dataT = reinterpret_cast<T*>(data);
+                    const uint8_t* bitmap_data = chunk->null_bitmap_data();
+                    const int64_t length = chunk->length();
+                    const int64_t bitmap_length = chunk->null_bitmap()->size() - 1;
 
-                  for (int64_t j = bitmap_length * 8; j < length; ++j) {
-                    dataT[j] +=
-                        null_value * ((~bitmap_data[bitmap_length] >> (j % 8)) & 1);
+                    for (int64_t bitmap_idx = 0; bitmap_idx < bitmap_length;
+                         ++bitmap_idx) {
+                      T* res = dataT + bitmap_idx * 8;
+                      for (int8_t bitmap_offset = 0; bitmap_offset < 8; ++bitmap_offset) {
+                        res[bitmap_offset] +=
+                            null_value *
+                            ((~bitmap_data[bitmap_idx] >> bitmap_offset) & 1);
+                      }
+                    }
+
+                    for (int64_t j = bitmap_length * 8; j < length; ++j) {
+                      dataT[j] +=
+                          null_value * ((~bitmap_data[bitmap_length] >> (j % 8)) & 1);
+                    }
                   }
                 }
               });
@@ -758,14 +763,30 @@ static SQLTypeInfo getOmnisciType(const arrow::DataType& type) {
       return SQLTypeInfo(kFLOAT, false);
     case Type::DOUBLE:
       return SQLTypeInfo(kDOUBLE, false);
-    case Type::STRING:
-      // TODO: check utf8 and add dictionary encoding
-      return SQLTypeInfo(kTEXT, false);
-    case Type::DECIMAL:
-      // TODO: check precision
-      return SQLTypeInfo(kDECIMAL, false);
+    case Type::STRING: {
+      auto type = SQLTypeInfo(kTEXT, false, kENCODING_DICT);
+      // this is needed because createTable forces type.size to be equal to 
+      // comp_param / 8, no matter what type.size you set here
+      type.set_comp_param(sizeof(uint32_t) * 8);
+      return type;
+    }
+    case Type::DECIMAL: {
+      const auto& decimal_type = static_cast<const arrow::DecimalType&>(type);
+      return SQLTypeInfo(kDECIMAL, decimal_type.precision(), decimal_type.scale(), false);
+    }
     case Type::TIME32:
       return SQLTypeInfo(kTIME, false);
+    case Type::TIMESTAMP:
+      switch (static_cast<const arrow::TimestampType&>(type).unit()) {
+        case TimeUnit::SECOND:
+          return SQLTypeInfo(kTIMESTAMP, 0, 0);
+        case TimeUnit::MILLI:
+          return SQLTypeInfo(kTIMESTAMP, 3, 0);
+        case TimeUnit::MICRO:
+          return SQLTypeInfo(kTIMESTAMP, 6, 0);
+        case TimeUnit::NANO:
+          return SQLTypeInfo(kTIMESTAMP, 9, 0);
+      }
     default:
       throw std::runtime_error(type.ToString() + " is not yet supported.");
   }
