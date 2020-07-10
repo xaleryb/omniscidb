@@ -152,7 +152,10 @@ void ArrowForeignStorageBase::setNullValues(const std::vector<Frag>& fragments,
                 for (auto chunk_index = r1.begin(); chunk_index != r1.end();
                      ++chunk_index) {
                   auto chunk = arr_col_chunked_array->chunk(chunk_index).get();
-                  CHECK(chunk) << " is null";
+                  if (chunk->data()->null_count == chunk->data()->length) {
+                    // it means we will insert sentinel values in read function
+                    continue;
+                  }
                   auto data = chunk->data()->buffers[1]->mutable_data();
                   if (data) {  // TODO: to be checked and possibly reimplemented
                     // CHECK(data) << " is null";
@@ -760,14 +763,30 @@ static SQLTypeInfo getOmnisciType(const arrow::DataType& type) {
       return SQLTypeInfo(kFLOAT, false);
     case Type::DOUBLE:
       return SQLTypeInfo(kDOUBLE, false);
-    case Type::STRING:
-      // TODO: check utf8 and add dictionary encoding
-      return SQLTypeInfo(kTEXT, false);
-    case Type::DECIMAL:
-      // TODO: check precision
-      return SQLTypeInfo(kDECIMAL, false);
+    case Type::STRING: {
+      auto type = SQLTypeInfo(kTEXT, false, kENCODING_DICT);
+      // this is needed because createTable forces type.size to be equal to 
+      // comp_param / 8, no matter what type.size you set here
+      type.set_comp_param(sizeof(uint32_t) * 8);
+      return type;
+    }
+    case Type::DECIMAL: {
+      const auto& decimal_type = static_cast<const arrow::DecimalType&>(type);
+      return SQLTypeInfo(kDECIMAL, decimal_type.precision(), decimal_type.scale(), false);
+    }
     case Type::TIME32:
       return SQLTypeInfo(kTIME, false);
+    case Type::TIMESTAMP:
+      switch (static_cast<const arrow::TimestampType&>(type).unit()) {
+        case TimeUnit::SECOND:
+          return SQLTypeInfo(kTIMESTAMP, 0, 0);
+        case TimeUnit::MILLI:
+          return SQLTypeInfo(kTIMESTAMP, 3, 0);
+        case TimeUnit::MICRO:
+          return SQLTypeInfo(kTIMESTAMP, 6, 0);
+        case TimeUnit::NANO:
+          return SQLTypeInfo(kTIMESTAMP, 9, 0);
+      }
     default:
       throw std::runtime_error(type.ToString() + " is not yet supported.");
   }

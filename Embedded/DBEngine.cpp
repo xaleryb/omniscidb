@@ -19,6 +19,7 @@
 #include <boost/filesystem.hpp>
 #include "Catalog/SysCatalog.h"
 #include "DataMgr/ForeignStorage/ArrowForeignStorage.h"
+#include "DataMgr/ForeignStorage/ForeignStorageInterface.h"
 #include "Fragmenter/FragmentDefaultValues.h"
 #include "Parser/ParserNode.h"
 #include "QueryEngine/ArrowResultSet.h"
@@ -169,6 +170,7 @@ class DBEngineImpl : public DBEngine {
       query_runner_->reset();
       query_runner_ = nullptr;
     }
+    ForeignStorageInterface::destroy();
     data_mgr_.reset();
     base_path_.clear();
   }

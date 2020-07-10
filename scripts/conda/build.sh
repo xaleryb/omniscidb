@@ -63,8 +63,9 @@ cmake -S . -B build -Wno-dev \
     -DENABLE_JAVA_REMOTE_DEBUG=OFF\
     -DPREFER_STATIC_LIBS=OFF\
     -DENABLE_PROFILER=OFF\
-    -DENABLE_TESTS=off\
+    -DENABLE_TESTS=OFF\
     -DENABLE_FSI=ON\
+    -DENABLE_TBB=ON\
     -DENABLE_DBE=ON\
     || exit 1
 
