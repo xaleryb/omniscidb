@@ -9,10 +9,12 @@ channels:
 dependencies:
   - gxx_linux-64
   - gcc_linux-64
+  - ccache
   - libgdal    >=2.3
   - arrow-cpp  <0.17.0
   - pyarrow    <0.17.0
   - thrift-cpp  0.13.*
+  - thrift      0.13.*
   - llvmdev     9.*
   - librdkafka <1.4
   - openjdk     8.*
