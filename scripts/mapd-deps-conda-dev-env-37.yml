@@ -10,6 +10,7 @@ dependencies:
   - gxx_linux-64
   - gcc_linux-64
   - ccache
+  - python=3.7
   - libgdal    >=2.3
   - arrow-cpp  <0.17.0
   - pyarrow    <0.17.0
@@ -43,4 +44,3 @@ dependencies:
   - xz
   - bzip2
   - zlib
-  - python=3.7
