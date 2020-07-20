@@ -118,6 +118,9 @@ class DBEngineImpl : public DBEngine {
     std::string data_path = db_path + + "/mapd_data";
 
     try {
+      registerArrowForeignStorage();
+      registerArrowCsvForeignStorage();
+
       auto is_new_db = !catalogExists(db_path);
       if (is_new_db) {
         cleanCatalog(db_path);
@@ -167,6 +170,8 @@ class DBEngineImpl : public DBEngine {
     std::cout << "DBE:reset" << std::endl;
     cursors_.clear();
     QR::reset();
+    ForeignStorageInterface::destroy();
+    data_mgr_.reset();
     base_path_.clear();
   }
 
