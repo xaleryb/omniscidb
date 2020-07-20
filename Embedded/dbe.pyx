@@ -95,6 +95,8 @@ cdef class PyRow:
     def getField(self, col_num, col_type):
         if col_type == <int>INT:
             return self.c_row.getInt(col_num);
+        if col_type == <int>FLOAT:
+            return self.c_row.getFloat(col_num);
         if col_type == <int>DOUBLE:
             return self.c_row.getDouble(col_num);
         if col_type == <int>STR:
@@ -158,10 +160,10 @@ ColumnDetailsTp = namedtuple("ColumnDetails", ["name", "type", "nullable",
 cdef class PyDbEngine:
     cdef DBEngine* c_dbe  #Hold a C++ instance which we're wrapping
 
-    def __cinit__(self, path, port, enable_columnar_output=True):
+    def __cinit__(self, path = None):
         try:
             #bpath = bytes(path, 'utf-8')
-            self.c_dbe = DBEngine.create(str(path), int(port), enable_columnar_output)
+            self.c_dbe = DBEngine.create(str(path))
             assert not self.closed
         except OSError as err:
             print("DBEngine: OS error: {0}".format(err))
@@ -229,3 +231,5 @@ cdef class PyDbEngine:
             for x in table_details
         ]
 
+    def get_tables(self):
+        return self.c_dbe.getTables()

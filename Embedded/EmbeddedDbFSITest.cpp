@@ -76,7 +76,7 @@ int main(int argc, char* argv[]) {
   }
 
   try {
-    DBEngine* dbe = DBEngine::create(base_path, calcite_port, columnar_output);
+    DBEngine* dbe = DBEngine::create(base_path);
     if (dbe) {
       dbe->executeDDL(R"(
 CREATE TEMPORARY TABLE test (

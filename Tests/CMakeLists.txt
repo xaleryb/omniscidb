@@ -85,6 +85,8 @@ if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
 endif()
 if(ENABLE_CUDA)
   add_executable(GpuSharedMemoryTest GpuSharedMemoryTest.cpp ResultSetTestUtils.cpp)
+elseif(ENABLE_DBE)
+  add_executable(EmbeddedDatabaseTest EmbeddedDatabaseTest.cpp)
 endif()
 
 # Tests + Microbenchmarks
@@ -160,6 +162,8 @@ endif()
 target_link_libraries(TableUpdateDeleteBenchmark benchmark ${EXECUTE_TEST_LIBS})
 if(ENABLE_CUDA)
   target_link_libraries(GpuSharedMemoryTest ${EXECUTE_TEST_LIBS})
+elseif(ENABLE_DBE)
+  target_link_libraries(EmbeddedDatabaseTest gtest DBEngine)
 endif()
 
 set(TEST_ARGS "--gtest_output=xml:../")
@@ -213,6 +217,8 @@ add_test(CreateAndDropTableDdlTest CreateAndDropTableDdlTest ${TEST_ARGS})
 add_test(ForeignTableDmlTest ForeignTableDmlTest ${TEST_ARGS})
 if(ENABLE_CUDA)
   add_test(GpuSharedMemoryTest GpuSharedMemoryTest ${TEST_ARGS})
+elseif(ENABLE_DBE)
+  add_test(EmbeddedDatabaseTest EmbeddedDatabaseTest ${TEST_ARGS})
 endif()
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
@@ -281,6 +287,8 @@ set(TEST_PROGRAMS
 
 if(ENABLE_CUDA)
   list(APPEND TEST_PROGRAMS GpuSharedMemoryTest)
+elseif(ENABLE_DBE)
+  list(APPEND TEST_PROGRAMS EmbeddedDatabaseTest)
 endif()
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")

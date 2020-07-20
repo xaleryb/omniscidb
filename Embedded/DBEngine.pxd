@@ -70,6 +70,7 @@ cdef extern from "DBETypes.h" namespace 'EmbeddedDatabase':
 
     cdef cppclass Row:
         int64_t getInt(size_t col)
+        float getFloat(size_t col)
         double getDouble(size_t col)
         string getStr(size_t col)
 
@@ -89,9 +90,15 @@ cdef extern from "DBEngine.h" namespace 'EmbeddedDatabase':
         vector[string] getTables()
         vector[ColumnDetails] getTableDetails(string)
         void createArrowTable(string, shared_ptr[CTable]&)
+        void createUser(string user_name, string password)
+        void dropUser(string user_name)
+        void createDatabase(string db_name)
+        void dropDatabase(string db_name)
+        bool setDatabase(string db_name)
+        bool login(string db_name, string user_name, string password)
         void reset()
         @staticmethod
-        DBEngine* create(string, int, bool)
+        DBEngine* create(string)
 
 cdef extern from "DBETypes.h" namespace 'EmbeddedDatabase::ColumnType':
     cdef ColumnType SMALLINT

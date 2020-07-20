@@ -19,6 +19,8 @@
 #include <arrow/table.h>
 #include "DBETypes.h"
 
+#define DEFAULT_BASE_PATH "tmp"
+
 namespace EmbeddedDatabase {
 
 class Cursor {
@@ -41,12 +43,18 @@ class DBEngine {
   void executeDDL(const std::string& query);
   Cursor* executeDML(const std::string& query);
   Cursor* executeRA(const std::string& query);
-  static DBEngine* create(const std::string& path,
-                          int calcite_port,
-                          bool enable_columnar_output);
+  void createArrowTable(const std::string&, std::shared_ptr<arrow::Table>& table);
+  static DBEngine* create(const std::string& path = DEFAULT_BASE_PATH);
   std::vector<std::string> getTables();
   std::vector<ColumnDetails> getTableDetails(const std::string& table_name);
-  void createArrowTable(const std::string&, std::shared_ptr<arrow::Table>& table);
+  void createUser(const std::string& user_name, const std::string& password);
+  void dropUser(const std::string& user_name);
+  void createDatabase(const std::string& db_name);
+  void dropDatabase(const std::string& db_name);
+  bool setDatabase(std::string& db_name);
+  bool login(std::string& db_name,
+             std::string& user_name,
+             const std::string& password);
 
  protected:
   DBEngine() {}
