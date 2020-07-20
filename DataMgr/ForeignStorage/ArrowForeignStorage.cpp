@@ -156,7 +156,11 @@ void ArrowForeignStorageBase::setNullValues(const std::vector<Frag>& fragments,
                     // it means we will insert sentinel values in read function
                     continue;
                   }
-                  auto data = chunk->data()->buffers[1]->mutable_data();
+                  // We can not use mutable_data in case of shared access
+                  // This is not realy safe, but it is the only way to do this without
+                  // copiing
+                  // TODO: add support for sentinel values to read_csv
+                  auto data = const_cast<uint8_t*>(chunk->data()->buffers[1]->data());
                   if (data) {  // TODO: to be checked and possibly reimplemented
                     // CHECK(data) << " is null";
                     T* dataT = reinterpret_cast<T*>(data);
@@ -168,15 +172,16 @@ void ArrowForeignStorageBase::setNullValues(const std::vector<Frag>& fragments,
                          ++bitmap_idx) {
                       T* res = dataT + bitmap_idx * 8;
                       for (int8_t bitmap_offset = 0; bitmap_offset < 8; ++bitmap_offset) {
-                        res[bitmap_offset] +=
-                            null_value *
-                            ((~bitmap_data[bitmap_idx] >> bitmap_offset) & 1);
+                        auto is_null = (~bitmap_data[bitmap_idx] >> bitmap_offset) & 1;
+                        auto val = is_null ? null_value : res[bitmap_offset];
+                        res[bitmap_offset] = val;
                       }
                     }
 
                     for (int64_t j = bitmap_length * 8; j < length; ++j) {
-                      dataT[j] +=
-                          null_value * ((~bitmap_data[bitmap_length] >> (j % 8)) & 1);
+                      auto is_null = (~bitmap_data[bitmap_length] >> (j % 8)) & 1;
+                      auto val = is_null ? null_value : dataT[j];
+                      dataT[j] = val;
                     }
                   }
                 }
@@ -765,7 +770,7 @@ static SQLTypeInfo getOmnisciType(const arrow::DataType& type) {
       return SQLTypeInfo(kDOUBLE, false);
     case Type::STRING: {
       auto type = SQLTypeInfo(kTEXT, false, kENCODING_DICT);
-      // this is needed because createTable forces type.size to be equal to 
+      // this is needed because createTable forces type.size to be equal to
       // comp_param / 8, no matter what type.size you set here
       type.set_comp_param(sizeof(uint32_t) * 8);
       return type;
