@@ -76,7 +76,12 @@ int main(int argc, char* argv[]) {
   }
 
   try {
-    DBEngine* dbe = DBEngine::create(base_path, calcite_port, columnar_output);
+//    DBEngine* dbe = DBEngine::create(base_path);
+    std::map<std::string, std::string> parameters = {
+      {"path", base_path},
+      {"port", std::to_string(calcite_port)}};
+    DBEngine* dbe = DBEngine::create(parameters);
+
     if (dbe) {
       auto memory_pool = arrow::default_memory_pool();
       auto arrow_parse_options = arrow::csv::ParseOptions::Defaults();
