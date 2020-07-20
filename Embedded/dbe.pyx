@@ -4,6 +4,7 @@ from cython.operator cimport dereference as deref
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string
 from libc.stdint cimport int64_t, uint64_t, uint32_t
+from libcpp.map cimport map
 from libcpp.memory cimport shared_ptr
 from libcpp cimport bool
 from libcpp.pair cimport pair
@@ -159,17 +160,19 @@ ColumnDetailsTp = namedtuple("ColumnDetails", ["name", "type", "nullable",
                                              "is_array"])
 cdef class PyDbEngine:
     cdef DBEngine* c_dbe  #Hold a C++ instance which we're wrapping
+    cdef map[string, string] c_parameters
 
-    def __cinit__(self, path = None):
+    def __cinit__(self, **kwargs):
         try:
-            #bpath = bytes(path, 'utf-8')
-            self.c_dbe = DBEngine.create(str(path))
+            for key, value in kwargs.items():
+                self.c_parameters[key] = str(value)
+            self.c_dbe = DBEngine.create(self.c_parameters)
             assert not self.closed
         except OSError as err:
             print("DBEngine: OS error: {0}".format(err))
             raise
         except ValueError:
-            print("DBEngine: ValueError: Could not convert data to an integer.")
+            print("DBEngine: ValueError: Could not convert data to string")
             raise
         except:
             print("DBEngine: Unexpected error while constructing", sys.exc_info()[0], sys.exc_info()[1])

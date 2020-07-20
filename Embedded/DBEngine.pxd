@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 
 from libc.stdint cimport int64_t, uint64_t, uint32_t, uint8_t
+from libcpp.map cimport map
 from libcpp.memory cimport shared_ptr
 from libcpp.string cimport string
 from libcpp cimport bool, nullptr_t, nullptr
@@ -98,7 +99,7 @@ cdef extern from "DBEngine.h" namespace 'EmbeddedDatabase':
         bool login(string db_name, string user_name, string password)
         void reset()
         @staticmethod
-        DBEngine* create(string)
+        DBEngine* create(map[string, string])
 
 cdef extern from "DBETypes.h" namespace 'EmbeddedDatabase::ColumnType':
     cdef ColumnType SMALLINT

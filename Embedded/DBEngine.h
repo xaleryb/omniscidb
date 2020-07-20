@@ -19,7 +19,8 @@
 #include <arrow/table.h>
 #include "DBETypes.h"
 
-#define DEFAULT_BASE_PATH "tmp"
+#define DEFAULT_DATABASE_PATH "tmp"
+#define DEFAULT_CALCITE_PORT 3279
 
 namespace EmbeddedDatabase {
 
@@ -44,7 +45,8 @@ class DBEngine {
   Cursor* executeDML(const std::string& query);
   Cursor* executeRA(const std::string& query);
   void createArrowTable(const std::string&, std::shared_ptr<arrow::Table>& table);
-  static DBEngine* create(const std::string& path = DEFAULT_BASE_PATH);
+  static DBEngine* create(const std::string& path = DEFAULT_DATABASE_PATH, int port = DEFAULT_CALCITE_PORT);
+  static DBEngine* create(const std::map<std::string, std::string>& parameters);
   std::vector<std::string> getTables();
   std::vector<ColumnDetails> getTableDetails(const std::string& table_name);
   void createUser(const std::string& user_name, const std::string& password);

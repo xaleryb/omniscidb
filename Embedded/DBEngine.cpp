@@ -27,7 +27,7 @@
 #include "Parser/parser.h"
 #include "QueryEngine/Execute.h"
 
-#define CALCITEPORT 3279
+extern bool g_enable_union;
 
 using QR = QueryRunner::QueryRunner;
 
@@ -103,17 +103,17 @@ class CursorImpl : public Cursor {
 class DBEngineImpl : public DBEngine {
 
  public:
-  DBEngineImpl(const std::string& base_path) {
-    if (init(base_path)) {
+  DBEngineImpl(const std::string& base_path, int port) {
+    if (init(base_path, port)) {
       std::cout << "DBEngine initialization succeed" << std::endl;
     } else {
       std::cerr << "DBEngine initialization failed" << std::endl;
     }
   }
 
-  bool init(const std::string& base_path) {
+  bool init(const std::string& base_path, int port) {
     SystemParameters mapd_parms;
-    std::string db_path = base_path.empty() ? DEFAULT_BASE_PATH : base_path;
+    std::string db_path = base_path.empty() ? DEFAULT_DATABASE_PATH : base_path;
     std::cout << "DBE:init(" << db_path << ")" << std::endl;
     std::string data_path = db_path + + "/mapd_data";
 
@@ -127,7 +127,7 @@ class DBEngineImpl : public DBEngine {
         createCatalog(db_path);
       }
       data_mgr_= std::make_shared<Data_Namespace::DataMgr>(data_path, mapd_parms, false, 0);
-      calcite_ = std::make_shared<Calcite>(-1, CALCITEPORT, db_path, 1024, 5000);
+      calcite_ = std::make_shared<Calcite>(-1, port, db_path, 1024, 5000);
 
       ExtensionFunctionsWhitelist::add(calcite_->getExtensionFunctionWhitelist());
       // TODO: add UDFs with engine parameters handling
@@ -480,14 +480,31 @@ class DBEngineImpl : public DBEngine {
     "mapd_export"};
 };
 
-/**
- * Creates DBEngine instance
- *
- * @param sPath Path to the existing database
- */
-DBEngine* DBEngine::create(const std::string& path) {
+DBEngine* DBEngine::create(const std::string& path, int port) {
+  g_enable_union = false;
   g_enable_columnar_output = true;
-  return new DBEngineImpl(path);
+  return new DBEngineImpl(path, port);
+}
+
+DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters) {
+  std::string path = DEFAULT_DATABASE_PATH;
+  int port = DEFAULT_CALCITE_PORT;
+  g_enable_union = false;
+  g_enable_columnar_output = true;
+  for (const auto& [key, value]: parameters) {
+    if (key == "path") {
+      path = value;
+    } else if (key == "port") {
+      port = std::stoi(value);
+    } else if (key == "enable_columnar_output") {
+      g_enable_columnar_output = std::stoi(value);
+    } else if (key == "enable_union") {
+      g_enable_union = std::stoi(value);
+    } else if (key == "enable_debug_timer") {
+      g_enable_debug_timer = std::stoi(value);
+    }
+  }
+  return new DBEngineImpl(path, port);
 }
 
 /** DBEngine downcasting methods */
