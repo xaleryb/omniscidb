@@ -162,9 +162,8 @@ void convert_column(ResultSetPtr result,
   if (result->isZeroCopyColumnarConversionPossible(col)) {
     data_ptr = result->getColumnarBuffer(col);
   } else {
-    values.reset(new int8_t[entry_count * sizeof(C_TYPE)]);
-    result->copyColumnIntoBuffer(col, values.get(), entry_count * sizeof(C_TYPE));
-    data_ptr = values.get();
+    data_ptr = new int8_t[entry_count * sizeof(C_TYPE)];
+    result->copyColumnIntoBuffer(col, const_cast<int8_t*>(data_ptr), entry_count * sizeof(C_TYPE));
   }
 
   int64_t null_count = 0;

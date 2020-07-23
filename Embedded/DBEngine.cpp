@@ -41,15 +41,13 @@ class DBEngineImpl;
 class CursorImpl : public Cursor {
  public:
   CursorImpl(std::shared_ptr<ResultSet> result_set,
-             std::vector<std::string> col_names,
-             Data_Namespace::DataMgr& data_mgr)
-      : result_set_(result_set), col_names_(col_names), data_mgr_(&data_mgr) {}
+             std::vector<std::string> col_names)
+      : result_set_(result_set), col_names_(col_names) {}
 
   ~CursorImpl() {
     col_names_.clear();
     record_batch_.reset();
     result_set_.reset();
-    converter_.reset();
   }
 
   size_t getColCount() { return result_set_ ? result_set_->colCount() : 0; }
@@ -80,9 +78,9 @@ class CursorImpl : public Cursor {
     if (col_count > 0) {
       auto row_count = getRowCount();
       if (row_count > 0) {
-        converter_ = std::make_unique<ArrowResultSetConverter>(
+        auto converter = std::make_unique<ArrowResultSetConverter>(
           result_set_, col_names_, -1);
-        record_batch_ = converter_->convertToArrow();
+        record_batch_ = converter->convertToArrow();
         return record_batch_;
       }
     }
@@ -92,9 +90,7 @@ class CursorImpl : public Cursor {
  private:
   std::shared_ptr<ResultSet> result_set_;
   std::vector<std::string> col_names_;
-  Data_Namespace::DataMgr* data_mgr_;
   std::shared_ptr<arrow::RecordBatch> record_batch_;
-  std::unique_ptr<ArrowResultSetConverter> converter_;
 };
 
 /**
@@ -168,6 +164,10 @@ class DBEngineImpl : public DBEngine {
 
   void reset() {
     std::cout << "DBE:reset" << std::endl;
+    if (calcite_) {
+      calcite_->close_calcite_server();
+      calcite_.reset();
+    }
     cursors_.clear();
     QR::reset();
     ForeignStorageInterface::destroy();
@@ -229,7 +229,7 @@ class DBEngineImpl : public DBEngine {
           col_names.push_back(target.get_resname());
         }
         auto rs = execution_result.getRows();
-        cursors_.emplace_back(new CursorImpl(rs, col_names, QR::get()->getCatalog()->getDataMgr()));
+        cursors_.emplace_back(new CursorImpl(rs, col_names));
         return cursors_.back();
       }
 
@@ -265,7 +265,7 @@ class DBEngineImpl : public DBEngine {
         col_names.push_back(target.get_resname());
       }
       auto rs = execution_result.getRows();
-      cursors_.emplace_back(new CursorImpl(rs, col_names, QR::get()->getCatalog()->getDataMgr()));
+      cursors_.emplace_back(new CursorImpl(rs, col_names));
       return cursors_.back();
     } catch (std::exception const& e) {
       std::cerr << "DBE:executeRA: " << e.what() << std::endl;
