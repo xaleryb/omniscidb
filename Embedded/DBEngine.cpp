@@ -502,7 +502,7 @@ DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters)
       g_enable_union = std::stoi(value);
     } else if (key == "enable_debug_timer") {
       g_enable_debug_timer = std::stoi(value);
-    } else if (key == "enable_debug_timer") {
+    } else if (key == "enable_lazy_fetch") {
       g_enable_lazy_fetch = std::stoi("enable_lazy_fetch");
     }
 
