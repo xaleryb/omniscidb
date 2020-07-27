@@ -100,9 +100,7 @@ class DBEngineImpl : public DBEngine {
 
  public:
   DBEngineImpl(const std::string& base_path, int port) {
-    if (init(base_path, port)) {
-      std::cout << "DBEngine initialization succeed" << std::endl;
-    } else {
+    if (!init(base_path, port)) {
       std::cerr << "DBEngine initialization failed" << std::endl;
     }
   }
@@ -110,7 +108,6 @@ class DBEngineImpl : public DBEngine {
   bool init(const std::string& base_path, int port) {
     SystemParameters mapd_parms;
     std::string db_path = base_path.empty() ? DEFAULT_DATABASE_PATH : base_path;
-    std::cout << "DBE:init(" << db_path << ")" << std::endl;
     std::string data_path = db_path + + "/mapd_data";
 
     try {
@@ -163,7 +160,6 @@ class DBEngineImpl : public DBEngine {
  }
 
   void reset() {
-    std::cout << "DBE:reset" << std::endl;
     if (calcite_) {
       calcite_->close_calcite_server();
       calcite_.reset();
@@ -503,9 +499,8 @@ DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters)
     } else if (key == "enable_debug_timer") {
       g_enable_debug_timer = std::stoi(value);
     } else if (key == "enable_lazy_fetch") {
-      g_enable_lazy_fetch = std::stoi("enable_lazy_fetch");
+      g_enable_lazy_fetch = std::stoi(value);
     }
-
   }
   return new DBEngineImpl(path, port);
 }
