@@ -164,14 +164,12 @@ void convert_column(ResultSetPtr result,
       reinterpret_cast<const uint8_t*>(
       result->getColumnarBuffer(col)), buf_size));
   } else {
-    values.reset();
     AllocateBuffer(buf_size, &values);
     result->copyColumnIntoBuffer(col, 
       reinterpret_cast<int8_t*>(values->mutable_data()), buf_size);
   }
 
   int64_t null_count = 0;
-  is_valid.reset();
   AllocateBuffer((entry_count + 7) / 8, &is_valid);
   auto is_valid_data = is_valid->mutable_data();
 
