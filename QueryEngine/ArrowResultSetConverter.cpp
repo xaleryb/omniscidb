@@ -150,27 +150,33 @@ using null_type_t = typename null_type<TYPE>::type;
 template <typename C_TYPE, typename ARROW_TYPE = typename CTypeTraits<C_TYPE>::ArrowType>
 void convert_column(ResultSetPtr result,
                     size_t col,
-                    std::unique_ptr<int8_t[]>& values,
-                    std::unique_ptr<uint8_t[]>& is_valid,
+                    std::shared_ptr<Buffer>& values,
+                    std::shared_ptr<Buffer>& is_valid,
                     size_t entry_count,
                     std::shared_ptr<Array>& out) {
   CHECK(sizeof(C_TYPE) == result->getColType(col).get_size());
   CHECK(!values);
   CHECK(!is_valid);
 
-  const int8_t* data_ptr;
+  const int64_t buf_size = entry_count * sizeof(C_TYPE);
   if (result->isZeroCopyColumnarConversionPossible(col)) {
-    data_ptr = result->getColumnarBuffer(col);
+    values.reset(new Buffer(
+      reinterpret_cast<const uint8_t*>(
+      result->getColumnarBuffer(col)), buf_size));
   } else {
-    data_ptr = new int8_t[entry_count * sizeof(C_TYPE)];
-    result->copyColumnIntoBuffer(col, const_cast<int8_t*>(data_ptr), entry_count * sizeof(C_TYPE));
+    values.reset();
+    AllocateBuffer(buf_size, &values);
+    result->copyColumnIntoBuffer(col, 
+      reinterpret_cast<int8_t*>(values->mutable_data()), buf_size);
   }
 
   int64_t null_count = 0;
-  is_valid.reset(new uint8_t[(entry_count + 7) / 8]);
+  is_valid.reset();
+  AllocateBuffer((entry_count + 7) / 8, &is_valid);
+  auto is_valid_data = is_valid->mutable_data();
 
   const null_type_t<C_TYPE>* vals =
-      reinterpret_cast<const null_type_t<C_TYPE>*>(data_ptr);
+      reinterpret_cast<const null_type_t<C_TYPE>*>(values->data());
   null_type_t<C_TYPE> null_val = null_type<C_TYPE>::value;
 
   size_t unroll_count = entry_count & 0xFFFFFFFFFFFFFFF8ULL;
@@ -201,7 +207,7 @@ void convert_column(ResultSetPtr result,
     valid = vals[i + 7] != null_val;
     valid_byte |= valid << 7;
     null_count += !valid;
-    is_valid[i >> 3] = valid_byte;
+    is_valid_data[i >> 3] = valid_byte;
   }
   if (unroll_count != entry_count) {
     uint8_t valid_byte = 0;
@@ -210,7 +216,7 @@ void convert_column(ResultSetPtr result,
       valid_byte |= valid << (i & 7);
       null_count += !valid;
     }
-    is_valid[unroll_count >> 3] = valid_byte;
+    is_valid_data[unroll_count >> 3] = valid_byte;
   }
 
   if (!null_count)
@@ -219,14 +225,10 @@ void convert_column(ResultSetPtr result,
   // TODO: support date/time + scaling
   // TODO: support booleans
   // TODO: support strings (dictionaries)
-  std::shared_ptr<Buffer> data(new Buffer(reinterpret_cast<const uint8_t*>(data_ptr),
-                                          entry_count * sizeof(C_TYPE)));
   if (null_count) {
-    std::shared_ptr<Buffer> null_bitmap(
-        new Buffer(is_valid.get(), (entry_count + 7) / 8));
-    out.reset(new NumericArray<ARROW_TYPE>(entry_count, data, null_bitmap, null_count));
+    out.reset(new NumericArray<ARROW_TYPE>(entry_count, values, is_valid, null_count));
   } else {
-    out.reset(new NumericArray<ARROW_TYPE>(entry_count, data));
+    out.reset(new NumericArray<ARROW_TYPE>(entry_count, values));
   }
 }
 
@@ -613,8 +615,8 @@ std::shared_ptr<arrow::RecordBatch> ArrowResultSetConverter::getArrowBatch(
     return seg_row_count;
   };
 
-  auto convert_columns = [&](std::vector<std::unique_ptr<int8_t[]>>& values,
-                             std::vector<std::unique_ptr<uint8_t[]>>& is_valid,
+  auto convert_columns = [&](std::vector<std::shared_ptr<Buffer>>& values,
+                             std::vector<std::shared_ptr<Buffer>>& is_valid,
                              std::vector<std::shared_ptr<arrow::Array>>& result,
                              const std::vector<bool>& non_lazy_cols,
                              const size_t start_col,
