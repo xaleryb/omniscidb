@@ -150,14 +150,12 @@ using null_type_t = typename null_type<TYPE>::type;
 template <typename C_TYPE, typename ARROW_TYPE = typename CTypeTraits<C_TYPE>::ArrowType>
 void convert_column(ResultSetPtr result,
                     size_t col,
-                    std::shared_ptr<Buffer>& values,
-                    std::shared_ptr<Buffer>& is_valid,
                     size_t entry_count,
                     std::shared_ptr<Array>& out) {
   CHECK(sizeof(C_TYPE) == result->getColType(col).get_size());
-  CHECK(!values);
-  CHECK(!is_valid);
 
+  std::shared_ptr<Buffer> values;
+  std::shared_ptr<Buffer> is_valid;
   const int64_t buf_size = entry_count * sizeof(C_TYPE);
   if (result->isZeroCopyColumnarConversionPossible(col)) {
     values.reset(new Buffer(
@@ -613,9 +611,7 @@ std::shared_ptr<arrow::RecordBatch> ArrowResultSetConverter::getArrowBatch(
     return seg_row_count;
   };
 
-  auto convert_columns = [&](std::vector<std::shared_ptr<Buffer>>& values,
-                             std::vector<std::shared_ptr<Buffer>>& is_valid,
-                             std::vector<std::shared_ptr<arrow::Array>>& result,
+  auto convert_columns = [&](std::vector<std::shared_ptr<arrow::Array>>& result,
                              const std::vector<bool>& non_lazy_cols,
                              const size_t start_col,
                              const size_t end_col) {
@@ -628,48 +624,36 @@ std::shared_ptr<arrow::RecordBatch> ArrowResultSetConverter::getArrowBatch(
       switch (column.physical_type) {
         // TODO: support booleans
         // case kBOOLEAN:
-        // convert_column<uint8_t, BooleanType>(
-        //    results_, col, values[col], is_valid[col], entry_count, result[col]);
+        // convert_column<uint8_t, BooleanType>(results_, col, entry_count, result[col]);
         // break;
         case kTINYINT:
-          convert_column<int8_t>(
-              results_, col, values[col], is_valid[col], entry_count, result[col]);
+          convert_column<int8_t>(results_, col, entry_count, result[col]);
           break;
         case kSMALLINT:
-          convert_column<int16_t>(
-              results_, col, values[col], is_valid[col], entry_count, result[col]);
+          convert_column<int16_t>(results_, col, entry_count, result[col]);
           break;
         case kINT:
-          convert_column<int32_t>(
-              results_, col, values[col], is_valid[col], entry_count, result[col]);
+          convert_column<int32_t>(results_, col, entry_count, result[col]);
           break;
         case kBIGINT:
-          convert_column<int64_t>(
-              results_, col, values[col], is_valid[col], entry_count, result[col]);
+          convert_column<int64_t>(results_, col, entry_count, result[col]);
           break;
         case kFLOAT:
-          convert_column<float>(
-              results_, col, values[col], is_valid[col], entry_count, result[col]);
+          convert_column<float>(results_, col, entry_count, result[col]);
           break;
         case kDOUBLE:
-          convert_column<double>(
-              results_, col, values[col], is_valid[col], entry_count, result[col]);
+          convert_column<double>(results_, col, entry_count, result[col]);
           break;
         // case kTIME:
-        //  convert_column<int32_t>(
-        //      results_, col, values[col], is_valid[col], entry_count, result[col]);
+        //  convert_column<int32_t>(results_, col, entry_count, result[col]);
         //  break;
         // case kDATE:
         //  device_type_ == ExecutorDeviceType::GPU
-        //      ? convert_column<int64_t>(
-        //            results_, col, values[col], is_valid[col], entry_count, result[col])
-        //      : convert_column<int32_t>(
-        //            results_, col, values[col], is_valid[col], entry_count,
-        //            result[col]);
+        //      ? convert_column<int64_t>(results_, col, entry_count, result[col])
+        //      : convert_column<int32_t>(results_, col, entry_count, result[col]);
         //  break;
         // case kTIMESTAMP:
-        //  convert_column<int64_t>(
-        //      results_, col, values[col], is_valid[col], entry_count, result[col]);
+        //  convert_column<int64_t>(results_, col, entry_count, result[col]);
         //  break;
         default:
           throw std::runtime_error(column.col_type.get_type_name() +
@@ -725,8 +709,6 @@ std::shared_ptr<arrow::RecordBatch> ArrowResultSetConverter::getArrowBatch(
       non_lazy_col_pos.emplace_back(col_count);
     }
 
-    values_.resize(col_count);
-    is_valid_.resize(col_count);
     std::vector<std::future<void>> child_threads;
     size_t num_threads =
         std::min(multithreaded ? (size_t)cpu_threads() : (size_t)1, non_lazy_col_count);
@@ -742,8 +724,6 @@ std::shared_ptr<arrow::RecordBatch> ArrowResultSetConverter::getArrowBatch(
           non_lazy_col_pos.empty() ? end_col : non_lazy_col_pos[end_col];
       child_threads.push_back(std::async(std::launch::async,
                                          convert_columns,
-                                         std::ref(values_),
-                                         std::ref(is_valid_),
                                          std::ref(result_columns),
                                          non_lazy_cols,
                                          phys_start_col,
