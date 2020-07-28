@@ -138,10 +138,10 @@ ExecutionEngineWrapper::ExecutionEngineWrapper(llvm::ExecutionEngine* execution_
     : execution_engine_(execution_engine) {
   if (execution_engine_) {
     if (co.register_intel_jit_listener) {
-      intel_jit_listener_.reset(llvm::JITEventListener::createIntelJITEventListener());
-      CHECK(intel_jit_listener_);
-      execution_engine_->RegisterJITEventListener(intel_jit_listener_.get());
-      LOG(INFO) << "Registered IntelJITEventListener";
+      // intel_jit_listener_.reset(llvm::JITEventListener::createIntelJITEventListener());
+      // CHECK(intel_jit_listener_);
+      // execution_engine_->RegisterJITEventListener(intel_jit_listener_.get());
+      // LOG(INFO) << "Registered IntelJITEventListener";
     }
   }
 }
