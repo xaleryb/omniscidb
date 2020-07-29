@@ -34,8 +34,6 @@ export EXTRA_CMAKE_OPTIONS="$EXTRA_CMAKE_OPTIONS -DCMAKE_C_COMPILER=${CC} -DCMAK
 # will be disabled:
 export RUN_TESTS=0
 
-export INSTALL_BASE=
-
 if [[ "$RUN_TESTS" == "0" ]]
 then
    export EXTRA_CMAKE_OPTIONS="$EXTRA_CMAKE_OPTIONS -DENABLE_TESTS=off"
@@ -59,7 +57,6 @@ cd build
 
 cmake -Wno-dev \
     -DCMAKE_PREFIX_PATH=$PREFIX \
-    -DCMAKE_INSTALL_PREFIX=$PREFIX/$INSTALL_BASE \
     -DCMAKE_BUILD_TYPE=release \
     -DMAPD_DOCS_DOWNLOAD=off \
     -DENABLE_AWS_S3=off \
@@ -92,6 +89,6 @@ else
     echo "Skipping sanity tests"
 fi
 
-make install
+make install DESTDIR=$PREFIX
 
 #conda deactivate
