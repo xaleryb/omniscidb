@@ -17,6 +17,7 @@ build:
 
 requirements:
   build:
+    - pip
     - go-cgo
     - {{ compiler('cxx') }}
     - clangdev

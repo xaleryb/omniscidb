@@ -56,7 +56,7 @@ cd build
 #pip install "pyarrow==0.16"
 
 cmake -Wno-dev \
-    -DCMAKE_PREFIX_PATH=$PREFIX \
+    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DCMAKE_BUILD_TYPE=release \
     -DMAPD_DOCS_DOWNLOAD=off \
     -DENABLE_AWS_S3=off \
@@ -88,7 +88,8 @@ then
 else
     echo "Skipping sanity tests"
 fi
-
+env
+export BUILD_PREFIX=$PREFIX
 make install DESTDIR=$PREFIX
 
 #conda deactivate
