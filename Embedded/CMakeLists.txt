@@ -30,7 +30,7 @@ IF(PYTHON)
         cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -v -e .
         DEPENDS Python)
 
-    install(CODE "execute_process(COMMAND pip install -e ${CMAKE_CURRENT_BINARY_DIR})")
+    install(CODE "execute_process(COMMAND pip install ${CMAKE_CURRENT_BINARY_DIR})")
 
 ENDIF(PYTHON)
 
