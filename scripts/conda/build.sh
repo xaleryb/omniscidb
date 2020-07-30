@@ -44,18 +44,13 @@ fi
 
 export EXTRA_CMAKE_OPTIONS="$EXTRA_CMAKE_OPTIONS -DBoost_NO_BOOST_CMAKE=on"
 
-#conda activate omnisci-dev-37
-
-
+# Omnisci UDF support uses CLangTool for parsing Load-time UDF C++
+# code to AST. If the C++ code uses C++ std headers, we need to
+# specify the locations of include directories:
 . ${RECIPE_DIR}/get_cxx_include_path.sh
 export CPLUS_INCLUDE_PATH=$(get_cxx_include_path)
 
-mkdir -p build
-cd build
-
-#pip install "pyarrow==0.16"
-
-cmake -Wno-dev \
+cmake -S . -B build/ -Wno-dev \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DCMAKE_BUILD_TYPE=release \
     -DMAPD_DOCS_DOWNLOAD=off \
@@ -67,20 +62,16 @@ cmake -Wno-dev \
     -DENABLE_CUDA=off\
     -DENABLE_DBE=ON \
     -DENABLE_FSI=ON \
-    $EXTRA_CMAKE_OPTIONS \
-    ..
+    $EXTRA_CMAKE_OPTIONS
 
-make -j $CPU_COUNT
+cd build
+
+export MAKEFLAGS="DESTDIR=$PREFIX BUILD_PREFIX=$CONDA_PREFIX"
+make -j $CPU_COUNT || make --trace  # trace a problem sequentially
 
 
 if [[ "$RUN_TESTS" == "2" ]]
 then
-    # Omnisci UDF support uses CLangTool for parsing Load-time UDF C++
-    # code to AST. If the C++ code uses C++ std headers, we need to
-    # specify the locations of include directories:
-    . ${RECIPE_DIR}/get_cxx_include_path.sh
-    export CPLUS_INCLUDE_PATH=$(get_cxx_include_path)
-
     mkdir tmp
     $PREFIX/bin/initdb tmp
     make sanity_tests
@@ -88,8 +79,5 @@ then
 else
     echo "Skipping sanity tests"
 fi
-env
-export BUILD_PREFIX=$PREFIX
-make install DESTDIR=$PREFIX
 
-#conda deactivate
+make install
