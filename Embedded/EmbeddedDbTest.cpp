@@ -65,22 +65,11 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  if (!boost::filesystem::exists(base_path)) {
-    std::cerr << "Catalog basepath " + base_path + " does not exist.\n";
-    return 1;
-  }
-  std::string catalogs_path = base_path + "/mapd_catalogs";
-  if (!boost::filesystem::exists(catalogs_path)) {
-    std::cerr << "OmniSci catalogs is not  initialized at " + base_path << std::endl;
-    return 1;
-  }
-
   try {
-//    DBEngine* dbe = DBEngine::create(base_path);
     std::map<std::string, std::string> parameters = {
       {"path", base_path},
       {"port", std::to_string(calcite_port)}};
-    DBEngine* dbe = DBEngine::create(parameters);
+    auto dbe = DBEngine::create(parameters);
 
     if (dbe) {
       auto memory_pool = arrow::default_memory_pool();
@@ -116,7 +105,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "Cursor is NULL" << std::endl;
       }
     }
-    delete dbe;
   } catch (std::exception& e) {
     std::cerr << "Exception: " << e.what() << "\n";
   }

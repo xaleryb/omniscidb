@@ -3,8 +3,10 @@ import numpy as np
 import pyarrow as pa
 from pyarrow import csv
 import dbe
+import ctypes
+ctypes._dlopen('libDBEngine.so', ctypes.RTLD_GLOBAL)
 
-d = dbe.PyDbEngine('data', 9092)
+d = dbe.PyDbEngine(path='data', port=9092)
 assert not d.closed
 print("DDL")
 r = d.executeDDL("""

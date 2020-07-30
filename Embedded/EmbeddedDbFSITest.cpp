@@ -65,16 +65,6 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  if (!boost::filesystem::exists(base_path)) {
-    std::cerr << "Catalog basepath " + base_path + " does not exist.\n";
-    return 1;
-  }
-  std::string catalogs_path = base_path + "/mapd_catalogs";
-  if (!boost::filesystem::exists(catalogs_path)) {
-    std::cerr << "OmniSci catalogs is not  initialized at " + base_path << std::endl;
-    return 1;
-  }
-
   try {
     std::map<std::string, std::string> parameters = {
       {"path", base_path},
@@ -138,7 +128,7 @@ dropoff_puma BIGINT) WITH (storage_type='CSV:/localdisk1/amalakho/omniscidb/Test
       for (auto& item : schema) {
         std::cout << item.col_name << std::endl;
       }
-      Cursor* cursor = dbe->executeDML("select count(*) from test");
+      auto cursor = dbe->executeDML("select count(*) from test");
       if (cursor) {
         std::cout << cursor->getRowCount() << " rows selected" << std::endl;
         std::shared_ptr<arrow::RecordBatch> rbatch = cursor->getArrowRecordBatch();
