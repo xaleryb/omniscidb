@@ -57,7 +57,7 @@ requirements:
     - openssl
     - snappy
     - thrift-cpp
-    - tbb-devel
+    - tbb-devel =2020.1
   run:
     - boost-cpp
     - bzip2
@@ -68,6 +68,7 @@ requirements:
     - xz
     - zlib
     - pyarrow =0.16
+    - tbb =2020.1
   run_constrained:
     - arrow-cpp-proc * {{ build_ext }}
 
