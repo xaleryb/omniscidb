@@ -115,11 +115,13 @@ about:
   summary: 'The OmniSci database'
 
   description: |
-    OmniSciDB is an in-memory, column store, SQL relational database
-    that was designed from the ground up to run on GPUs.
+    OmniSci Engine is OmniSci DB based dataframe processing engine.
 
-    This recipe provides both CUDA enabled and CUDA disabled omniscidb
-    packages.
+    LEGAL NOTICE: Use of this software package is subject to the software license
+    agreement (as set forth above, in the license section of the installed Conda
+    package and/or the README file) and all notices, disclaimers or license terms for
+    third party or open source software included in or with the software.
+    Third party programs: https://github.com/intel-go/omniscidb/blob/conda_build_changes/tpp.txt
   doc_url: https://www.omnisci.com/docs/latest/
   dev_url: https://github.com/omnisci/omniscidb
 
