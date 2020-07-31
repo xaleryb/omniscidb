@@ -49,7 +49,7 @@ else
     GCCVERSION=$(basename $(dirname $($GXX -print-libgcc-file-name)))
 fi
 
-. ./get_cxx_include_path.sh
+. $(dirname "${BASH_SOURCE[0]}")/get_cxx_include_path.sh
 export CPLUS_INCLUDE_PATH=$(get_cxx_include_path)
 
 set CMAKE_COMPILERS="-DCMAKE_C_COMPILER=$CMAKE_CC -DCMAKE_CXX_COMPILER=$CMAKE_CXX"
@@ -71,9 +71,7 @@ cmake -S . -B build -Wno-dev \
     -DENABLE_DBE=ON
 
 cd build
-# preventing races by executing vulnerable targets first
-#make PatchParser PatchScanner thrift_gen
-VERBOSE=1 make -j #|| make --trace || exit 1  # running sequentualy and enabling trace in case of failures
+make -j
 make install || exit 1
 cd ..
 # copy initdb to mapd_initdb to avoid conflict with psql initdb
