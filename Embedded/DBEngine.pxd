@@ -2,7 +2,7 @@ from __future__ import absolute_import
 
 from libc.stdint cimport int64_t, uint64_t, uint32_t, uint8_t
 from libcpp.map cimport map
-from libcpp.memory cimport shared_ptr
+from libcpp.memory cimport shared_ptr, unique_ptr
 from libcpp.string cimport string
 from libcpp cimport bool, nullptr_t, nullptr
 from libcpp.pair cimport pair
@@ -85,9 +85,8 @@ cdef extern from "DBEngine.h" namespace 'EmbeddedDatabase':
 
     cdef cppclass DBEngine:
         void executeDDL(string)
-        shared_ptr[Cursor] executeDML(string)
-        shared_ptr[Cursor] executeRA(string)
-#        shared_ptr[ResultSet] executeDML(string)
+        unique_ptr[Cursor] executeDML(string)
+        unique_ptr[Cursor] executeRA(string)
         vector[string] getTables()
         vector[ColumnDetails] getTableDetails(string)
         void createArrowTable(string, shared_ptr[CTable]&)

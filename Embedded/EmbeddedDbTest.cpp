@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
       for (auto& item : schema) {
         std::cout << item.col_name << std::endl;
       }
-      Cursor* cursor = dbe->executeDML("select * from test");
+      auto cursor = dbe->executeDML("select * from test");
       if (cursor) {
         std::cout << cursor->getRowCount() << " rows selected" << std::endl;
         std::shared_ptr<arrow::RecordBatch> rbatch = cursor->getArrowRecordBatch();
