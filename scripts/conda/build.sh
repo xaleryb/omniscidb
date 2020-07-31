@@ -13,7 +13,7 @@ export CXXFLAGS="`echo $CXXFLAGS | sed 's/-fPIC//'`"
 # (IIRC, it is needed for CUDA support):
 export CGO_ENABLED=1
 export CGO_LDFLAGS=
-export CGO_CFLAGS=$CFLAGS
+#export CGO_CFLAGS=$CFLAGS
 export CGO_CPPFLAGS=
 
 if [ $(uname) == Darwin ]; then
@@ -49,6 +49,9 @@ else
     GCCVERSION=$(basename $(dirname $($GXX -print-libgcc-file-name)))
 fi
 
+. ./get_cxx_include_path.sh
+export CPLUS_INCLUDE_PATH=$(get_cxx_include_path)
+
 set CMAKE_COMPILERS="-DCMAKE_C_COMPILER=$CMAKE_CC -DCMAKE_CXX_COMPILER=$CMAKE_CXX"
 
 cmake -S . -B build -Wno-dev \
@@ -65,23 +68,21 @@ cmake -S . -B build -Wno-dev \
     -DENABLE_PROFILER=OFF\
     -DENABLE_TESTS=OFF\
     -DENABLE_FSI=ON\
-    -DENABLE_TBB=ON\
-    -DENABLE_DBE=ON\
-    || exit 1
+    -DENABLE_DBE=ON
 
-pushd build
+cd build
 # preventing races by executing vulnerable targets first
-make PatchParser PatchScanner thrift_gen
-make -j || make --trace || exit 1  # running sequentualy and enabling trace in case of failures
+#make PatchParser PatchScanner thrift_gen
+VERBOSE=1 make -j #|| make --trace || exit 1  # running sequentualy and enabling trace in case of failures
 make install || exit 1
-
-# copy initdb to mapd_initdb to avoid conflict with psql initdb
-mv $PREFIX/bin/initdb $PREFIX/bin/omnisci_initdb
 cd ..
-rm -rf data
-mkdir data
+# copy initdb to mapd_initdb to avoid conflict with psql initdb
+#mv $PREFIX/bin/initdb $PREFIX/bin/omnisci_initdb
+#cd ..
+#rm -rf data
+#mkdir data
 # do lightweight testing here, make sanity_tests should go to under test env
-omnisci_initdb -f data
+#omnisci_initdb -f data
 #TODO: omnisci_server --enable-fsi --db-query-list SampleData/db-query-list-flights.sql --exit-after-warmup
 #TODO: rm -rf data
-popd
+#popd

@@ -21,7 +21,7 @@ IF(PYTHON)
 
     add_custom_command(OUTPUT ${OUTPUT}
         DEPENDS DBEngine ${SETUP_PY} ${CMAKE_CURRENT_SOURCE_DIR}/DBEngine.h ${CMAKE_CURRENT_SOURCE_DIR}/dbe.pyx ${CMAKE_CURRENT_SOURCE_DIR}/DBEngine.pxd
-        COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && python3 setup.py build_ext -g -f -I ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && ${PYTHON} setup.py build_ext -g -f -I ${CMAKE_CURRENT_SOURCE_DIR}
         )
 
     add_custom_target(Python ALL DEPENDS ${OUTPUT})
@@ -30,7 +30,7 @@ IF(PYTHON)
         cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -v -e .
         DEPENDS Python)
 
-    install(CODE "execute_process(COMMAND pip install ${CMAKE_CURRENT_BINARY_DIR})")
+    install(CODE "execute_process(COMMAND ${PYTHON} ${SETUP_PY} install)")
 
 ENDIF(PYTHON)
 
