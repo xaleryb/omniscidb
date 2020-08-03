@@ -26,12 +26,12 @@ namespace EmbeddedDatabase {
 
 class Cursor {
  public:
+  virtual ~Cursor() {}
   size_t getColCount();
   size_t getRowCount();
   Row getNextRow();
   ColumnType getColType(uint32_t col_num);
   std::shared_ptr<arrow::RecordBatch> getArrowRecordBatch();
-
  protected:
   Cursor() {}
   Cursor(const Cursor&) = delete;
@@ -42,8 +42,8 @@ class DBEngine {
  public:
   void reset();
   void executeDDL(const std::string& query);
-  Cursor* executeDML(const std::string& query);
-  Cursor* executeRA(const std::string& query);
+  std::unique_ptr<Cursor> executeDML(const std::string& query);
+  std::unique_ptr<Cursor> executeRA(const std::string& query);
   void createArrowTable(const std::string&, std::shared_ptr<arrow::Table>& table);
   static DBEngine* create(const std::string& path = DEFAULT_DATABASE_PATH, int port = DEFAULT_CALCITE_PORT);
   static DBEngine* create(const std::map<std::string, std::string>& parameters);

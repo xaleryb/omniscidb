@@ -164,7 +164,6 @@ class DBEngineImpl : public DBEngine {
       calcite_->close_calcite_server();
       calcite_.reset();
     }
-    cursors_.clear();
     QR::reset();
     ForeignStorageInterface::destroy();
     data_mgr_.reset();
@@ -213,7 +212,7 @@ class DBEngineImpl : public DBEngine {
     releaseArrowTable(name);
   }
 
-  Cursor* executeDML(const std::string& query) {
+  std::unique_ptr<CursorImpl> executeDML(const std::string& query) {
     try {
       ParserWrapper pw{query};
       if (pw.isCalcitePathPermissable()) {
@@ -224,9 +223,7 @@ class DBEngineImpl : public DBEngine {
         for (const auto target : targets) {
           col_names.push_back(target.get_resname());
         }
-        auto rs = execution_result.getRows();
-        cursors_.emplace_back(new CursorImpl(rs, col_names));
-        return cursors_.back();
+        return std::make_unique<CursorImpl>(execution_result.getRows(), col_names);
       }
 
       auto session_info = QR::get()->getSession();
@@ -242,16 +239,15 @@ class DBEngineImpl : public DBEngine {
       auto insert_values_stmt = dynamic_cast<InsertValuesStmt*>(stmt);
       CHECK(insert_values_stmt);
       insert_values_stmt->execute(*session_info);
-      return nullptr;
     } catch (std::exception const& e) {
       std::cerr << "DBE:executeDML: " << e.what() << std::endl;
     } catch (...) {
       std::cerr << "DBE:executeDML: Unknown exception" << std::endl;
     }
-    return nullptr;
+    return std::unique_ptr<CursorImpl>();
   }
 
-  Cursor* executeRA(const std::string& query) {
+  std::unique_ptr<CursorImpl> executeRA(const std::string& query) {
     try {
       const auto execution_result =
           QR::get()->runSelectQueryRA(query, ExecutorDeviceType::CPU, true, true);
@@ -260,15 +256,13 @@ class DBEngineImpl : public DBEngine {
       for (const auto target : targets) {
         col_names.push_back(target.get_resname());
       }
-      auto rs = execution_result.getRows();
-      cursors_.emplace_back(new CursorImpl(rs, col_names));
-      return cursors_.back();
+      return std::make_unique<CursorImpl>(execution_result.getRows(), col_names);
     } catch (std::exception const& e) {
       std::cerr << "DBE:executeRA: " << e.what() << std::endl;
     } catch (...) {
       std::cerr << "DBE:executeRA: Unknown exception" << std::endl;
     }
-    return nullptr;
+    return std::unique_ptr<CursorImpl>();
   }
 
   std::vector<std::string> getTables() {
@@ -415,7 +409,6 @@ class DBEngineImpl : public DBEngine {
   void updateSession(std::shared_ptr<Catalog_Namespace::Catalog> catalog) {
     auto session = std::make_unique<Catalog_Namespace::SessionInfo>(
       catalog, user_, ExecutorDeviceType::CPU, "");
-    cursors_.clear();
     QR::reset();
     QR::init(session);
   }
@@ -468,7 +461,6 @@ class DBEngineImpl : public DBEngine {
   std::shared_ptr<Calcite> calcite_;
   Catalog_Namespace::DBMetadata database_;
   Catalog_Namespace::UserMetadata user_;
-  std::vector<CursorImpl*> cursors_;
 
   std::string system_folders_[3] = {
     "mapd_catalogs", 
@@ -527,12 +519,12 @@ void DBEngine::executeDDL(const std::string& query) {
   engine->executeDDL(query);
 }
 
-Cursor* DBEngine::executeDML(const std::string& query) {
+std::unique_ptr<Cursor> DBEngine::executeDML(const std::string& query) {
   DBEngineImpl* engine = getImpl(this);
   return engine->executeDML(query);
 }
 
-Cursor* DBEngine::executeRA(const std::string& query) {
+std::unique_ptr<Cursor> DBEngine::executeRA(const std::string& query) {
   DBEngineImpl* engine = getImpl(this);
   return engine->executeRA(query);
 }
