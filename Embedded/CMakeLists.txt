@@ -24,7 +24,7 @@ IF(PYTHON)
         COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && ${PYTHON} setup.py build_ext -g -f -I ${CMAKE_CURRENT_SOURCE_DIR}
         )
 
-    add_custom_target(Python ALL DEPENDS ${OUTPUT})
+    add_custom_target(Python DEPENDS ${OUTPUT})
 
     add_custom_target(editable-install
         cd ${CMAKE_CURRENT_BINARY_DIR} && pip install -v -e .
