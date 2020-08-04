@@ -16,6 +16,7 @@
 
 #include "DBEngine.h"
 #include <boost/filesystem.hpp>
+#include <stdlib.h>
 #include "DataMgr/ForeignStorage/ArrowForeignStorage.h"
 #include "DataMgr/ForeignStorage/ForeignStorageInterface.h"
 #include "Fragmenter/FragmentDefaultValues.h"
@@ -113,18 +114,24 @@ class DBEngineImpl : public DBEngine {
 
   bool init(const std::string& base_path, int port, const std::string& udf_filename) {
     SystemParameters mapd_parms;
-    std::string db_path = base_path.empty() ? DEFAULT_DATABASE_PATH : base_path;
-    std::string data_path = db_path + + "/mapd_data";
-
+    std::string db_path;
     try {
       registerArrowForeignStorage();
       registerArrowCsvForeignStorage();
 
-      is_new_db_ = !catalogExists(db_path);
+      is_new_db_ = base_path.empty() || !catalogExists(base_path);
       if (is_new_db_) {
-        cleanCatalog(db_path);
-        createCatalog(db_path);
+        if (!base_path.empty()) {
+          cleanCatalog(base_path);
+        }
+        db_path = createCatalog(base_path);
+        if (db_path.empty()) {
+          return false;
+        }
+      } else {
+        db_path = base_path;
       }
+      auto data_path = db_path + + "/mapd_data";
       data_mgr_= std::make_shared<Data_Namespace::DataMgr>(data_path, mapd_parms, false, 0);
       calcite_ = std::make_shared<Calcite>(-1, port, db_path, 1024, 5000);
 
@@ -449,23 +456,31 @@ class DBEngineImpl : public DBEngine {
     }
   }
 
-  void createCatalog(const std::string& base_path) {
-    if (!boost::filesystem::exists(base_path)) {
+  std::string createCatalog(const std::string& base_path) {
+    std::string root_dir;
+    if (base_path.empty()) {
+      char template_name[] = "/tmp/omnidbe_XXXXXX";
+      root_dir = mkdtemp(template_name);
+      is_new_base_path_ = true;
+    } else if (!boost::filesystem::exists(base_path)) {
       if (!boost::filesystem::create_directory(base_path)) {
         std::cerr << "Cannot create database directory: " << base_path << std::endl;
-        return;
+        return "";
       }
+      root_dir = base_path;
       is_new_base_path_ = true;
     }
-    for (auto& subdir : system_folders_) {
-      std::string path = base_path + "/" + subdir;
+    for (auto& sub_dir : system_folders_) {
+      std::string path = root_dir + "/" + sub_dir;
       if (!boost::filesystem::exists(path)) {
         if (!boost::filesystem::create_directory(path)) {
           std::cerr << "Cannot create database subdirectory: " << path << std::endl;
-          return;
+          boost::filesystem::remove_all(root_dir);
+          return "";
         }
       }
     }
+    return root_dir;
   }
 
  private:
@@ -478,10 +493,11 @@ class DBEngineImpl : public DBEngine {
   bool is_new_base_path_;
   std::string udf_filename_;
 
-  std::string system_folders_[3] = {
+  std::string system_folders_[4] = {
     "mapd_catalogs", 
     "mapd_data", 
-    "mapd_export"};
+    "mapd_export",
+    "mapd_log"};
 };
 
 DBEngine* DBEngine::create(const std::string& path, int port) {
@@ -491,9 +507,8 @@ DBEngine* DBEngine::create(const std::string& path, int port) {
 }
 
 DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters) {
-  std::string path = DEFAULT_DATABASE_PATH;
   int port = DEFAULT_CALCITE_PORT;
-  std::string udf_filename;
+  std::string path, udf_filename;
   g_enable_union = false;
   g_enable_columnar_output = true;
   for (const auto& [key, value]: parameters) {
