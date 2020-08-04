@@ -99,34 +99,38 @@ class CursorImpl : public Cursor {
 class DBEngineImpl : public DBEngine {
 
  public:
-  DBEngineImpl(const std::string& base_path, int port) {
-    if (!init(base_path, port)) {
+  DBEngineImpl(const std::string& base_path, int port, const std::string& udf_filename = "")
+  : is_temp_db_(false) {
+    if (!init(base_path, port, udf_filename)) {
       std::cerr << "DBEngine initialization failed" << std::endl;
     }
   }
 
-  bool init(const std::string& base_path, int port) {
-    SystemParameters mapd_parms;
-    std::string db_path = base_path.empty() ? DEFAULT_DATABASE_PATH : base_path;
-    std::string data_path = db_path + + "/mapd_data";
+  ~DBEngineImpl() {
+    reset();
+  }
 
+  bool init(const std::string& base_path, int port, const std::string& udf_filename) {
+    SystemParameters mapd_parms;
+    std::string db_path = base_path;
     try {
       registerArrowForeignStorage();
       registerArrowCsvForeignStorage();
-
-      auto is_new_db = !catalogExists(db_path);
+      bool is_new_db = base_path.empty() || !catalogExists(base_path);
       if (is_new_db) {
-        cleanCatalog(db_path);
-        createCatalog(db_path);
+        db_path = createCatalog(base_path);
+        if (db_path.empty()) {
+          return false;
+        }
       }
+      auto data_path = db_path + + "/mapd_data";
       data_mgr_= std::make_shared<Data_Namespace::DataMgr>(data_path, mapd_parms, false, 0);
       calcite_ = std::make_shared<Calcite>(-1, port, db_path, 1024, 5000);
 
       ExtensionFunctionsWhitelist::add(calcite_->getExtensionFunctionWhitelist());
-      // TODO: add UDFs with engine parameters handling
-      //if (!udf_filename.empty()) {
-      //  ExtensionFunctionsWhitelist::addUdfs(calcite_->getUserDefinedFunctionWhitelist());
-      //}
+      if (!udf_filename.empty()) {
+        ExtensionFunctionsWhitelist::addUdfs(calcite_->getUserDefinedFunctionWhitelist());
+      }
       table_functions::TableFunctionsFactory::init();
 
       auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
@@ -167,6 +171,9 @@ class DBEngineImpl : public DBEngine {
     QR::reset();
     ForeignStorageInterface::destroy();
     data_mgr_.reset();
+    if (is_temp_db_) {
+        boost::filesystem::remove_all(base_path_);
+    }
     base_path_.clear();
   }
 
@@ -437,22 +444,46 @@ class DBEngineImpl : public DBEngine {
     }
   }
 
-  void createCatalog(const std::string& base_path) {
-    if (!boost::filesystem::exists(base_path)) {
-      if (!boost::filesystem::create_directory(base_path)) {
-        std::cerr << "Cannot create database directory: " << base_path << std::endl;
-        return;
+  std::string createCatalog(const std::string& base_path) {
+    std::string root_dir = base_path;
+    if (base_path.empty()) {
+      boost::system::error_code error;
+      auto tmp_path = boost::filesystem::temp_directory_path(error);
+      if (boost::system::errc::success != error.value()) {
+        std::cerr << error.message() << std::endl;
+        return "";
+      }
+      tmp_path /= "omnidbe_%%%%-%%%%-%%%%";
+      auto uniq_path = boost::filesystem::unique_path(tmp_path, error);
+      if (boost::system::errc::success != error.value()) {
+        std::cerr << error.message() << std::endl;
+        return "";
+      }
+      root_dir = uniq_path.string();
+      is_temp_db_ = true;
+    }
+    if (!boost::filesystem::exists(root_dir)) {
+      if (!boost::filesystem::create_directory(root_dir)) {
+        std::cerr << "Cannot create database directory: " << root_dir << std::endl;
+        return "";
       }
     }
-    for (auto& subdir : system_folders_) {
-      std::string path = base_path + "/" + subdir;
+    size_t absent_count = 0;
+    for (auto& sub_dir : system_folders_) {
+      std::string path = root_dir + "/" + sub_dir;
       if (!boost::filesystem::exists(path)) {
         if (!boost::filesystem::create_directory(path)) {
           std::cerr << "Cannot create database subdirectory: " << path << std::endl;
-          return;
+          return "";
         }
+        ++absent_count;
       }
     }
+    if ((absent_count > 0) && (absent_count < system_folders_.size())) {
+      std::cerr << "Database directory structure is broken: " << root_dir << std::endl;
+      return "";
+    }
+    return root_dir;
   }
 
  private:
@@ -461,8 +492,10 @@ class DBEngineImpl : public DBEngine {
   std::shared_ptr<Calcite> calcite_;
   Catalog_Namespace::DBMetadata database_;
   Catalog_Namespace::UserMetadata user_;
+  bool is_temp_db_;
+  std::string udf_filename_;
 
-  std::string system_folders_[3] = {
+  std::vector<std::string> system_folders_ = {
     "mapd_catalogs", 
     "mapd_data", 
     "mapd_export"};
@@ -475,8 +508,8 @@ DBEngine* DBEngine::create(const std::string& path, int port) {
 }
 
 DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters) {
-  std::string path = DEFAULT_DATABASE_PATH;
   int port = DEFAULT_CALCITE_PORT;
+  std::string path, udf_filename;
   g_enable_union = false;
   g_enable_columnar_output = true;
   for (const auto& [key, value]: parameters) {
@@ -492,9 +525,11 @@ DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters)
       g_enable_debug_timer = std::stoi(value);
     } else if (key == "enable_lazy_fetch") {
       g_enable_lazy_fetch = std::stoi(value);
+    } else if (key == "udf_filename") {
+      udf_filename = value;
     }
   }
-  return new DBEngineImpl(path, port);
+  return new DBEngineImpl(path, port, udf_filename);
 }
 
 /** DBEngine downcasting methods */
