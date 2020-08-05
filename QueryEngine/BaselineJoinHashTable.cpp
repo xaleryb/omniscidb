@@ -22,6 +22,8 @@
 #include "HashJoinKeyHandlers.h"
 #include "JoinHashTableGpuUtils.h"
 
+#include "DataMgr/Allocators/CudaAllocator.h"
+
 #include <future>
 
 std::vector<std::pair<BaselineJoinHashTable::HashTableCacheKey,
@@ -284,7 +286,8 @@ BaselineJoinHashTable::CompositeKeyInfo BaselineJoinHashTable::getCompositeKeyIn
     ChunkKey cache_key_chunks_for_column{catalog_->getCurrentDB().dbId,
                                          inner_col->get_table_id(),
                                          inner_col->get_column_id()};
-    if (inner_ti.is_string()) {
+    if (inner_ti.is_string() &&
+        !(inner_ti.get_comp_param() == outer_ti.get_comp_param())) {
       CHECK(outer_ti.is_string());
       CHECK(inner_ti.get_compression() == kENCODING_DICT &&
             outer_ti.get_compression() == kENCODING_DICT);
@@ -353,10 +356,11 @@ void BaselineJoinHashTable::reifyWithLayout(
     return;
   }
   auto& data_mgr = catalog_->getDataMgr();
-  auto dev_buff_owners =
-      std::make_unique<std::unique_ptr<ThrustAllocator>[]>(device_count_);
-  for (int device_id = 0; device_id < device_count_; ++device_id) {
-    dev_buff_owners[device_id] = std::make_unique<ThrustAllocator>(&data_mgr, device_id);
+  std::vector<std::unique_ptr<CudaAllocator>> dev_buff_owners;
+  if (memory_level_ == Data_Namespace::MemoryLevel::GPU_LEVEL) {
+    for (int device_id = 0; device_id < device_count_; ++device_id) {
+      dev_buff_owners.emplace_back(std::make_unique<CudaAllocator>(&data_mgr, device_id));
+    }
   }
   std::vector<BaselineJoinHashTable::ColumnsForDevice> columns_per_device;
   const auto shard_count = shardCount();
@@ -366,7 +370,11 @@ void BaselineJoinHashTable::reifyWithLayout(
             ? only_shards_for_device(query_info.fragments, device_id, device_count_)
             : query_info.fragments;
     const auto columns_for_device =
-        fetchColumnsForDevice(fragments, device_id, *dev_buff_owners[device_id]);
+        fetchColumnsForDevice(fragments,
+                              device_id,
+                              memory_level_ == Data_Namespace::MemoryLevel::GPU_LEVEL
+                                  ? dev_buff_owners[device_id].get()
+                                  : nullptr);
     columns_per_device.push_back(columns_for_device);
   }
   if (layout == JoinHashTableInterface::HashType::OneToMany) {
@@ -459,9 +467,9 @@ std::pair<size_t, size_t> BaselineJoinHashTable::approximateTupleCount(
          &data_mgr,
          &host_hll_buffers,
          this] {
-          ThrustAllocator allocator(&data_mgr, device_id);
+          CudaAllocator allocator(&data_mgr, device_id);
           auto device_hll_buffer =
-              allocator.allocateScopedBuffer(count_distinct_desc.bitmapPaddedSizeBytes());
+              allocator.alloc(count_distinct_desc.bitmapPaddedSizeBytes());
           data_mgr.getCudaMgr()->zeroDeviceMem(
               device_hll_buffer, count_distinct_desc.bitmapPaddedSizeBytes(), device_id);
           const auto& columns_for_device = columns_per_device[device_id];
@@ -516,7 +524,7 @@ std::pair<size_t, size_t> BaselineJoinHashTable::approximateTupleCount(
 BaselineJoinHashTable::ColumnsForDevice BaselineJoinHashTable::fetchColumnsForDevice(
     const std::vector<Fragmenter_Namespace::FragmentInfo>& fragments,
     const int device_id,
-    ThrustAllocator& dev_buff_owner) {
+    DeviceAllocator* dev_buff_owner) {
   const auto effective_memory_level = getEffectiveMemoryLevel(inner_outer_pairs_);
 
   std::vector<JoinColumn> join_columns;
@@ -823,9 +831,8 @@ int BaselineJoinHashTable::initHashTableOnGpu(
   int err = 0;
 #ifdef HAVE_CUDA
   auto& data_mgr = catalog_->getDataMgr();
-  ThrustAllocator allocator(&data_mgr, device_id);
-  auto dev_err_buff =
-      reinterpret_cast<CUdeviceptr>(allocator.allocateScopedBuffer(sizeof(int)));
+  CudaAllocator allocator(&data_mgr, device_id);
+  auto dev_err_buff = reinterpret_cast<CUdeviceptr>(allocator.alloc(sizeof(int)));
   copy_to_gpu(&data_mgr, dev_err_buff, &err, sizeof(err), device_id);
   switch (key_component_width) {
     case 4:
@@ -1098,6 +1105,20 @@ size_t BaselineJoinHashTable::payloadBufferOff() const noexcept {
   } else {
     return getKeyBufferSize();
   }
+}
+
+BaselineJoinHashTable::~BaselineJoinHashTable() {
+  // TODO: use freeHashBufferMemory?
+#ifdef HAVE_CUDA
+  CHECK(executor_);
+  CHECK(executor_->catalog_);
+  auto& data_mgr = executor_->catalog_->getDataMgr();
+  for (auto& gpu_buffer : gpu_hash_table_buff_) {
+    if (gpu_buffer) {
+      data_mgr.free(gpu_buffer);
+    }
+  }
+#endif
 }
 
 size_t BaselineJoinHashTable::getKeyBufferSize() const noexcept {

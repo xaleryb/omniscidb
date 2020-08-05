@@ -168,6 +168,10 @@ class DBHandlerTestFixture : public testing::Test {
     switchToAdmin();
   }
 
+  static void SetUpTestSuite() { createDBHandler(); }
+
+  static void TearDownTestSuite() {}
+
   static void createDBHandler() {
     if (!db_handler_) {
       // Based on default values observed from starting up an OmniSci DB server.
@@ -182,6 +186,7 @@ class DBHandlerTestFixture : public testing::Test {
       const int render_oom_retry_threshold{0};
       const size_t render_mem_bytes{500000000};
       const size_t max_concurrent_render_sessions{500};
+      const bool render_compositor_use_last_gpu{false};
       const int num_gpus{-1};
       const int start_gpu{0};
       const size_t reserved_gpu_mem{134217728};
@@ -210,6 +215,7 @@ class DBHandlerTestFixture : public testing::Test {
                                                 num_gpus,
                                                 start_gpu,
                                                 reserved_gpu_mem,
+                                                render_compositor_use_last_gpu,
                                                 num_reader_threads,
                                                 auth_metadata_,
                                                 system_parameters_,
@@ -219,7 +225,12 @@ class DBHandlerTestFixture : public testing::Test {
                                                 enable_runtime_udf_registration,
                                                 udf_filename_,
                                                 udf_compiler_path_,
-                                                udf_compiler_options_);
+                                                udf_compiler_options_
+#ifdef ENABLE_GEOS
+                                                ,
+                                                libgeos_so_filename_
+#endif
+      );
 
       loginAdmin();
     }
@@ -244,12 +255,12 @@ class DBHandlerTestFixture : public testing::Test {
     return db_handler_->get_session_copy_ptr(session_id_)->get_currentUser();
   }
 
-  Catalog_Namespace::Catalog& getCatalog() {
+  static Catalog_Namespace::Catalog& getCatalog() {
     return db_handler_->get_session_copy_ptr(session_id_)->getCatalog();
   }
 
   std::pair<DBHandler*, TSessionId&> getDbHandlerAndSessionId() {
-    return {db_handler_.get(), admin_session_id_};
+    return {db_handler_.get(), session_id_};
   }
 
   void resetCatalog() {
@@ -288,14 +299,30 @@ class DBHandlerTestFixture : public testing::Test {
     }
   }
 
-  void queryAndAssertException(const std::string& sql_statement,
-                               const std::string& error_message) {
+  template <typename Lambda>
+  void executeLambdaAndAssertException(Lambda lambda, const std::string& error_message) {
     try {
-      sql(sql_statement);
+      lambda();
       FAIL() << "An exception should have been thrown for this test case.";
     } catch (const TOmniSciException& e) {
+      assertExceptionMessage(e, error_message);
+    }
+  }
+
+  void assertExceptionMessage(const TOmniSciException& e,
+                              const std::string& error_message) {
+    if (isDistributedMode()) {
+      // In distributed mode, exception messages may be wrapped within
+      // another thrift exception. In this case, do a substring check.
+      ASSERT_TRUE(e.error_msg.find(error_message) != std::string::npos);
+    } else {
       ASSERT_EQ(error_message, e.error_msg);
     }
+  }
+
+  void queryAndAssertException(const std::string& sql_statement,
+                               const std::string& error_message) {
+    executeLambdaAndAssertException([&] { sql(sql_statement); }, error_message);
   }
 
   void assertResultSetEqual(
@@ -407,10 +434,9 @@ class DBHandlerTestFixture : public testing::Test {
       std::vector<TDatum> row{};
       for (auto& column : row_set.columns) {
         TDatum datum{};
+        setDatum(datum, column.data, index);
         if (column.nulls[index]) {
           datum.is_null = true;
-        } else {
-          setDatum(datum, column.data, index);
         }
         row.emplace_back(datum);
       }
@@ -434,6 +460,9 @@ class DBHandlerTestFixture : public testing::Test {
   static std::string default_db_name_;
   static std::vector<std::string> udf_compiler_options_;
   static std::string cluster_config_file_path_;
+#ifdef ENABLE_GEOS
+  static std::string libgeos_so_filename_;
+#endif
 };
 
 TSessionId DBHandlerTestFixture::session_id_{};
@@ -450,3 +479,6 @@ std::string DBHandlerTestFixture::default_db_name_{};
 SystemParameters DBHandlerTestFixture::system_parameters_{};
 std::vector<std::string> DBHandlerTestFixture::udf_compiler_options_{};
 std::string DBHandlerTestFixture::cluster_config_file_path_{};
+#ifdef ENABLE_GEOS
+std::string DBHandlerTestFixture::libgeos_so_filename_{};
+#endif

@@ -1081,21 +1081,8 @@ void SysCatalog::createDatabase(const string& name, int owner) {
         std::vector<std::string>{std::to_string(owner)});
 
     if (g_enable_fsi) {
-      dbConn->query(
-          "CREATE TABLE omnisci_foreign_servers("
-          "id integer primary key, "
-          "name text unique, "
-          "data_wrapper_type text, "
-          "owner_user_id integer, "
-          "creation_time integer, "
-          "options text)");
-      dbConn->query(
-          "CREATE TABLE omnisci_foreign_tables("
-          "table_id integer unique, "
-          "server_id integer, "
-          "options text, "
-          "FOREIGN KEY(table_id) REFERENCES mapd_tables(tableid), "
-          "FOREIGN KEY(server_id) REFERENCES omnisci_foreign_servers(id))");
+      dbConn->query(Catalog::getForeignServerSchema());
+      dbConn->query(Catalog::getForeignTableSchema());
     }
   } catch (const std::exception&) {
     dbConn->query("ROLLBACK TRANSACTION");
@@ -1549,6 +1536,14 @@ void SysCatalog::revokeDBObjectPrivilegesBatch_unsafe(
     for (const auto& object : objects) {
       revokeDBObjectPrivileges_unsafe(grantee, object, catalog);
     }
+  }
+}
+
+void SysCatalog::revokeDBObjectPrivilegesFromAllBatch_unsafe(
+    vector<DBObject>& objects,
+    Catalog_Namespace::Catalog* catalog) {
+  for (const auto& object : objects) {
+    revokeDBObjectPrivilegesFromAll_unsafe(object, catalog);
   }
 }
 
@@ -2290,6 +2285,12 @@ void SysCatalog::revokeDBObjectPrivilegesBatch(
 
 void SysCatalog::revokeDBObjectPrivilegesFromAll(DBObject object, Catalog* catalog) {
   execInTransaction(&SysCatalog::revokeDBObjectPrivilegesFromAll_unsafe, object, catalog);
+}
+
+void SysCatalog::revokeDBObjectPrivilegesFromAllBatch(vector<DBObject>& objects,
+                                                      Catalog* catalog) {
+  execInTransaction(
+      &SysCatalog::revokeDBObjectPrivilegesFromAllBatch_unsafe, objects, catalog);
 }
 
 void SysCatalog::syncUserWithRemoteProvider(const std::string& user_name,

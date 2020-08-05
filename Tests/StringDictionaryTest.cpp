@@ -14,19 +14,18 @@
  * limitations under the License.
  */
 
-#include "../StringDictionary/StringDictionary.h"
 #include "TestHelpers.h"
+
+#include "../StringDictionary/StringDictionary.h"
 
 #include <cstdlib>
 #include <limits>
-
-#include <gtest/gtest.h>
 
 #ifndef BASE_PATH
 #define BASE_PATH "./tmp"
 #endif
 
-bool g_cache_string_hash{false};
+extern bool g_cache_string_hash;
 
 TEST(StringDictionary, AddAndGet) {
   StringDictionary string_dict(BASE_PATH, false, false, g_cache_string_hash);
