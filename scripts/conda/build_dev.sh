@@ -58,7 +58,7 @@ cmake -S . -B build -Wno-dev \
     -DCMAKE_INSTALL_PREFIX="$PREFIX"\
     -DCMAKE_C_COMPILER=$CMAKE_CC\
     -DCMAKE_CXX_COMPILER=$CMAKE_CXX\
-    -DCMAKE_BUILD_TYPE=debug\
+    -DCMAKE_BUILD_TYPE=release\
     -DMAPD_DOCS_DOWNLOAD=OFF\
     -DENABLE_AWS_S3=OFF\
     -DENABLE_CUDA=OFF\
@@ -71,7 +71,7 @@ cmake -S . -B build -Wno-dev \
     -DENABLE_DBE=ON
 
 cd build
-VERBOSE=1 make -j
+make -j
 make install || exit 1
 cd ..
 # copy initdb to mapd_initdb to avoid conflict with psql initdb
