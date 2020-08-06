@@ -64,7 +64,7 @@ extern "C" ALWAYS_INLINE DEVICE int64_t extract_nanosecond(const int64_t lcltime
 }
 
 // First day of epoch is Thursday, so + 4 to have Sunday=0.
-extern "C" DEVICE int64_t extract_dow(const int64_t lcltime) {
+extern "C" ALWAYS_INLINE DEVICE int64_t extract_dow(const int64_t lcltime) {
   int64_t const days_past_epoch = floor_div(lcltime, kSecsPerDay);
   return unsigned_mod(days_past_epoch + 4, kDaysPerWeek);
 }
@@ -190,7 +190,7 @@ extern "C" ALWAYS_INLINE DEVICE int64_t extract_week(const int64_t timeval) {
   return (doe - iso_week_start) / 7 + 1;
 }
 
-extern "C" /*ALWAYS_INLINE*/ DEVICE int64_t extract_month(const int64_t timeval) {
+extern "C" ALWAYS_INLINE DEVICE int64_t extract_month(const int64_t timeval) {
   if (timeval >= 0L && timeval <= UINT32_MAX - kEpochOffsetYear1900) {
     return extract_month_fast(timeval);
   }
@@ -215,7 +215,7 @@ extern "C" ALWAYS_INLINE DEVICE int64_t extract_quarter(const int64_t timeval) {
   return quarter[moy];
 }
 
-extern "C" /*ALWAYS_INLINE*/ DEVICE int64_t extract_year(const int64_t timeval) {
+extern "C" ALWAYS_INLINE DEVICE int64_t extract_year(const int64_t timeval) {
   if (timeval >= 0L && timeval <= UINT32_MAX - kEpochOffsetYear1900) {
     return extract_year_fast(timeval);
   }

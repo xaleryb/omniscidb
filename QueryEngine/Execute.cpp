@@ -1371,10 +1371,8 @@ TemporaryTable Executor::executeWorkUnit(
                                       has_cardinality_estimation,
                                       column_cache);
     if (!result.empty()) {
-      for (int i = 0; i < result.getFragCount(); i++) {
-        result.getResultSet(i)->setKernelQueueTime(kernel_queue_time_ms_);
-        result.getResultSet(i)->addCompilationQueueTime(compilation_queue_time_ms_);
-      }
+      result.setKernelQueueTime(kernel_queue_time_ms_);
+      result.addCompilationQueueTime(compilation_queue_time_ms_);
     }
     return result;
   } catch (const CompilationRetryNewScanLimit& e) {
