@@ -162,7 +162,7 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
     // using reflection when we are deserializing from JSON.
     // opTab.addOperator(new RampFunction());
     // opTab.addOperator(new DedupFunction());
-    opTab.addOperator(new RowCopier()); // Table UDF prototype
+    opTab.addOperator(new RowCopier()); // UDTF prototype
     opTab.addOperator(new MyUDFFunction());
     opTab.addOperator(new PgUnnest());
     opTab.addOperator(new Any());
@@ -177,6 +177,7 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
     opTab.addOperator(new Length());
     opTab.addOperator(new CharLength());
     opTab.addOperator(new KeyForString());
+    opTab.addOperator(new SampleRatio());
     opTab.addOperator(new ArrayLength());
     opTab.addOperator(new PgILike());
     opTab.addOperator(new RegexpLike());
@@ -184,6 +185,8 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
     opTab.addOperator(new Unlikely());
     opTab.addOperator(new Sign());
     opTab.addOperator(new Truncate());
+    opTab.addOperator(new ST_IsEmpty());
+    opTab.addOperator(new ST_IsValid());
     opTab.addOperator(new ST_Contains());
     opTab.addOperator(new ST_Intersects());
     opTab.addOperator(new ST_Overlaps());
@@ -213,6 +216,10 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
     opTab.addOperator(new ST_SRID());
     opTab.addOperator(new ST_SetSRID());
     opTab.addOperator(new ST_Point());
+    opTab.addOperator(new ST_Buffer());
+    opTab.addOperator(new ST_Intersection());
+    opTab.addOperator(new ST_Union());
+    opTab.addOperator(new ST_Difference());
     opTab.addOperator(new CastToGeography());
     opTab.addOperator(new OffsetInFragment());
     opTab.addOperator(new ApproxCountDistinct());
@@ -617,6 +624,30 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
     }
   }
 
+  public static class SampleRatio extends SqlFunction {
+    public SampleRatio() {
+      super("SAMPLE_RATIO",
+              SqlKind.OTHER_FUNCTION,
+              null,
+              null,
+              OperandTypes.family(signature()),
+              SqlFunctionCategory.SYSTEM);
+    }
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+      return typeFactory.createSqlType(SqlTypeName.BOOLEAN);
+    }
+
+    private static java.util.List<SqlTypeFamily> signature() {
+      java.util.ArrayList<SqlTypeFamily> families =
+              new java.util.ArrayList<SqlTypeFamily>();
+      families.add(SqlTypeFamily.NUMERIC);
+      return families;
+    }
+  }
+
   public static class ArrayLength extends SqlFunction {
     public ArrayLength() {
       super("ARRAY_LENGTH",
@@ -781,6 +812,56 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
       truncate_sig.add(SqlTypeFamily.NUMERIC);
       truncate_sig.add(SqlTypeFamily.INTEGER);
       return truncate_sig;
+    }
+  }
+
+  static class ST_IsEmpty extends SqlFunction {
+    ST_IsEmpty() {
+      super("ST_IsEmpty",
+              SqlKind.OTHER_FUNCTION,
+              null,
+              null,
+              OperandTypes.family(signature()),
+              SqlFunctionCategory.SYSTEM);
+    }
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      assert opBinding.getOperandCount() == 1;
+      final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+      return typeFactory.createSqlType(SqlTypeName.BOOLEAN);
+    }
+
+    private static java.util.List<SqlTypeFamily> signature() {
+      java.util.List<SqlTypeFamily> st_isempty_sig =
+              new java.util.ArrayList<SqlTypeFamily>();
+      st_isempty_sig.add(SqlTypeFamily.ANY);
+      return st_isempty_sig;
+    }
+  }
+
+  static class ST_IsValid extends SqlFunction {
+    ST_IsValid() {
+      super("ST_IsValid",
+              SqlKind.OTHER_FUNCTION,
+              null,
+              null,
+              OperandTypes.family(signature()),
+              SqlFunctionCategory.SYSTEM);
+    }
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      assert opBinding.getOperandCount() == 1;
+      final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+      return typeFactory.createSqlType(SqlTypeName.BOOLEAN);
+    }
+
+    private static java.util.List<SqlTypeFamily> signature() {
+      java.util.List<SqlTypeFamily> st_isvalid_sig =
+              new java.util.ArrayList<SqlTypeFamily>();
+      st_isvalid_sig.add(SqlTypeFamily.ANY);
+      return st_isvalid_sig;
     }
   }
 
@@ -1442,6 +1523,110 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
     }
   }
 
+  static class ST_Buffer extends SqlFunction {
+    ST_Buffer() {
+      super("ST_Buffer",
+              SqlKind.OTHER_FUNCTION,
+              null,
+              null,
+              OperandTypes.family(signature()),
+              SqlFunctionCategory.SYSTEM);
+    }
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      assert opBinding.getOperandCount() == 2;
+      final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+      return typeFactory.createSqlType(SqlTypeName.INTEGER);
+    }
+
+    private static java.util.List<SqlTypeFamily> signature() {
+      java.util.List<SqlTypeFamily> st_buffer_sig =
+              new java.util.ArrayList<SqlTypeFamily>();
+      st_buffer_sig.add(SqlTypeFamily.ANY);
+      st_buffer_sig.add(SqlTypeFamily.NUMERIC);
+      return st_buffer_sig;
+    }
+  }
+
+  static class ST_Intersection extends SqlFunction {
+    ST_Intersection() {
+      super("ST_Intersection",
+              SqlKind.OTHER_FUNCTION,
+              null,
+              null,
+              OperandTypes.family(signature()),
+              SqlFunctionCategory.SYSTEM);
+    }
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      assert opBinding.getOperandCount() == 2;
+      final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+      return typeFactory.createSqlType(SqlTypeName.INTEGER);
+    }
+
+    private static java.util.List<SqlTypeFamily> signature() {
+      java.util.List<SqlTypeFamily> st_intersection_sig =
+              new java.util.ArrayList<SqlTypeFamily>();
+      st_intersection_sig.add(SqlTypeFamily.ANY);
+      st_intersection_sig.add(SqlTypeFamily.ANY);
+      return st_intersection_sig;
+    }
+  }
+
+  static class ST_Union extends SqlFunction {
+    ST_Union() {
+      super("ST_Union",
+              SqlKind.OTHER_FUNCTION,
+              null,
+              null,
+              OperandTypes.family(signature()),
+              SqlFunctionCategory.SYSTEM);
+    }
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      assert opBinding.getOperandCount() == 2;
+      final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+      return typeFactory.createSqlType(SqlTypeName.INTEGER);
+    }
+
+    private static java.util.List<SqlTypeFamily> signature() {
+      java.util.List<SqlTypeFamily> st_union_sig =
+              new java.util.ArrayList<SqlTypeFamily>();
+      st_union_sig.add(SqlTypeFamily.ANY);
+      st_union_sig.add(SqlTypeFamily.ANY);
+      return st_union_sig;
+    }
+  }
+
+  static class ST_Difference extends SqlFunction {
+    ST_Difference() {
+      super("ST_Difference",
+              SqlKind.OTHER_FUNCTION,
+              null,
+              null,
+              OperandTypes.family(signature()),
+              SqlFunctionCategory.SYSTEM);
+    }
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      assert opBinding.getOperandCount() == 2;
+      final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+      return typeFactory.createSqlType(SqlTypeName.INTEGER);
+    }
+
+    private static java.util.List<SqlTypeFamily> signature() {
+      java.util.List<SqlTypeFamily> st_difference_sig =
+              new java.util.ArrayList<SqlTypeFamily>();
+      st_difference_sig.add(SqlTypeFamily.ANY);
+      st_difference_sig.add(SqlTypeFamily.ANY);
+      return st_difference_sig;
+    }
+  }
+
   static class CastToGeography extends SqlFunction {
     CastToGeography() {
       super("CastToGeography",
@@ -1678,6 +1863,7 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
       assert false;
       return null;
     }
+
     private final boolean isRowUdf;
     private final SqlTypeName ret;
   }

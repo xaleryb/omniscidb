@@ -19,6 +19,7 @@
 
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "Catalog/SessionInfo.h"
@@ -29,6 +30,8 @@
 #include "QueryEngine/CompilationOptions.h"
 #include "QueryEngine/JoinHashTable.h"
 #include "QueryEngine/OverlapsJoinHashTable.h"
+#include "QueryEngine/QueryDispatchQueue.h"
+#include "QueryEngine/QueryHint.h"
 #include "ThriftHandler/QueryState.h"
 
 namespace Catalog_Namespace {
@@ -45,7 +48,7 @@ class CopyTableStmt;
 
 using query_state::QueryStateProxy;
 
-namespace Importer_NS {
+namespace import_export {
 class Loader;
 }
 
@@ -125,16 +128,18 @@ class QueryRunner {
                                             const ExecutorDeviceType device_type,
                                             const bool hoist_literals = true,
                                             const bool allow_loop_joins = true);
-  virtual ExecutionResult runSelectQuery(const std::string& query_str,
-                                         const ExecutorDeviceType device_type,
-                                         const bool hoist_literals,
-                                         const bool allow_loop_joins,
-                                         const bool just_explain = false);
-  virtual ExecutionResult runSelectQueryRA(const std::string& query_str,
-                                         const ExecutorDeviceType device_type,
-                                         const bool hoist_literals,
-                                         const bool allow_loop_joins,
-                                         const bool just_explain = false);                                         
+  virtual std::shared_ptr<ExecutionResult> runSelectQuery(
+      const std::string& query_str,
+      const ExecutorDeviceType device_type,
+      const bool hoist_literals,
+      const bool allow_loop_joins,
+      const bool just_explain = false);
+  virtual std::shared_ptr<ExecutionResult> runSelectQueryRA(
+      const std::string& query_str,
+      const ExecutorDeviceType device_type,
+      const bool hoist_literals,
+      const bool allow_loop_joins,
+      const bool just_explain = false);
   virtual std::shared_ptr<ResultSet> runSQLWithAllowingInterrupt(
       const std::string& query_str,
       std::shared_ptr<Executor> executor,
@@ -144,9 +149,11 @@ class QueryRunner {
   virtual std::vector<std::shared_ptr<ResultSet>> runMultipleStatements(
       const std::string&,
       const ExecutorDeviceType);
+  virtual QueryHint getParsedQueryHintofQuery(const std::string&);
 
   virtual void runImport(Parser::CopyTableStmt* import_stmt);
-  virtual std::unique_ptr<Importer_NS::Loader> getLoader(const TableDescriptor* td) const;
+  virtual std::unique_ptr<import_export::Loader> getLoader(
+      const TableDescriptor* td) const;
 
   const std::shared_ptr<std::vector<int32_t>>& getCachedJoinHashTable(size_t idx);
   const std::shared_ptr<std::vector<int8_t>>& getCachedBaselineHashTable(size_t idx);
@@ -154,9 +161,11 @@ class QueryRunner {
   uint64_t getNumberOfCachedJoinHashTables();
   uint64_t getNumberOfCachedBaselineJoinHashTables();
 
-  virtual ~QueryRunner() {}
+  void resizeDispatchQueue(const size_t num_executors);
 
   QueryRunner(std::unique_ptr<Catalog_Namespace::SessionInfo> session);
+
+  virtual ~QueryRunner() = default;
 
   static query_state::QueryStates query_states_;
 
@@ -182,6 +191,7 @@ class QueryRunner {
   static std::unique_ptr<QueryRunner> qr_instance_;
 
   std::shared_ptr<Catalog_Namespace::SessionInfo> session_info_;
+  std::unique_ptr<QueryDispatchQueue> dispatch_queue_;
 };
 
 class ImportDriver : public QueryRunner {

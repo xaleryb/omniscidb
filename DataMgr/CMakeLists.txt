@@ -1,6 +1,8 @@
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
 
 set(datamgr_source_files
+    Allocators/CudaAllocator.cpp
+    Allocators/ThrustAllocator.cpp
     Chunk/Chunk.cpp
     DataMgr.cpp
     Encoder.cpp
@@ -10,8 +12,13 @@ set(datamgr_source_files
     FileMgr/FileBuffer.cpp
     FileMgr/FileInfo.cpp
     ForeignStorage/ArrowForeignStorage.cpp
+    ForeignStorage/CsvDataWrapper.cpp
     ForeignStorage/DummyForeignStorage.cpp
     ForeignStorage/ForeignStorageInterface.cpp
+    ForeignStorage/ForeignStorageBuffer.cpp
+    ForeignStorage/ForeignStorageMgr.cpp
+    ForeignStorage/ForeignStorageCache.cpp
+    ForeignStorage/CacheEvictionAlgorithms/LRUEvictionAlgorithm.cpp
     BufferMgr/GpuCudaBufferMgr/GpuCudaBufferMgr.cpp
     BufferMgr/GpuCudaBufferMgr/GpuCudaBuffer.cpp
     BufferMgr/CpuBufferMgr/CpuBufferMgr.cpp
@@ -21,7 +28,9 @@ set(datamgr_source_files
     ForeignStorage/ForeignStorageBuffer.cpp
     ForeignStorage/ForeignStorageMgr.cpp
     ForeignStorage/CsvDataWrapper.cpp
+    ForeignStorage/ParquetDataWrapper.cpp
     PersistentStorageMgr/PersistentStorageMgr.cpp
+    ForeignStorage/LazyParquetImporter.cpp
 )
 
 add_library(DataMgr ${datamgr_source_files})

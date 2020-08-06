@@ -53,6 +53,9 @@ class TemporaryTable {
   size_t rowCount() const;
   size_t colCount() const;
 
+  void setKernelQueueTime(const int64_t kernel_queue_time);
+  void addCompilationQueueTime(const int64_t compilation_queue_time);
+
   SQLTypeInfo getColType(const size_t col_idx) const;
 
   bool empty() const { return results_.empty(); }

@@ -20,10 +20,10 @@
 #include <cstdint>
 #include <set>
 #include <string>
-#include "Allocators/ThrustAllocator.h"
 #include "Analyzer/Analyzer.h"
 #include "ColumnarResults.h"
 #include "CompilationOptions.h"
+#include "DataMgr/Allocators/ThrustAllocator.h"
 #include "Descriptors/RowSetMemoryOwner.h"
 #include "HashJoinRuntime.h"
 
@@ -78,6 +78,8 @@ struct DecodedJoinHashBufferEntry {
 using DecodedJoinHashBufferSet = std::set<DecodedJoinHashBufferEntry>;
 
 using InnerOuter = std::pair<const Analyzer::ColumnVar*, const Analyzer::Expr*>;
+
+class DeviceAllocator;
 
 class JoinHashTableInterface {
  public:
@@ -138,7 +140,7 @@ class JoinHashTableInterface {
       const Data_Namespace::MemoryLevel effective_memory_level,
       const int device_id,
       std::vector<std::shared_ptr<Chunk_NS::Chunk>>& chunks_owner,
-      ThrustAllocator& dev_buff_owner,
+      DeviceAllocator* dev_buff_owner,
       std::vector<std::shared_ptr<void>>& malloc_owner,
       Executor* executor,
       ColumnCacheMap* column_cache);

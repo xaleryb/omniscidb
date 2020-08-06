@@ -3,8 +3,6 @@ set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_BINARY_DIR})
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -Wall -Wno-attributes")
 set_source_files_properties(RuntimeFunctionsCodegenWithIncludes.cpp PROPERTIES COMPILE_FLAGS -O0)
 set(query_engine_source_files
-    Allocators/CudaAllocator.cpp
-    Allocators/ThrustAllocator.cpp
     AggregatedColRange.cpp
     ArithmeticIR.cpp
     ArrayIR.cpp
@@ -36,7 +34,7 @@ set(query_engine_source_files
     EquiJoinCondition.cpp
     Execute.cpp
     ExecuteUpdate.cpp
-    ExecutionDispatch.cpp
+    ExecutionKernel.cpp
     ExpressionRange.cpp
     ExpressionRewrite.cpp
     ExtensionFunctionsBinding.cpp
@@ -108,6 +106,8 @@ set(query_engine_source_files
     JoinHashTable.cpp
     JoinHashTableInterface.cpp
     HashJoinRuntime.cpp
+    Visitors/RelRexDagVisitor.cpp
+    Visitors/RexSubQueryIdCollector.cpp
     WindowContext.cpp
     WindowExpressionRewrite.cpp
     WindowFunctionIR.cpp
@@ -185,6 +185,20 @@ add_custom_command(
     ${CMAKE_CURRENT_SOURCE_DIR}/RuntimeFunctions.cpp)
 
 add_custom_command(
+    DEPENDS GeosRuntime.cpp GeosRuntime.h ${CMAKE_SOURCE_DIR}/Shared/geo_compression.cpp
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/GeosRuntime.bc
+    COMMAND ${llvm_clangpp_cmd}
+    ARGS -std=c++17 ${RT_OPT_FLAGS} -c -emit-llvm
+    ${CLANG_SDK_INC}
+    ${CLANG_CRT_INC}
+    -I ${Boost_INCLUDE_DIR}
+    ${MAPD_DEFINITIONS}
+    ${GEOS_RT_DEFINITIONS}
+    -I ${CMAKE_SOURCE_DIR}
+    -I ${GEOS_INCLUDE_DIR} -Qy
+    ${CMAKE_CURRENT_SOURCE_DIR}/GeosRuntime.cpp)
+
+add_custom_command(
     DEPENDS ExtensionFunctions.hpp ExtensionFunctionsGeo.hpp ExtensionFunctionsArray.hpp
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast
     COMMAND ${llvm_clangpp_cmd}
@@ -196,10 +210,11 @@ add_custom_target(QueryEngineFunctionsTargets
     DEPENDS
         ${CMAKE_CURRENT_BINARY_DIR}/RuntimeFunctions.bc
         ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast
+        ${CMAKE_CURRENT_BINARY_DIR}/GeosRuntime.bc
     )
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/OmniSciTypes.h DESTINATION ${CMAKE_BINARY_DIR}/QueryEngine/)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/OmniSciTypes.h ${CMAKE_CURRENT_BINARY_DIR}/RuntimeFunctions.bc ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast DESTINATION QueryEngine)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/OmniSciTypes.h ${CMAKE_CURRENT_BINARY_DIR}/RuntimeFunctions.bc ${CMAKE_CURRENT_BINARY_DIR}/GeosRuntime.bc ${CMAKE_CURRENT_BINARY_DIR}/ExtensionFunctions.ast DESTINATION QueryEngine)
 
 if(ENABLE_CUDA)
   add_library(QueryEngine ${query_engine_source_files} ${CMAKE_CURRENT_BINARY_DIR}/TopKSort.o ${CMAKE_CURRENT_BINARY_DIR}/InPlaceSortImpl.o ${CMAKE_CURRENT_BINARY_DIR}/ResultSetSortImpl.o ${CMAKE_CURRENT_BINARY_DIR}/GpuInitGroups.o ${CMAKE_CURRENT_BINARY_DIR}/HashJoinRuntimeGpu.o)
@@ -222,7 +237,7 @@ if((${LLVM_VERSION_MAJOR} EQUAL 10) AND (NOT ${PREFER_STATIC_LIBS}))
   # Arch no longer building Clang with static libs
   list(APPEND QUERY_ENGINE_LIBS clang-cpp)
 else()
-  list(APPEND QUERY_ENGINE_LIBS 
+  list(APPEND QUERY_ENGINE_LIBS
     clangFrontend
     clangSerialization
     clangDriver
@@ -239,7 +254,7 @@ else()
   )
 endif()
 
-list(APPEND QUERY_ENGINE_LIBS ${LLVM_LINKER_FLAGS})
+list(APPEND QUERY_ENGINE_LIBS ${LLVM_LINKER_FLAGS} ${ZLIB_LIBRARIES})
 
 target_link_libraries(QueryEngine ${QUERY_ENGINE_LIBS})
 
@@ -268,6 +283,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/TopKSort.o
     COMMAND nvcc
     ARGS
+        -I ${CMAKE_SOURCE_DIR}
         ${MAPD_HOST_COMPILER_FLAG}
         -Xcompiler -fPIC
         -std=c++14
@@ -283,6 +299,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/InPlaceSortImpl.o
     COMMAND nvcc
     ARGS
+        -I ${CMAKE_SOURCE_DIR}
         ${MAPD_HOST_COMPILER_FLAG}
         -Xcompiler -fPIC
         -D_FORCE_INLINES
@@ -298,6 +315,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ResultSetSortImpl.o
     COMMAND nvcc
     ARGS
+        -I ${CMAKE_SOURCE_DIR}
         ${MAPD_HOST_COMPILER_FLAG}
         -Xcompiler -fPIC
         -std=c++14

@@ -15,8 +15,10 @@
  */
 
 #include "CudaMgr/CudaMgr.h"
+#include "QueryEngine/NvidiaKernel.h"
 
 #include <algorithm>
+#include <boost/stacktrace.hpp>
 #include <cassert>
 #include <iostream>
 #include <stdexcept>
@@ -24,6 +26,16 @@
 #include "Shared/Logger.h"
 
 namespace CudaMgr_Namespace {
+
+CudaErrorException::CudaErrorException(CUresult status)
+    : std::runtime_error(errorMessage(status)), status_(status) {
+  // cuda already de-initialized can occur during system shutdown. avoid making calls to
+  // the logger to prevent failing during a standard teardown.
+  if (status != CUDA_ERROR_DEINITIALIZED) {
+    VLOG(1) << errorMessage(status);
+    VLOG(1) << boost::stacktrace::stacktrace();
+  }
+}
 
 std::string errorMessage(CUresult const status) {
   const char* errorString{nullptr};
@@ -51,6 +63,12 @@ CudaMgr::CudaMgr(const int num_gpus, const int start_gpu)
   initDeviceGroup();
   createDeviceContexts();
   printDeviceProperties();
+
+  // warm up the GPU JIT
+  LOG(INFO) << "Warming up the GPU JIT Compiler... (this may take several seconds)";
+  setContext(0);
+  nvidia_jit_warmup();
+  LOG(INFO) << "GPU JIT Compiler initialized.";
 }
 
 void CudaMgr::initDeviceGroup() {
