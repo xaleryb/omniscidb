@@ -3,6 +3,8 @@
 set -ex
 [ -z "$PREFIX" ] && export PREFIX=$CONDA_PREFIX
 
+export CPU_COUNT=`nproc`
+
 # Make sure -fPIC is not in CXXFLAGS (that some conda packages may
 # add):
 export CXXFLAGS="`echo $CXXFLAGS | sed 's/-fPIC//'`"
@@ -71,7 +73,7 @@ cmake -S . -B build -Wno-dev \
     -DENABLE_DBE=ON
 
 cd build
-make -j
+make -j $CPU_COUNT
 make install || exit 1
 cd ..
 # copy initdb to mapd_initdb to avoid conflict with psql initdb
