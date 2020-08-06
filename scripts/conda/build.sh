@@ -11,6 +11,8 @@ df -h
 
 export EXTRA_CMAKE_OPTIONS=""
 
+export CPU_COUNT=`nproc`
+
 # Make sure -fPIC is not in CXXFLAGS (that some conda packages may
 # add), otherwise omniscidb server will crash when executing generated
 # machine code:
