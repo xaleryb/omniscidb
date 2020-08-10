@@ -180,7 +180,6 @@ cdef class PyDbEngine:
 
     def __dealloc__(self):
         assert not self.closed
-        self.c_dbe.reset()
         del self.c_dbe
         self.c_dbe = NULL
 

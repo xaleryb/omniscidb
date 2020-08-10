@@ -1,4 +1,4 @@
-add_library(DBEngine SHARED DBETypes.cpp DBEngine.cpp DBEngine.h DBETypes.h)
+add_library(DBEngine SHARED DBETypes.cpp DBEManager.cpp DBEngine.cpp DBEngine.h DBEManager.h DBETypes.h)
 
 target_link_libraries(DBEngine QueryRunner QueryEngine DataMgr ${Arrow_LIBRARIES} ${Boost_LIBRARIES} ${CMAKE_DL_LIBS} ${TBB_LIBS})
 install(TARGETS DBEngine DESTINATION lib)

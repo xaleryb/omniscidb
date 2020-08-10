@@ -15,13 +15,10 @@
  */
 
 #include "DBEngine.h"
-#include <boost/filesystem.hpp>
+#include "DBEManager.h"
 #include "DataMgr/ForeignStorage/ArrowForeignStorage.h"
-#include "DataMgr/ForeignStorage/ForeignStorageInterface.h"
 #include "Fragmenter/FragmentDefaultValues.h"
 #include "QueryEngine/ArrowResultSet.h"
-#include "QueryEngine/ExtensionFunctionsWhitelist.h"
-#include "QueryEngine/TableFunctions/TableFunctionsFactory.h"
 #include "QueryRunner/QueryRunner.h"
 #include "Parser/ParserWrapper.h"
 #include "Parser/parser.h"
@@ -33,7 +30,6 @@ using QR = QueryRunner::QueryRunner;
 
 namespace EmbeddedDatabase {
 
-class DBEngineImpl;
 
 /**
  * Cursor internal implementation
@@ -93,91 +89,30 @@ class CursorImpl : public Cursor {
   std::shared_ptr<arrow::RecordBatch> record_batch_;
 };
 
+
 /**
  * DBEngine internal implementation
  */
 class DBEngineImpl : public DBEngine {
 
  public:
-  DBEngineImpl(const std::string& base_path, int port, const std::string& udf_filename = "")
-  : is_temp_db_(false) {
-    if (!init(base_path, port, udf_filename)) {
-      std::cerr << "DBEngine initialization failed" << std::endl;
-    }
+
+  DBEngineImpl(const std::string& base_path, int port, const std::string& udf_filename = "") {
+    manager_ = getManager(base_path, port, udf_filename);
   }
 
   ~DBEngineImpl() {
-    reset();
   }
 
-  bool init(const std::string& base_path, int port, const std::string& udf_filename) {
-    SystemParameters mapd_parms;
-    std::string db_path = base_path;
-    try {
-      registerArrowForeignStorage();
-      registerArrowCsvForeignStorage();
-      bool is_new_db = base_path.empty() || !catalogExists(base_path);
-      if (is_new_db) {
-        db_path = createCatalog(base_path);
-        if (db_path.empty()) {
-          return false;
-        }
-      }
-      auto data_path = db_path + + "/mapd_data";
-      data_mgr_= std::make_shared<Data_Namespace::DataMgr>(data_path, mapd_parms, false, 0);
-      calcite_ = std::make_shared<Calcite>(-1, port, db_path, 1024, 5000);
-
-      ExtensionFunctionsWhitelist::add(calcite_->getExtensionFunctionWhitelist());
-      if (!udf_filename.empty()) {
-        ExtensionFunctionsWhitelist::addUdfs(calcite_->getUserDefinedFunctionWhitelist());
-      }
-      table_functions::TableFunctionsFactory::init();
-
-      auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
-      sys_cat.init(db_path, data_mgr_, {}, calcite_, is_new_db, false, {});
-
-      logger::LogOptions log_options("DBE");
-      log_options.set_base_path(db_path);
-      logger::init(log_options);
-
-      if (!sys_cat.getSqliteConnector()) {
-        std::cerr << "DBE:init: SqliteConnector is null" << std::endl;
-        return false;
-      }
-
-      sys_cat.getMetadataForDB(OMNISCI_DEFAULT_DB, database_);
-      auto catalog = Catalog_Namespace::Catalog::get(
-          db_path, database_, data_mgr_, std::vector<LeafHostInfo>(), calcite_, false);
-      sys_cat.getMetadataForUser(OMNISCI_ROOT_USER, user_);
-      auto session = std::make_unique<Catalog_Namespace::SessionInfo>(
-          catalog, user_, ExecutorDeviceType::CPU, "");
-      QR::init(session);
-
-      base_path_ = db_path;
-      return true;
-    } catch (std::exception const& e) {
-      std::cerr << "DBE:init: " << e.what() << std::endl;
-    } catch (...) {
-      std::cerr << "DBE:init: Unknown exception" << std::endl;
-    }
-    return false;
- }
-
-  void reset() {
-    if (calcite_) {
-      calcite_->close_calcite_server();
-      calcite_.reset();
-    }
-    QR::reset();
-    ForeignStorageInterface::destroy();
-    data_mgr_.reset();
-    if (is_temp_db_) {
-        boost::filesystem::remove_all(base_path_);
-    }
-    base_path_.clear();
+  bool initialized() {
+    return manager_->initialized();
   }
 
   void executeDDL(const std::string& query) {
+    if (!initialized()) {
+      std::cerr << "DBE is not initialized" << std::endl;
+      return;
+    }
     try {
       QR::get()->runDDLStatement(query);
     } catch (std::exception const& e) {
@@ -188,6 +123,10 @@ class DBEngineImpl : public DBEngine {
   }
 
   void createArrowTable(const std::string& name, std::shared_ptr<arrow::Table>& table) {
+    if (!initialized()) {
+      std::cerr << "DBE is not initialized" << std::endl;
+      return;
+    }
     setArrowTable(name, table);
     try {
       auto session = QR::get()->getSession();
@@ -220,6 +159,10 @@ class DBEngineImpl : public DBEngine {
   }
 
   std::unique_ptr<CursorImpl> executeDML(const std::string& query) {
+    if (!initialized()) {
+      std::cerr << "DBE is not initialized" << std::endl;
+      return std::unique_ptr<CursorImpl>();
+    }
     try {
       ParserWrapper pw{query};
       if (pw.isCalcitePathPermissable()) {
@@ -255,6 +198,10 @@ class DBEngineImpl : public DBEngine {
   }
 
   std::unique_ptr<CursorImpl> executeRA(const std::string& query) {
+    if (!initialized()) {
+      std::cerr << "DBE is not initialized" << std::endl;
+      return std::unique_ptr<CursorImpl>();
+    }
     try {
       const auto execution_result =
           QR::get()->runSelectQueryRA(query, ExecutorDeviceType::CPU, true, true);
@@ -274,6 +221,10 @@ class DBEngineImpl : public DBEngine {
 
   std::vector<std::string> getTables() {
     std::vector<std::string> table_names;
+    if (!initialized()) {
+      std::cerr << "DBE is not initialized" << std::endl;
+      return table_names;
+    }
     auto catalog = QR::get()->getCatalog();
     if (catalog) {
       try {
@@ -296,6 +247,11 @@ class DBEngineImpl : public DBEngine {
 
   std::vector<ColumnDetails> getTableDetails(const std::string& table_name) {
     std::vector<ColumnDetails> result;
+    if (!initialized()) {
+      std::cerr << "DBE is not initialized" << std::endl;
+      return result;
+    }
+
     auto catalog = QR::get()->getCatalog();
     if (catalog) {
       auto metadata = catalog->getMetadataForTable(table_name, false);
@@ -347,159 +303,47 @@ class DBEngineImpl : public DBEngine {
   }
 
   void createUser(const std::string& user_name, const std::string& password) {
-    Catalog_Namespace::UserMetadata user;
-    auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
-    if (!sys_cat.getMetadataForUser(user_name, user)) {
-      sys_cat.createUser(user_name, password, false, "", true);
-    }
+    manager_->createUser(user_name, password);
   }
 
   void dropUser(const std::string& user_name) {
-    Catalog_Namespace::UserMetadata user;
-    auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
-    if (!sys_cat.getMetadataForUser(user_name, user)) {
-      sys_cat.dropUser(user_name);
-    }
+    manager_->dropUser(user_name);
   }
 
   void createDatabase(const std::string& db_name) {
-    Catalog_Namespace::DBMetadata db;
-    auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
-    if (!sys_cat.getMetadataForDB(db_name, db)) {
-      sys_cat.createDatabase(db_name, user_.userId);
-    }
+    manager_->createDatabase(db_name);
   }
 
   void dropDatabase(const std::string& db_name) {
-    Catalog_Namespace::DBMetadata db;
-    auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
-    if (sys_cat.getMetadataForDB(db_name, db)) {
-      sys_cat.dropDatabase(db);
-    }
+    manager_->dropDatabase(db_name);
   }
 
   bool setDatabase(std::string& db_name) {
-    try {
-      auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
-      auto catalog = sys_cat.switchDatabase(db_name, user_.userName);
-      updateSession(catalog);
-      sys_cat.getMetadataForDB(db_name, database_);
-      return true;
-    } catch (std::exception const& e) {
-      std::cerr << "DBE:setDatabase: " << e.what() << std::endl;
-    } catch (...) {
-      std::cerr << "DBE:setDatabase: Unknown exception" << std::endl;
-    }
-    return false;
+    return manager_->setDatabase(db_name);
   }
 
   bool login(std::string& db_name,
              std::string& user_name,
              const std::string& password) {
-    Catalog_Namespace::UserMetadata user_meta;
-    try {
-      auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
-      auto catalog = sys_cat.login(db_name, user_name, password, user_meta, true);
-      updateSession(catalog);
-      sys_cat.getMetadataForDB(db_name, database_);
-      sys_cat.getMetadataForUser(user_name, user_);
-      return true;
-    } catch (std::exception const& e) {
-      std::cerr << "DBE:login: " << e.what() << std::endl;
-    } catch (...) {
-      std::cerr << "DBE:login: Unknown exception" << std::endl;
-    }
-    return false;
-  }
-
- protected:
-  void updateSession(std::shared_ptr<Catalog_Namespace::Catalog> catalog) {
-    auto session = std::make_unique<Catalog_Namespace::SessionInfo>(
-      catalog, user_, ExecutorDeviceType::CPU, "");
-    QR::reset();
-    QR::init(session);
-  }
-
-  bool catalogExists(const std::string& base_path) {
-    if (!boost::filesystem::exists(base_path)) {
-      return false;
-    }
-      for (auto& subdir : system_folders_) {
-        std::string path = base_path + "/" + subdir;
-        if (!boost::filesystem::exists(path)) {
-          return false;
-        }
-      }
-    return true;
-  }
-
-  void cleanCatalog(const std::string& base_path) {
-    if (boost::filesystem::exists(base_path)) {
-      for (auto& subdir : system_folders_) {
-        std::string path = base_path + "/" + subdir;
-        if (boost::filesystem::exists(path)) {
-          boost::filesystem::remove_all(path);
-        }
-      }
-    }
-  }
-
-  std::string createCatalog(const std::string& base_path) {
-    std::string root_dir = base_path;
-    if (base_path.empty()) {
-      boost::system::error_code error;
-      auto tmp_path = boost::filesystem::temp_directory_path(error);
-      if (boost::system::errc::success != error.value()) {
-        std::cerr << error.message() << std::endl;
-        return "";
-      }
-      tmp_path /= "omnidbe_%%%%-%%%%-%%%%";
-      auto uniq_path = boost::filesystem::unique_path(tmp_path, error);
-      if (boost::system::errc::success != error.value()) {
-        std::cerr << error.message() << std::endl;
-        return "";
-      }
-      root_dir = uniq_path.string();
-      is_temp_db_ = true;
-    }
-    if (!boost::filesystem::exists(root_dir)) {
-      if (!boost::filesystem::create_directory(root_dir)) {
-        std::cerr << "Cannot create database directory: " << root_dir << std::endl;
-        return "";
-      }
-    }
-    size_t absent_count = 0;
-    for (auto& sub_dir : system_folders_) {
-      std::string path = root_dir + "/" + sub_dir;
-      if (!boost::filesystem::exists(path)) {
-        if (!boost::filesystem::create_directory(path)) {
-          std::cerr << "Cannot create database subdirectory: " << path << std::endl;
-          return "";
-        }
-        ++absent_count;
-      }
-    }
-    if ((absent_count > 0) && (absent_count < system_folders_.size())) {
-      std::cerr << "Database directory structure is broken: " << root_dir << std::endl;
-      return "";
-    }
-    return root_dir;
+    return manager_->login(db_name, user_name, password);
   }
 
  private:
-  std::string base_path_;
-  std::shared_ptr<Data_Namespace::DataMgr> data_mgr_;
-  std::shared_ptr<Calcite> calcite_;
-  Catalog_Namespace::DBMetadata database_;
-  Catalog_Namespace::UserMetadata user_;
-  bool is_temp_db_;
-  std::string udf_filename_;
 
-  std::vector<std::string> system_folders_ = {
-    "mapd_catalogs", 
-    "mapd_data", 
-    "mapd_export"};
+  std::shared_ptr<DBEManager> getManager(const std::string& base_path, int port, const std::string& udf_filename) {
+    std::shared_ptr<DBEManager> temp = master_manager_.lock();
+    if (!temp) {
+      temp.reset(new DBEManager(base_path, port, udf_filename));
+      master_manager_ = temp;
+    }
+    return temp;
+  }
+
+  std::shared_ptr<DBEManager> manager_;
+  static std::weak_ptr<DBEManager>  master_manager_;
 };
+
+std::weak_ptr<DBEManager> DBEngineImpl::master_manager_;
 
 DBEngine* DBEngine::create(const std::string& path, int port) {
   g_enable_union = false;
