@@ -37,7 +37,7 @@ export EXTRA_CMAKE_OPTIONS="$EXTRA_CMAKE_OPTIONS -DCMAKE_C_COMPILER=${CC} -DCMAK
 # will be disabled:
 export RUN_TESTS=0
 
-export INSTALL_BASE=opt/omnisci-cpu
+export INSTALL_BASE=. # was opt/omnisci-cpu
 
 if [[ "$RUN_TESTS" == "0" ]]
 then
@@ -49,16 +49,16 @@ fi
 
 export EXTRA_CMAKE_OPTIONS="$EXTRA_CMAKE_OPTIONS -DBoost_NO_BOOST_CMAKE=on"
 
-#conda activate omnisci-dev-37
+this_dir=$(dirname "${BASH_SOURCE[0]}")
 
-
-. ${RECIPE_DIR}/get_cxx_include_path.sh
+# Omnisci UDF support uses CLangTool for parsing Load-time UDF C++
+# code to AST. If the C++ code uses C++ std headers, we need to
+# specify the locations of include directories:
+. ${RECIPE_DIR:-${this_dir}}/get_cxx_include_path.sh
 export CPLUS_INCLUDE_PATH=$(get_cxx_include_path)
 
 mkdir -p build
 cd build
-
-#pip install "pyarrow==0.16"
 
 cmake -Wno-dev \
     -DCMAKE_PREFIX_PATH=$PREFIX \
@@ -76,17 +76,11 @@ cmake -Wno-dev \
     $EXTRA_CMAKE_OPTIONS \
     ..
 
-make -j $CPU_COUNT
+make -j $CPU_COUNT 
 
 
 if [[ "$RUN_TESTS" == "2" ]]
 then
-    # Omnisci UDF support uses CLangTool for parsing Load-time UDF C++
-    # code to AST. If the C++ code uses C++ std headers, we need to
-    # specify the locations of include directories:
-    . ${RECIPE_DIR}/get_cxx_include_path.sh
-    export CPLUS_INCLUDE_PATH=$(get_cxx_include_path)
-
     mkdir tmp
     $PREFIX/bin/initdb tmp
     make sanity_tests

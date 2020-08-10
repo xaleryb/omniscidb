@@ -8,7 +8,7 @@ import pyarrow as pa
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 dbe = Extension(
     "dbe",
-    ["@CMAKE_CURRENT_SOURCE_DIR@/dbe.pyx"],
+    ["@CMAKE_CURRENT_SOURCE_DIR@/Python/dbe.pyx"],
     language="c++17",
     include_dirs=[
         np.get_include(),
