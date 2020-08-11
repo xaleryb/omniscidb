@@ -5,7 +5,7 @@
 {% set build_string = "h{}_{}_{}".format(PKG_HASH, number, build_ext) %}
 
 package:
-  name: omnisci-engine
+  name: omniscidb
   version: {{ version }}
 
 source:
@@ -16,13 +16,10 @@ build:
   string: "{{ build_string }}"
   script_env:
     - http_proxy
-    - HTTP_PROXY
     - https_proxy
-    - HTTPS_PROXY
 
 requirements:
   build:
-    #- {{ compiler('cgo') }}
     - {{ compiler('cxx') }}
     - clangdev
     - clangxx
@@ -32,7 +29,6 @@ requirements:
     - maven
   host:
     - numpy =1.18.5
-    - pyarrow =0.16
     - cython
     # omniscidb <=5.2.2 is not arrow-cpp 0.17+ ready
     - arrow-cpp =0.16
@@ -58,20 +54,69 @@ requirements:
     - snappy
     - thrift-cpp
     - tbb-devel =2020.1
-  run:
-    - boost-cpp
-    - bzip2
-    # omnscidb Load-time UDF support calls clang++
-    - gxx_{{ target_platform }}
-    - ncurses
-    - openjdk 8.*
-    - xz
-    - zlib
-    - pyarrow =0.16
-    - tbb =2020.1
-  run_constrained:
-    - arrow-cpp-proc * {{ build_ext }}
 
+outputs:
+  - name: omniscidb-cpu
+    script: install-omniscidb-cpu.sh
+    requirements:
+      run:
+        - boost-cpp
+        - bzip2
+        # omnscidb Load-time UDF support calls clang++
+        - gxx_{{ target_platform }}
+        - ncurses
+        - openjdk 8.*
+        - xz
+        - zlib
+        - arrow-cpp =0.16
+        - tbb =2020.1
+      run_constrained:
+        - arrow-cpp-proc * {{ build_ext }}
+
+  - name: omniscidb-common
+    script: install-omniscidb-common.sh
+
+  - name: omniscidbe
+    script: install-omniscidbe.sh
+    requirements:
+      run:
+        - arrow-cpp =0.16
+        - tbb =2020.1
+        - {{ pin_subpackage('omniscidb-common', exact=True) }}
+
+  - name: omniscidbe4py
+    script: install-omniscidbe4py.sh
+    requirements:
+      host:
+        - python
+        - cython
+        - numpy =1.18.5
+        - pyarrow =0.16
+        - {{ pin_subpackage('omniscidbe', exact=True) }}
+      run:
+        - pyarrow =0.16
+        - arrow-cpp =0.16
+        - tbb =2020.1
+        - {{ pin_subpackage('omniscidbe', exact=True) }}
+        - boost-cpp
+        - double-conversion
+        - gflags
+        - glog
+        - llvm 9
+        - libarchive
+        - libgdal
+        - libkml
+        - libpng
+        # for some reason, librdkafka 1.4+ triggers dependency conflicts
+        - librdkafka <1.4
+        - ncurses
+        - openldap
+        - openssl
+        - snappy
+        - thrift-cpp
+    test:
+      imports:
+        - dbe
 
 test:
   commands:
@@ -116,8 +161,6 @@ about:
   summary: 'The OmniSci database'
 
   description: |
-    OmniSci Engine is OmniSci DB based dataframe processing engine.
-
     LEGAL NOTICE: Use of this software package is subject to the software license
     agreement (as set forth above, in the license section of the installed Conda
     package and/or the README file) and all notices, disclaimers or license terms for

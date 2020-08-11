@@ -26,18 +26,9 @@ dbe = Extension(
 # if you get weird linker errors or runtime crashes
 #    dbe.define_macros.append(("_GLIBCXX_USE_CXX11_ABI", "0"))
 
-setup(
-    name="dbe",
-    version="0.1",
-    ext_modules=cythonize(
-        dbe,
-        compiler_directives={
-            "c_string_type": "str",
-            "c_string_encoding": "utf8",
-            "language_level": "3",
-        },
-        include_path=["@CMAKE_CURRENT_SOURCE_DIR@"],
-    ),
+# "fat" wheel
+data_files=[]
+if False:  # TODO: implement an option?
     data_files=[
         ("lib", ["$<TARGET_FILE:DBEngine>"]),
         (
@@ -58,5 +49,19 @@ setup(
                 "@CMAKE_CURRENT_SOURCE_DIR@/DBEngine.pxd",
             ],
         ),
-    ],
+    ]
+
+setup(
+    name="dbe",
+    version="0.1",
+    ext_modules=cythonize(
+        dbe,
+        compiler_directives={
+            "c_string_type": "str",
+            "c_string_encoding": "utf8",
+            "language_level": "3",
+        },
+        include_path=["@CMAKE_CURRENT_SOURCE_DIR@","@CMAKE_CURRENT_SOURCE_DIR@/Python"],
+    ),
+    data_files=data_files,
 )
