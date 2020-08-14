@@ -15,7 +15,7 @@ if(DEFINED ENV{CONDA_PREFIX})
   # Adding `--sysroot=...` resolves `no member named 'signbit' in the global namespace` error:
   set(CMAKE_SYSROOT "$ENV{CONDA_BUILD_SYSROOT}")
   link_directories("$ENV{CONDA_PREFIX}/lib")  # resolves link issue for zlib 
-  # Adding `-I$BUILD_SYSROOT_INLCUDE` resolves `cassert file not found` error:
+  # Adding sysroot include dir resolves `cassert file not found` error:
   include_directories(SYSTEM "$ENV{CONDA_BUILD_SYSROOT}/usr/include")
 endif(DEFINED ENV{CONDA_PREFIX})
 
@@ -148,9 +148,12 @@ if(XCODE)
 endif()
 
 # fixme: hack works for Homebrew, might not work for Conda
-if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin" AND NOT ENABLE_CONDA)
+if(ENABLE_CONDA)
+  set(OPENSSL_ROOT_DIR "$ENV{CONDA_PREFIX}")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin" )
   set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl/")
 endif()
+
 find_package(OpenSSL REQUIRED)
 include_directories(${OPENSSL_INCLUDE_DIR})
 
