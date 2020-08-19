@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -xe
 cd build/Embedded
-$PYTHON setup.py build_ext -g -f install
+${PYTHON:-python} setup.py build_ext -g -f install

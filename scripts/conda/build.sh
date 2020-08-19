@@ -35,7 +35,7 @@ export EXTRA_CMAKE_OPTIONS="$EXTRA_CMAKE_OPTIONS -DCMAKE_C_COMPILER=${CC} -DCMAK
 #
 # Ideally, this should 2, but to save disk space, running sanity tests
 # will be disabled:
-export RUN_TESTS=0
+export RUN_TESTS=${RUN_TESTS:-0}
 
 export INSTALL_BASE=. # was opt/omnisci-cpu
 
@@ -76,7 +76,7 @@ cmake -Wno-dev \
     $EXTRA_CMAKE_OPTIONS \
     ..
 
-make -j $CPU_COUNT 
+make -j ${CPU_COUNT:-8}
 
 
 if [[ "$RUN_TESTS" == "2" ]]
