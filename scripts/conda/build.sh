@@ -2,9 +2,6 @@
 
 set -ex
 
-# generate ~/.m2/settings.xml if proxy are set
-#python ~/recipe_root/make-m2-proxy.py
-
 # Free some disk space, see also
 # https://github.com/conda-forge/omniscidb-feedstock/issues/5
 df -h
@@ -50,12 +47,16 @@ fi
 export EXTRA_CMAKE_OPTIONS="$EXTRA_CMAKE_OPTIONS -DBoost_NO_BOOST_CMAKE=on"
 
 this_dir=$(dirname "${BASH_SOURCE[0]}")
+RECIPE_DIR=${RECIPE_DIR:-${this_dir}}
 
 # Omnisci UDF support uses CLangTool for parsing Load-time UDF C++
 # code to AST. If the C++ code uses C++ std headers, we need to
 # specify the locations of include directories:
-. ${RECIPE_DIR:-${this_dir}}/get_cxx_include_path.sh
+. ${RECIPE_DIR}/get_cxx_include_path.sh
 export CPLUS_INCLUDE_PATH=$(get_cxx_include_path)
+
+# generate ~/.m2/settings.xml if proxy are set and there are no settings
+[ -f ~/.m2/settings.xml -o -z "$http_proxy" ] || python ${RECIPE_DIR}/make-m2-proxy.py
 
 mkdir -p build
 cd build
@@ -76,7 +77,7 @@ cmake -Wno-dev \
     $EXTRA_CMAKE_OPTIONS \
     ..
 
-make -j ${CPU_COUNT:-8}
+make -j ${CPU_COUNT:-`nproc`}
 
 
 if [[ "$RUN_TESTS" == "2" ]]
