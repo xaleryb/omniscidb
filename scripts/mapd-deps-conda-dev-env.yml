@@ -1,8 +1,13 @@
 #  To create environment, execute:
 #     conda env create -f scripts/mapd-deps-conda-dev-env.yml
 #
+#  To activate:
+#     conda activate omnisci-dev
+#
+#  To build OmnisciDB for development:
+#     scripts/conda/build-install-all.sh
 
-#  TODO: autogenerate this file from conda/meta.yaml
+#  TODO: autogenerate this file from conda/meta.yaml requirements
 name: omnisci-dev
 channels:
   - local

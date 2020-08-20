@@ -2,10 +2,10 @@
 
 set -ex
 [ -z "$PREFIX" ] && export PREFIX=${CONDA_PREFIX:-/usr/local}
+this_dir=$(dirname "${BASH_SOURCE[0]}")
 
-. ./build.sh
-
-. ./install-omniscidb-common.sh
+bash $this_dir/build.sh
+bash $this_dir/install-omniscidb-common.sh
 cmake --install build --component "exe" --prefix $PREFIX
 cmake --install build --component "DBE" --prefix $PREFIX
-. ./install-omniscidbe4py.sh
+bash $this_dir/install-omniscidbe4py.sh

@@ -78,7 +78,7 @@ outputs:
         - zlib
         - arrow-cpp =0.16
         - tbb =2020.1
-  
+
   - name: omniscidb-cpu
     script: install-omniscidb-cpu.sh
     requirements:

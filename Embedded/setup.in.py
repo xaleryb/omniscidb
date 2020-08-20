@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+#
+# This file (setup.in.py) is a template, which cmakes uses to generate setup.py
+# in build directory where it can be used for installation into python environment.
+
 from Cython.Build import cythonize
 from distutils.core import setup, Extension
 
