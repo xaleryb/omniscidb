@@ -26,10 +26,10 @@ dependencies:
   - llvmdev     9.*
   - librdkafka <1.4
   - openjdk     8.*
+  - cmake      >3.14
   - libpng
   - tbb-devel
   - cython
-  - cmake
   - make
   - go-cgo
   - maven

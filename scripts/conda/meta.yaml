@@ -23,7 +23,7 @@ requirements:
     - {{ compiler('cxx') }}
     - clangdev
     - clangxx
-    - cmake
+    - cmake >3.14
     - llvmdev 9
     - make
     - maven
@@ -61,8 +61,8 @@ outputs:
     script: install-omniscidb-common.sh
     requirements:
       build:
-        - cmake    # there is no building, just copying
-      run:         # common part of run requirements for other packages
+        - cmake >3.14  # there is no building, just copying
+      run:             # common part of run requirements for other packages
         - boost-cpp
         - bzip2
         # omnscidb Load-time UDF support calls clang++
@@ -83,7 +83,7 @@ outputs:
     script: install-omniscidb-cpu.sh
     requirements:
       build:
-        - cmake    # there is no building, just copying
+        - cmake >3.14  # there is no building, just copying
       run:
         - boost-cpp
         - bzip2
@@ -113,7 +113,7 @@ outputs:
     script: install-omniscidbe.sh
     requirements:
       build:
-        - cmake
+        - cmake >3.14
       run:
         - {{ pin_subpackage('omniscidb-common', exact=True) }}
 
@@ -124,7 +124,7 @@ outputs:
         - {{ compiler('cxx') }}   # this section really builds
         - clangdev
         - clangxx
-        - cmake
+        - cmake > 3.14
         - llvmdev 9
         - make
         - maven
