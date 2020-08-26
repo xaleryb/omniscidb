@@ -164,6 +164,7 @@ class DBEngineImpl : public DBEngine {
  }
 
   void reset() {
+    cursor_.reset();
     if (calcite_) {
       calcite_->close_calcite_server();
       calcite_.reset();
@@ -219,8 +220,9 @@ class DBEngineImpl : public DBEngine {
     releaseArrowTable(name);
   }
 
-  std::unique_ptr<CursorImpl> executeDML(const std::string& query) {
+  std::shared_ptr<CursorImpl> executeDML(const std::string& query) {
     try {
+      cursor_.reset();
       ParserWrapper pw{query};
       if (pw.isCalcitePathPermissable()) {
         const auto execution_result =
@@ -230,32 +232,33 @@ class DBEngineImpl : public DBEngine {
         for (const auto target : targets) {
           col_names.push_back(target.get_resname());
         }
-        return std::make_unique<CursorImpl>(execution_result.getRows(), col_names);
+        cursor_ = std::make_shared<CursorImpl>(execution_result.getRows(), col_names);
+      } else {
+        auto session_info = QR::get()->getSession();
+        auto query_state = QR::create_query_state(session_info, query);
+        auto stdlog = STDLOG(query_state);
+
+        SQLParser parser;
+        std::list<std::unique_ptr<Parser::Stmt>> parse_trees;
+        std::string last_parsed;
+        CHECK_EQ(parser.parse(query, parse_trees, last_parsed), 0) << query;
+        CHECK_EQ(parse_trees.size(), size_t(1));
+        auto stmt = parse_trees.front().get();
+        auto insert_values_stmt = dynamic_cast<InsertValuesStmt*>(stmt);
+        CHECK(insert_values_stmt);
+        insert_values_stmt->execute(*session_info);
       }
-
-      auto session_info = QR::get()->getSession();
-      auto query_state = QR::create_query_state(session_info, query);
-      auto stdlog = STDLOG(query_state);
-
-      SQLParser parser;
-      std::list<std::unique_ptr<Parser::Stmt>> parse_trees;
-      std::string last_parsed;
-      CHECK_EQ(parser.parse(query, parse_trees, last_parsed), 0) << query;
-      CHECK_EQ(parse_trees.size(), size_t(1));
-      auto stmt = parse_trees.front().get();
-      auto insert_values_stmt = dynamic_cast<InsertValuesStmt*>(stmt);
-      CHECK(insert_values_stmt);
-      insert_values_stmt->execute(*session_info);
     } catch (std::exception const& e) {
       std::cerr << "DBE:executeDML: " << e.what() << std::endl;
     } catch (...) {
       std::cerr << "DBE:executeDML: Unknown exception" << std::endl;
     }
-    return std::unique_ptr<CursorImpl>();
+    return cursor_;
   }
 
-  std::unique_ptr<CursorImpl> executeRA(const std::string& query) {
+  std::shared_ptr<CursorImpl> executeRA(const std::string& query) {
     try {
+      cursor_.reset();
       const auto execution_result =
           QR::get()->runSelectQueryRA(query, ExecutorDeviceType::CPU, true, true);
       auto targets = execution_result.getTargetsMeta();
@@ -263,13 +266,13 @@ class DBEngineImpl : public DBEngine {
       for (const auto target : targets) {
         col_names.push_back(target.get_resname());
       }
-      return std::make_unique<CursorImpl>(execution_result.getRows(), col_names);
+      cursor_= std::make_shared<CursorImpl>(execution_result.getRows(), col_names);
     } catch (std::exception const& e) {
       std::cerr << "DBE:executeRA: " << e.what() << std::endl;
     } catch (...) {
       std::cerr << "DBE:executeRA: Unknown exception" << std::endl;
     }
-    return std::unique_ptr<CursorImpl>();
+    return cursor_;
   }
 
   std::vector<std::string> getTables() {
@@ -494,6 +497,7 @@ class DBEngineImpl : public DBEngine {
   Catalog_Namespace::UserMetadata user_;
   bool is_temp_db_;
   std::string udf_filename_;
+std::shared_ptr<CursorImpl> cursor_;
 
   std::vector<std::string> system_folders_ = {
     "mapd_catalogs", 
@@ -554,12 +558,12 @@ void DBEngine::executeDDL(const std::string& query) {
   engine->executeDDL(query);
 }
 
-std::unique_ptr<Cursor> DBEngine::executeDML(const std::string& query) {
+std::shared_ptr<Cursor> DBEngine::executeDML(const std::string& query) {
   DBEngineImpl* engine = getImpl(this);
   return engine->executeDML(query);
 }
 
-std::unique_ptr<Cursor> DBEngine::executeRA(const std::string& query) {
+std::shared_ptr<Cursor> DBEngine::executeRA(const std::string& query) {
   DBEngineImpl* engine = getImpl(this);
   return engine->executeRA(query);
 }

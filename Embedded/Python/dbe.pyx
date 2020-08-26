@@ -106,7 +106,7 @@ cdef class PyRow:
 
 
 cdef class PyCursor:
-    cdef unique_ptr[_Cursor] c_cursor  #Hold a C++ instance which we're wrapping
+    cdef shared_ptr[_Cursor] c_cursor  #Hold a C++ instance which we're wrapping
     cdef shared_ptr[CRecordBatch] c_batch
 
     def colCount(self):

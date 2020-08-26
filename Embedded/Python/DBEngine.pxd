@@ -85,8 +85,8 @@ cdef extern from "DBEngine.h" namespace 'EmbeddedDatabase':
 
     cdef cppclass DBEngine:
         void executeDDL(string)
-        unique_ptr[Cursor] executeDML(string)
-        unique_ptr[Cursor] executeRA(string)
+        shared_ptr[Cursor] executeDML(string)
+        shared_ptr[Cursor] executeRA(string)
         vector[string] getTables()
         vector[ColumnDetails] getTableDetails(string)
         void createArrowTable(string, shared_ptr[CTable]&)

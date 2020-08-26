@@ -42,8 +42,8 @@ class DBEngine {
   virtual ~DBEngine() {}
   void reset();
   void executeDDL(const std::string& query);
-  std::unique_ptr<Cursor> executeDML(const std::string& query);
-  std::unique_ptr<Cursor> executeRA(const std::string& query);
+  std::shared_ptr<Cursor> executeDML(const std::string& query);
+  std::shared_ptr<Cursor> executeRA(const std::string& query);
   void createArrowTable(const std::string&, std::shared_ptr<arrow::Table>& table);
   static DBEngine* create(const std::string& path = "", int port = DEFAULT_CALCITE_PORT);
   static DBEngine* create(const std::map<std::string, std::string>& parameters);
