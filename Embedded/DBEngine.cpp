@@ -497,7 +497,7 @@ class DBEngineImpl : public DBEngine {
   Catalog_Namespace::UserMetadata user_;
   bool is_temp_db_;
   std::string udf_filename_;
-std::shared_ptr<CursorImpl> cursor_;
+  std::shared_ptr<CursorImpl> cursor_;
 
   std::vector<std::string> system_folders_ = {
     "mapd_catalogs", 
