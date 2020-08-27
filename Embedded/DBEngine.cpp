@@ -19,13 +19,13 @@
 #include "DataMgr/ForeignStorage/ArrowForeignStorage.h"
 #include "DataMgr/ForeignStorage/ForeignStorageInterface.h"
 #include "Fragmenter/FragmentDefaultValues.h"
+#include "Parser/ParserWrapper.h"
+#include "Parser/parser.h"
 #include "QueryEngine/ArrowResultSet.h"
+#include "QueryEngine/Execute.h"
 #include "QueryEngine/ExtensionFunctionsWhitelist.h"
 #include "QueryEngine/TableFunctions/TableFunctionsFactory.h"
 #include "QueryRunner/QueryRunner.h"
-#include "Parser/ParserWrapper.h"
-#include "Parser/parser.h"
-#include "QueryEngine/Execute.h"
 
 extern bool g_enable_union;
 
@@ -40,8 +40,7 @@ class DBEngineImpl;
  */
 class CursorImpl : public Cursor {
  public:
-  CursorImpl(std::shared_ptr<ResultSet> result_set,
-             std::vector<std::string> col_names)
+  CursorImpl(std::shared_ptr<ResultSet> result_set, std::vector<std::string> col_names)
       : result_set_(result_set), col_names_(col_names) {}
 
   ~CursorImpl() {
@@ -78,8 +77,8 @@ class CursorImpl : public Cursor {
     if (col_count > 0) {
       auto row_count = getRowCount();
       if (row_count > 0) {
-        auto converter = std::make_unique<ArrowResultSetConverter>(
-          result_set_, col_names_, -1);
+        auto converter =
+            std::make_unique<ArrowResultSetConverter>(result_set_, col_names_, -1);
         record_batch_ = converter->convertToArrow();
         return record_batch_;
       }
@@ -97,18 +96,17 @@ class CursorImpl : public Cursor {
  * DBEngine internal implementation
  */
 class DBEngineImpl : public DBEngine {
-
  public:
-  DBEngineImpl(const std::string& base_path, int port, const std::string& udf_filename = "")
-  : is_temp_db_(false) {
+  DBEngineImpl(const std::string& base_path,
+               int port,
+               const std::string& udf_filename = "")
+      : is_temp_db_(false) {
     if (!init(base_path, port, udf_filename)) {
       std::cerr << "DBEngine initialization failed" << std::endl;
     }
   }
 
-  ~DBEngineImpl() {
-    reset();
-  }
+  ~DBEngineImpl() { reset(); }
 
   bool init(const std::string& base_path, int port, const std::string& udf_filename) {
     SystemParameters mapd_parms;
@@ -123,8 +121,9 @@ class DBEngineImpl : public DBEngine {
           return false;
         }
       }
-      auto data_path = db_path + + "/mapd_data";
-      data_mgr_= std::make_shared<Data_Namespace::DataMgr>(data_path, mapd_parms, false, 0);
+      auto data_path = db_path + +"/mapd_data";
+      data_mgr_ =
+          std::make_shared<Data_Namespace::DataMgr>(data_path, mapd_parms, false, 0);
       calcite_ = std::make_shared<Calcite>(-1, port, db_path, 1024, 5000);
 
       ExtensionFunctionsWhitelist::add(calcite_->getExtensionFunctionWhitelist());
@@ -161,7 +160,7 @@ class DBEngineImpl : public DBEngine {
       std::cerr << "DBE:init: Unknown exception" << std::endl;
     }
     return false;
- }
+  }
 
   void reset() {
     if (calcite_) {
@@ -172,7 +171,7 @@ class DBEngineImpl : public DBEngine {
     ForeignStorageInterface::destroy();
     data_mgr_.reset();
     if (is_temp_db_) {
-        boost::filesystem::remove_all(base_path_);
+      boost::filesystem::remove_all(base_path_);
     }
     base_path_.clear();
   }
@@ -224,7 +223,7 @@ class DBEngineImpl : public DBEngine {
       ParserWrapper pw{query};
       if (pw.isCalcitePathPermissable()) {
         const auto execution_result =
-          QR::get()->runSelectQuery(query, ExecutorDeviceType::CPU, true, true);
+            QR::get()->runSelectQuery(query, ExecutorDeviceType::CPU, true, true);
         auto targets = execution_result.getTargetsMeta();
         std::vector<std::string> col_names;
         for (const auto target : targets) {
@@ -300,8 +299,8 @@ class DBEngineImpl : public DBEngine {
     if (catalog) {
       auto metadata = catalog->getMetadataForTable(table_name, false);
       if (metadata) {
-        const auto col_descriptors = catalog->getAllColumnMetadataForTable(
-          metadata->tableId, false, true, false);
+        const auto col_descriptors =
+            catalog->getAllColumnMetadataForTable(metadata->tableId, false, true, false);
         const auto deleted_cd = catalog->getDeletedColumn(metadata);
         for (const auto cd : col_descriptors) {
           if (cd == deleted_cd) {
@@ -393,9 +392,7 @@ class DBEngineImpl : public DBEngine {
     return false;
   }
 
-  bool login(std::string& db_name,
-             std::string& user_name,
-             const std::string& password) {
+  bool login(std::string& db_name, std::string& user_name, const std::string& password) {
     Catalog_Namespace::UserMetadata user_meta;
     try {
       auto& sys_cat = Catalog_Namespace::SysCatalog::instance();
@@ -415,7 +412,7 @@ class DBEngineImpl : public DBEngine {
  protected:
   void updateSession(std::shared_ptr<Catalog_Namespace::Catalog> catalog) {
     auto session = std::make_unique<Catalog_Namespace::SessionInfo>(
-      catalog, user_, ExecutorDeviceType::CPU, "");
+        catalog, user_, ExecutorDeviceType::CPU, "");
     QR::reset();
     QR::init(session);
   }
@@ -424,12 +421,12 @@ class DBEngineImpl : public DBEngine {
     if (!boost::filesystem::exists(base_path)) {
       return false;
     }
-      for (auto& subdir : system_folders_) {
-        std::string path = base_path + "/" + subdir;
-        if (!boost::filesystem::exists(path)) {
-          return false;
-        }
+    for (auto& subdir : system_folders_) {
+      std::string path = base_path + "/" + subdir;
+      if (!boost::filesystem::exists(path)) {
+        return false;
       }
+    }
     return true;
   }
 
@@ -495,10 +492,9 @@ class DBEngineImpl : public DBEngine {
   bool is_temp_db_;
   std::string udf_filename_;
 
-  std::vector<std::string> system_folders_ = {
-    "mapd_catalogs", 
-    "mapd_data", 
-    "mapd_export"};
+  std::vector<std::string> system_folders_ = {"mapd_catalogs",
+                                              "mapd_data",
+                                              "mapd_export"};
 };
 
 DBEngine* DBEngine::create(const std::string& path, int port) {
@@ -512,7 +508,7 @@ DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters)
   std::string path, udf_filename;
   g_enable_union = false;
   g_enable_columnar_output = true;
-  for (const auto& [key, value]: parameters) {
+  for (const auto& [key, value] : parameters) {
     if (key == "path") {
       path = value;
     } else if (key == "port") {
@@ -527,6 +523,11 @@ DBEngine* DBEngine::create(const std::map<std::string, std::string>& parameters)
       g_enable_lazy_fetch = std::stoi(value);
     } else if (key == "udf_filename") {
       udf_filename = value;
+    } else if (key == "null_div_by_zero") {
+      g_null_div_by_zero = std::stoi(value);
+    } else {
+      std::cerr << "WARNING: ignoring unknown DBEngine parameter '" << key << "'"
+                << std::endl;
     }
   }
   return new DBEngineImpl(path, port, udf_filename);
@@ -580,7 +581,6 @@ std::vector<ColumnDetails> DBEngine::getTableDetails(const std::string& table_na
   return engine->getTableDetails(table_name);
 }
 
-
 void DBEngine::createUser(const std::string& user_name, const std::string& password) {
   DBEngineImpl* engine = getImpl(this);
   engine->createUser(user_name, password);
@@ -607,12 +607,11 @@ bool DBEngine::setDatabase(std::string& db_name) {
 }
 
 bool DBEngine::login(std::string& db_name,
-             std::string& user_name,
-             const std::string& password) {
+                     std::string& user_name,
+                     const std::string& password) {
   DBEngineImpl* engine = getImpl(this);
   return engine->login(db_name, user_name, password);
 }
-
 
 /** Cursor downcasting methods */
 
