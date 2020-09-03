@@ -106,22 +106,22 @@ cdef class PyRow:
 
 
 cdef class PyCursor:
-    cdef _Cursor* c_cursor  #Hold a C++ instance which we're wrapping
+    cdef unique_ptr[_Cursor] c_cursor  #Hold a C++ instance which we're wrapping
     cdef shared_ptr[CRecordBatch] c_batch
 
     def colCount(self):
-        return self.c_cursor.getColCount()
+        return self.c_cursor.get().getColCount()
 
     def rowCount(self):
-        return self.c_cursor.getRowCount()
+        return self.c_cursor.get().getRowCount()
 
     def nextRow(self):
         obj = PyRow()
-        obj.c_row = self.c_cursor.getNextRow()
+        obj.c_row = self.c_cursor.get().getNextRow()
         return obj
 
     def getColType(self, uint32_t pos):
-        obj = PyColumnType(<int>self.c_cursor.getColType(pos))
+        obj = PyColumnType(<int>self.c_cursor.get().getColType(pos))
         return obj
 
     def showRows(self, int max_rows=0):
@@ -146,7 +146,7 @@ cdef class PyCursor:
 
     def getArrowRecordBatch(self):
         with nogil:
-            self.c_batch = self.c_cursor.getArrowRecordBatch()
+            self.c_batch = self.c_cursor.get().getArrowRecordBatch()
         if self.c_batch.get() is NULL:
             print('Record batch is NULL')
             return None
