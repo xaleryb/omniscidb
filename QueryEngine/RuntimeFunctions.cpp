@@ -1168,7 +1168,7 @@ extern "C" ALWAYS_INLINE void set_matching_group_value_perfect_hash_columnar(
 }
 
 #include "GroupByRuntime.cpp"
-#include "JoinHashTableQueryRuntime.cpp"
+#include "JoinHashTable/JoinHashTableQueryRuntime.cpp"
 
 extern "C" ALWAYS_INLINE int64_t* get_group_value_fast_keyless(
     int64_t* groups_buffer,
@@ -1242,7 +1242,6 @@ extern "C" ALWAYS_INLINE DEVICE int32_t key_for_string_encoded(const int32_t str
 extern "C" ALWAYS_INLINE DEVICE bool sample_ratio(const double proportion,
                                                   const int64_t row_offset) {
   const int64_t threshold = 4294967296 * proportion;
-  // return ((row_offset * 2654435761) & 0X00000000FFFFFFFF) < threshold;
   return (row_offset * 2654435761) % 4294967296 < threshold;
 }
 

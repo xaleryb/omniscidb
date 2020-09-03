@@ -80,6 +80,16 @@ std::pair<Datum, bool> datum_from_scalar_tv(const ScalarTargetValue* scalar_tv,
   Datum d{0};
   bool is_null_const{false};
   switch (ti.get_type()) {
+    case kBOOLEAN: {
+      const auto ival = boost::get<int64_t>(scalar_tv);
+      CHECK(ival);
+      if (*ival == inline_int_null_val(ti)) {
+        is_null_const = true;
+      } else {
+        d.boolval = *ival;
+      }
+      break;
+    }
     case kTINYINT: {
       const auto ival = boost::get<int64_t>(scalar_tv);
       CHECK(ival);
@@ -159,7 +169,7 @@ std::pair<Datum, bool> datum_from_scalar_tv(const ScalarTargetValue* scalar_tv,
       break;
     }
     default:
-      CHECK(false);
+      CHECK(false) << "Unhandled type: " << ti.get_type_name();
   }
   return {d, is_null_const};
 }
@@ -387,10 +397,14 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateInput(
   const size_t col_id = rex_input->getIndex();
   CHECK_LT(col_id, in_metainfo.size());
   auto col_ti = in_metainfo[col_id].get_type_info();
-  CHECK_LE(static_cast<size_t>(rte_idx), join_types_.size());
-  if (rte_idx > 0 && join_types_[rte_idx - 1] == JoinType::LEFT) {
-    col_ti.set_notnull(false);
+
+  if (join_types_.size() > 0) {
+    CHECK_LE(static_cast<size_t>(rte_idx), join_types_.size());
+    if (rte_idx > 0 && join_types_[rte_idx - 1] == JoinType::LEFT) {
+      col_ti.set_notnull(false);
+    }
   }
+
   return std::make_shared<Analyzer::ColumnVar>(col_ti, -source->getId(), col_id, rte_idx);
 }
 
@@ -1031,47 +1045,16 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateDateadd(
   if (number_units_const && number_units_const->get_is_null()) {
     throw std::runtime_error("The 'Interval' argument literal must not be 'null'.");
   }
-  auto cast_number_units = number_units->add_cast(SQLTypeInfo(kBIGINT, false));
+  const auto cast_number_units = number_units->add_cast(SQLTypeInfo(kBIGINT, false));
   const auto datetime = translateScalarRex(rex_function->getOperand(2));
   const auto& datetime_ti = datetime->get_type_info();
   if (datetime_ti.get_type() == kTIME) {
     throw std::runtime_error("DateAdd operation not supported for TIME.");
   }
   const auto& field = to_dateadd_field(*timeunit_lit->get_constval().stringval);
-  if (!datetime_ti.is_high_precision_timestamp() &&
-      DateTimeUtils::is_subsecond_dateadd_field(field)) {
-    // Scale the number to get value in seconds
-    const auto bigint_ti = SQLTypeInfo(kBIGINT, false);
-    cast_number_units = makeExpr<Analyzer::BinOper>(
-        bigint_ti.get_type(),
-        kDIVIDE,
-        kONE,
-        cast_number_units,
-        makeNumericConstant(bigint_ti,
-                            DateTimeUtils::get_dateadd_timestamp_precision_scale(field)));
-    cast_number_units = fold_expr(cast_number_units.get());
-  }
-  if (datetime_ti.is_high_precision_timestamp() &&
-      DateTimeUtils::is_subsecond_dateadd_field(field)) {
-    const auto oper_scale = DateTimeUtils::get_dateadd_high_precision_adjusted_scale(
-        field, datetime_ti.get_dimension());
-    if (oper_scale.first) {
-      // scale number to desired precision
-      const auto bigint_ti = SQLTypeInfo(kBIGINT, false);
-      cast_number_units =
-          makeExpr<Analyzer::BinOper>(bigint_ti.get_type(),
-                                      oper_scale.first,
-                                      kONE,
-                                      cast_number_units,
-                                      makeNumericConstant(bigint_ti, oper_scale.second));
-      cast_number_units = fold_expr(cast_number_units.get());
-    }
-  }
+  const int dim = datetime_ti.get_dimension();
   return makeExpr<Analyzer::DateaddExpr>(
-      SQLTypeInfo(kTIMESTAMP, datetime_ti.get_dimension(), 0, false),
-      to_dateadd_field(*timeunit_lit->get_constval().stringval),
-      cast_number_units,
-      datetime);
+      SQLTypeInfo(kTIMESTAMP, dim, 0, false), field, cast_number_units, datetime);
 }
 
 namespace {
@@ -1577,6 +1560,7 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateFunction(
                    "ST_GeomFromText"sv,
                    "ST_GeogFromText"sv,
                    "ST_Point"sv,
+                   "ST_Centroid"sv,
                    "ST_SetSRID"sv)) {
     SQLTypeInfo ti;
     return translateGeoProjection(rex_function, ti, false);

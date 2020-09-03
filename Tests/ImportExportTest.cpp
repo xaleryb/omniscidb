@@ -31,15 +31,17 @@
 #include <boost/program_options.hpp>
 #include <boost/range/combine.hpp>
 
-#include <Archive/PosixFileArchive.h>
-#include <Catalog/Catalog.h>
-#include <ImportExport/GDAL.h>
-#include <ImportExport/Importer.h>
-#include <Parser/parser.h>
-#include <QueryEngine/ResultSet.h>
-#include <QueryRunner/QueryRunner.h>
-#include <Shared/geo_types.h>
-#include <Shared/scope.h>
+#include "Archive/PosixFileArchive.h"
+#include "Catalog/Catalog.h"
+#include "ImportExport/DelimitedParserUtils.h"
+#include "ImportExport/GDAL.h"
+#include "ImportExport/Importer.h"
+#include "Parser/parser.h"
+#include "QueryEngine/ResultSet.h"
+#include "QueryRunner/QueryRunner.h"
+#include "Shared/geo_types.h"
+#include "Shared/misc.h"
+#include "Shared/scope.h"
 
 #ifndef BASE_PATH
 #define BASE_PATH "./tmp"
@@ -628,11 +630,9 @@ std::string convert_date_to_string(int64_t d) {
   if (d == std::numeric_limits<int64_t>::min()) {
     return std::string("NULL");
   }
-  const auto date = static_cast<time_t>(d);
-  std::tm tm_struct;
-  gmtime_r(&date, &tm_struct);
-  char buf[11];
-  strftime(buf, 11, "%F", &tm_struct);
+  char buf[16];
+  size_t const len = shared::formatDate(buf, 16, d);
+  CHECK_LE(10u, len) << d;
   return std::string(buf);
 }
 
@@ -832,25 +832,11 @@ class ImportTestTimestamps : public ::testing::Test {
   }
 };
 
-std::string convert_timestamp_to_string(const time_t timeval, const int dimen) {
-  std::tm tm_struct;
-  if (dimen > 0) {
-    auto scale = static_cast<int64_t>(std::pow(10, dimen));
-    auto dv = std::div(static_cast<int64_t>(timeval), scale);
-    auto modulus = (dv.rem + scale) % scale;
-    time_t sec = dv.quot - (dv.quot < 0 && modulus > 0);
-    gmtime_r(&sec, &tm_struct);
-    char buf[21];
-    strftime(buf, 21, "%F %T.", &tm_struct);
-    auto subsecond = std::to_string(modulus);
-    return std::string(buf) + std::string(dimen - subsecond.length(), '0') + subsecond;
-  } else {
-    time_t sec = timeval;
-    gmtime_r(&sec, &tm_struct);
-    char buf[20];
-    strftime(buf, 20, "%F %T", &tm_struct);
-    return std::string(buf);
-  }
+std::string convert_timestamp_to_string(const int64_t timeval, const int dimen) {
+  char buf[32];
+  size_t const len = shared::formatDateTime(buf, 32, timeval, dimen);
+  CHECK_LE(19u + bool(dimen) + dimen, len) << timeval << ' ' << dimen;
+  return buf;
 }
 
 inline void run_mixed_timestamps_test() {
@@ -1396,6 +1382,7 @@ void check_geo_gdal_mpoly_tv_import() {
 class ImportTestGeo : public ::testing::Test {
  protected:
   void SetUp() override {
+    import_export::delimited_parser::set_max_buffer_resize(max_buffer_resize_);
     ASSERT_NO_THROW(run_ddl_statement("drop table if exists geospatial;"););
     ASSERT_NO_THROW(run_ddl_statement(create_table_geo););
   }
@@ -1404,6 +1391,9 @@ class ImportTestGeo : public ::testing::Test {
     ASSERT_NO_THROW(run_ddl_statement("drop table geospatial;"););
     ASSERT_NO_THROW(run_ddl_statement("drop table if exists geospatial;"););
   }
+
+  inline static size_t max_buffer_resize_ =
+      import_export::delimited_parser::get_max_buffer_resize();
 };
 
 TEST_F(ImportTestGeo, CSV_Import) {
@@ -1412,6 +1402,35 @@ TEST_F(ImportTestGeo, CSV_Import) {
   run_ddl_statement("COPY geospatial FROM '" + file_path.string() + "';");
   check_geo_import();
   check_geo_num_rows("p1, l, poly, mpoly, p2, p3, p4, trip_distance", 10);
+}
+
+TEST_F(ImportTestGeo, CSV_Import_Buffer_Size_Less_Than_Row_Size) {
+  const auto file_path =
+      boost::filesystem::path("../../Tests/Import/datafiles/geospatial.csv");
+  run_ddl_statement("COPY geospatial FROM '" + file_path.string() +
+                    "' WITH (buffer_size = 80);");
+  check_geo_import();
+  check_geo_num_rows("p1, l, poly, mpoly, p2, p3, p4, trip_distance", 10);
+}
+
+TEST_F(ImportTestGeo, CSV_Import_Max_Buffer_Resize_Less_Than_Row_Size) {
+  import_export::delimited_parser::set_max_buffer_resize(170);
+  const auto file_path =
+      boost::filesystem::path("../../Tests/Import/datafiles/geospatial.csv");
+
+  try {
+    run_ddl_statement("COPY geospatial FROM '" + file_path.string() +
+                      "' WITH (buffer_size = 80);");
+    FAIL() << "An exception should have been thrown for this test case.";
+  } catch (std::runtime_error& e) {
+    std::string expected_error_message{
+        "Unable to find an end of line character after reading 170 characters. "
+        "Please ensure that the correct \"line_delimiter\" option is specified "
+        "or update the \"buffer_size\" option appropriately. Row number: 10. "
+        "First few characters in row: "
+        "\"POINT(9 9)\", \"LINESTRING(9 0, 18 18, 19 19)\", \"PO"};
+    ASSERT_EQ(expected_error_message, e.what());
+  }
 }
 
 TEST_F(ImportTestGeo, CSV_Import_Empties) {

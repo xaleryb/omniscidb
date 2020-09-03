@@ -37,8 +37,9 @@ void validate_expected_column_count(std::vector<std::string_view>& row,
   // Each POINT could consume two separate coords instead of a single WKT
   if (row.size() < num_cols || (num_cols + point_cols) < row.size()) {
     std::stringstream string_stream;
-    string_stream << "Incorrect Row (expected " << num_cols << " columns, has "
-                  << row.size() << "): " << shared::printContainer(row);
+    string_stream << "Mismatched number of logical columns: (expected " << num_cols
+                  << " columns, has " << row.size()
+                  << "): " << shared::printContainer(row);
     LOG(ERROR) << string_stream.str();
     throw std::runtime_error{string_stream.str()};
   }
@@ -244,6 +245,7 @@ struct ParseBufferRequest {
 
   std::unique_ptr<char[]> buffer;
   size_t buffer_size;
+  size_t buffer_alloc_size;
   size_t buffer_row_count;
   size_t begin_pos;
   size_t end_pos;

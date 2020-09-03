@@ -529,8 +529,8 @@ declare i64 @DateDiffHighPrecision(i32, i64, i64, i32, i32);
 declare i64 @DateDiffHighPrecisionNullable(i32, i64, i64, i32, i32, i64);
 declare i64 @DateAdd(i32, i64, i64);
 declare i64 @DateAddNullable(i32, i64, i64, i64);
-declare i64 @DateAddHighPrecision(i32, i64, i64, i64);
-declare i64 @DateAddHighPrecisionNullable(i32, i64, i64, i64, i64);
+declare i64 @DateAddHighPrecision(i32, i64, i64, i32);
+declare i64 @DateAddHighPrecisionNullable(i32, i64, i64, i32, i64);
 declare i64 @string_decode(i8*, i64);
 declare i32 @array_size(i8*, i64, i32);
 declare i32 @array_size_nullable(i8*, i64, i32, i32);
@@ -568,7 +568,7 @@ declare i32 @char_length_nullable(i8*, i32, i32);
 declare i32 @char_length_encoded(i8*, i32);
 declare i32 @char_length_encoded_nullable(i8*, i32, i32);
 declare i32 @key_for_string_encoded(i32);
-declare i32 @sample_ratio(double, i64);
+declare i1 @sample_ratio(double, i64);
 declare i1 @string_like(i8*, i32, i8*, i32, i8);
 declare i1 @string_ilike(i8*, i32, i8*, i32, i8);
 declare i8 @string_like_nullable(i8*, i32, i8*, i32, i8, i8);
@@ -1450,6 +1450,8 @@ void Executor::createErrorCheckControlFlow(llvm::Function* query_func,
                                            bool run_with_dynamic_watchdog,
                                            bool run_with_allowing_runtime_interrupt,
                                            ExecutorDeviceType device_type) {
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
+
   // check whether the row processing was successful; currently, it can
   // fail by running out of group by buffer slots
 
@@ -1636,6 +1638,8 @@ void Executor::createErrorCheckControlFlow(llvm::Function* query_func,
 }
 
 std::vector<llvm::Value*> Executor::inlineHoistedLiterals() {
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
+
   std::vector<llvm::Value*> hoisted_literals;
 
   // row_func_ is using literals whose defs have been hoisted up to the query_func_,
@@ -1881,7 +1885,13 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
   nukeOldState(allow_lazy_fetch, query_infos, &ra_exe_unit);
 
   GroupByAndAggregate group_by_and_aggregate(
-      this, co.device_type, ra_exe_unit, query_infos, row_set_mem_owner);
+      this,
+      co.device_type,
+      ra_exe_unit,
+      query_infos,
+      row_set_mem_owner,
+      has_cardinality_estimation ? std::optional<int64_t>(max_groups_buffer_entry_guess)
+                                 : std::nullopt);
   auto query_mem_desc =
       group_by_and_aggregate.initQueryMemoryDescriptor(eo.allow_multifrag,
                                                        max_groups_buffer_entry_guess,
@@ -1893,7 +1903,8 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
           QueryDescriptionType::GroupByBaselineHash &&
       !has_cardinality_estimation &&
       (!render_info || !render_info->isPotentialInSituRender()) && !eo.just_explain) {
-    throw CardinalityEstimationRequired();
+    const auto col_range_info = group_by_and_aggregate.getColRangeInfo();
+    throw CardinalityEstimationRequired(col_range_info.max - col_range_info.min);
   }
 
   const bool output_columnar = query_mem_desc->didOutputColumnar();
@@ -1979,6 +1990,7 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
   }
 
   cgen_state_->module_ = rt_module_copy.release();
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
 
   auto agg_fnames =
       get_agg_fnames(ra_exe_unit.target_exprs, !ra_exe_unit.groupby_exprs.empty());
@@ -2146,9 +2158,14 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
   }
   verify_function_ir(cgen_state_->row_func_);
 
-  LOG(IR) << query_mem_desc->toString() << "\nGenerated IR\n"
-          << serialize_llvm_object(query_func)
+  AUTOMATIC_IR_METADATA_DONE();
+  LOG(IR) << "\n" << query_mem_desc->toString() << "\nGenerated IR\n";
+#ifdef NDEBUG
+  LOG(IR) << serialize_llvm_object(query_func)
           << serialize_llvm_object(cgen_state_->row_func_) << "\nEnd of IR";
+#else
+  LOG(IR) << serialize_llvm_object(cgen_state_->module_) << "\nEnd of IR";
+#endif
 
   return std::make_tuple(
       CompilationResult{
@@ -2170,6 +2187,7 @@ Executor::compileWorkUnit(const std::vector<InputTableInfo>& query_infos,
 llvm::BasicBlock* Executor::codegenSkipDeletedOuterTableRow(
     const RelAlgExecutionUnit& ra_exe_unit,
     const CompilationOptions& co) {
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
   if (!co.filter_on_deleted_column) {
     return nullptr;
   }
@@ -2209,6 +2227,7 @@ bool Executor::compileBody(const RelAlgExecutionUnit& ra_exe_unit,
                            const QueryMemoryDescriptor& query_mem_desc,
                            const CompilationOptions& co,
                            const GpuSharedMemoryContext& gpu_smem_context) {
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
   // generate the code for the filter
   std::vector<Analyzer::Expr*> primary_quals;
   std::vector<Analyzer::Expr*> deferred_quals;

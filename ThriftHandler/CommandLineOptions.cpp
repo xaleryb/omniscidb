@@ -37,6 +37,9 @@ bool g_enable_thrift_logs{false};
 extern bool g_use_table_device_offset;
 extern float g_fraction_code_cache_to_evict;
 
+extern int64_t g_large_ndv_threshold;
+extern size_t g_large_ndv_multiplier;
+
 unsigned connect_timeout{20000};
 unsigned recv_timeout{300000};
 unsigned send_timeout{300000};
@@ -313,6 +316,10 @@ void CommandLineOptions::fillOptions() {
                               ->default_value(g_enable_fsi_cache)
                               ->implicit_value(true),
                           "Enable caching of foreign table data on disk.");
+  help_desc.add_options()("encryption-key-store",
+                          po::value<std::string>(&encryption_key_store_path),
+                          "Path to directory where encryption related keys will reside.");
+
 #endif  // ENABLE_FSI
   help_desc.add_options()(
       "enable-interoperability",
@@ -342,6 +349,12 @@ void CommandLineOptions::fillOptions() {
           ->default_value(g_enable_stringdict_parallel)
           ->implicit_value(true),
       "Allow StringDictionary to parallelize loads using multiple threads");
+  help_desc.add_options()("log-user-origin",
+                          po::value<bool>(&log_user_origin)
+                              ->default_value(log_user_origin)
+                              ->implicit_value(true),
+                          "Lookup the origin of inbound connections by IP address/DNS "
+                          "name, and print this information as part of stdlog.");
   help_desc.add(log_options_.get_options());
 }
 
@@ -597,6 +610,12 @@ void CommandLineOptions::fillAdvancedOptions() {
                                "Specify libgeos shared object filename to be used for "
                                "geos-backed geo opertations.");
 #endif
+  developer_desc.add_options()(
+      "large-ndv-threshold",
+      po::value<int64_t>(&g_large_ndv_threshold)->default_value(g_large_ndv_threshold));
+  developer_desc.add_options()(
+      "large-ndv-multiplier",
+      po::value<size_t>(&g_large_ndv_multiplier)->default_value(g_large_ndv_multiplier));
 }
 
 namespace {
@@ -725,7 +744,6 @@ void CommandLineOptions::validate() {
   if (!license_path.empty()) {
     ddl_utils::FilePathBlacklist::addToBlacklist(license_path);
   }
-  // TODO: add encryption cert path
 }
 
 boost::optional<int> CommandLineOptions::parse_command_line(

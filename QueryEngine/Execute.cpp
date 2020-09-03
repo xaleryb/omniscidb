@@ -17,7 +17,6 @@
 #include "Execute.h"
 
 #include "AggregateUtils.h"
-#include "BaselineJoinHashTable.h"
 #include "CodeGenerator.h"
 #include "ColumnFetcher.h"
 #include "Descriptors/QueryCompilationDescriptor.h"
@@ -29,9 +28,10 @@
 #include "ExternalCacheInvalidators.h"
 #include "GpuMemUtils.h"
 #include "InPlaceSort.h"
+#include "JoinHashTable/BaselineJoinHashTable.h"
+#include "JoinHashTable/OverlapsJoinHashTable.h"
 #include "JsonAccessors.h"
 #include "OutputBufferInitialization.h"
-#include "OverlapsJoinHashTable.h"
 #include "QueryEngine/QueryDispatchQueue.h"
 #include "QueryRewrite.h"
 #include "QueryTemplateGenerator.h"
@@ -1342,7 +1342,7 @@ TemporaryTable Executor::executeWorkUnit(
     const CompilationOptions& co,
     const ExecutionOptions& eo,
     const Catalog_Namespace::Catalog& cat,
-    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
+    // std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
     RenderInfo* render_info,
     const bool has_cardinality_estimation,
     ColumnCacheMap& column_cache) {
@@ -1366,7 +1366,7 @@ TemporaryTable Executor::executeWorkUnit(
                                       co,
                                       eo,
                                       cat,
-                                      row_set_mem_owner,
+                                      row_set_mem_owner_,
                                       render_info,
                                       has_cardinality_estimation,
                                       column_cache);
@@ -1385,7 +1385,7 @@ TemporaryTable Executor::executeWorkUnit(
                             co,
                             eo,
                             cat,
-                            row_set_mem_owner,
+                            row_set_mem_owner_,
                             render_info,
                             has_cardinality_estimation,
                             column_cache);
@@ -1646,13 +1646,8 @@ ResultSetPtr Executor::executeTableFunction(
   compilation_context.compile(exe_unit, co, this);
 
   TableFunctionExecutionContext exe_context(getRowSetMemoryOwner());
-  CHECK_EQ(table_infos.size(), size_t(1));
-  return exe_context.execute(exe_unit,
-                             table_infos.front(),
-                             &compilation_context,
-                             column_fetcher,
-                             co.device_type,
-                             this);
+  return exe_context.execute(
+      exe_unit, table_infos, &compilation_context, column_fetcher, co.device_type, this);
 }
 
 ResultSetPtr Executor::executeExplain(const QueryCompilationDescriptor& query_comp_desc) {
@@ -3080,6 +3075,7 @@ void Executor::nukeOldState(const bool allow_lazy_fetch,
 
 void Executor::preloadFragOffsets(const std::vector<InputDescriptor>& input_descs,
                                   const std::vector<InputTableInfo>& query_infos) {
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
   const auto ld_count = input_descs.size();
   auto frag_off_ptr = get_arg_by_name(cgen_state_->row_func_, "frag_row_off");
   for (size_t i = 0; i < ld_count; ++i) {
@@ -3173,6 +3169,7 @@ int64_t Executor::deviceCycles(int milliseconds) const {
 }
 
 llvm::Value* Executor::castToFP(llvm::Value* val) {
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
   if (!val->getType()->isIntegerTy()) {
     return val;
   }
@@ -3193,6 +3190,7 @@ llvm::Value* Executor::castToFP(llvm::Value* val) {
 }
 
 llvm::Value* Executor::castToIntPtrTyIn(llvm::Value* val, const size_t bitWidth) {
+  AUTOMATIC_IR_METADATA(cgen_state_.get());
   CHECK(val->getType()->isPointerTy());
 
   const auto val_ptr_type = static_cast<llvm::PointerType*>(val->getType());

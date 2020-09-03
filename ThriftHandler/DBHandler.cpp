@@ -446,8 +446,7 @@ void DBHandler::removeInMemoryCalciteSession(const std::string& session_id) {
 void DBHandler::internal_connect(TSessionId& session,
                                  const std::string& username,
                                  const std::string& dbname) {
-  auto stdlog = STDLOG();  // session_info set by connect_impl()
-  mapd_lock_guard<mapd_shared_mutex> write_lock(sessions_mutex_);
+  auto stdlog = STDLOG();            // session_info set by connect_impl()
   std::string username2 = username;  // login() may reset username given as argument
   std::string dbname2 = dbname;      // login() may reset dbname given as argument
   Catalog_Namespace::UserMetadata user_meta;
@@ -483,7 +482,6 @@ void DBHandler::connect(TSessionId& session,
                         const std::string& dbname) {
   auto stdlog = STDLOG();  // session_info set by connect_impl()
   stdlog.appendNameValuePairs("client", getConnectionInfo().toString());
-  mapd_lock_guard<mapd_shared_mutex> write_lock(sessions_mutex_);
   std::string username2 = username;  // login() may reset username given as argument
   std::string dbname2 = dbname;      // login() may reset dbname given as argument
   Catalog_Namespace::UserMetadata user_meta;
@@ -539,20 +537,24 @@ void DBHandler::connect_impl(TSessionId& session,
   // TODO(sy): Is there any reason to have dbname as a parameter
   // here when the cat parameter already provides cat->name()?
   // Should dbname and cat->name() ever differ?
-  auto session_ptr = create_new_session(session, dbname, user_meta, cat);
-  stdlog.setSessionInfo(session_ptr);
-  session_ptr->set_connection_info(getConnectionInfo().toString());
-  if (!super_user_rights_) {  // no need to connect to leaf_aggregator_ at this time while
-                              // doing warmup
-    if (leaf_aggregator_.leafCount() > 0) {
-      leaf_aggregator_.connect(*session_ptr, user_meta.userName, passwd, dbname);
-      return;
+  {
+    mapd_lock_guard<mapd_shared_mutex> write_lock(sessions_mutex_);
+    auto session_ptr = create_new_session(session, dbname, user_meta, cat);
+    stdlog.setSessionInfo(session_ptr);
+    session_ptr->set_connection_info(getConnectionInfo().toString());
+    if (!super_user_rights_) {  // no need to connect to leaf_aggregator_ at this time
+                                // while doing warmup
+      if (leaf_aggregator_.leafCount() > 0) {
+        leaf_aggregator_.connect(*session_ptr, user_meta.userName, passwd, dbname);
+        return;
+      }
     }
   }
-  auto const roles = session_ptr->get_currentUser().isSuper
-                         ? std::vector<std::string>{{"super"}}
-                         : SysCatalog::instance().getRoles(
-                               false, false, session_ptr->get_currentUser().userName);
+  auto const roles =
+      stdlog.getConstSessionInfo()->get_currentUser().isSuper
+          ? std::vector<std::string>{{"super"}}
+          : SysCatalog::instance().getRoles(
+                false, false, stdlog.getConstSessionInfo()->get_currentUser().userName);
   stdlog.appendNameValuePairs("roles", boost::algorithm::join(roles, ","));
 }
 
@@ -977,6 +979,7 @@ void DBHandler::sql_execute(TQueryResult& _return,
   auto query_state = create_query_state(session_ptr, query_str);
   auto stdlog = STDLOG(session_ptr, query_state);
   stdlog.appendNameValuePairs("client", getConnectionInfo().toString());
+  stdlog.appendNameValuePairs("nonce", nonce);
   auto timer = DEBUG_TIMER(__func__);
 
   try {
@@ -3276,6 +3279,7 @@ void DBHandler::render_vega(TRenderResult& _return,
                        "nonce",
                        nonce);
   stdlog.appendNameValuePairs("client", getConnectionInfo().toString());
+  stdlog.appendNameValuePairs("nonce", nonce);
   auto session_ptr = stdlog.getConstSessionInfo();
   if (!render_handler_) {
     THROW_MAPD_EXCEPTION("Backend rendering is disabled.");

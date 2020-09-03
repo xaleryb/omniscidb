@@ -59,6 +59,7 @@ extern bool g_enable_overlaps_hashjoin;
 extern double g_gpu_mem_limit_percent;
 
 extern bool g_enable_window_functions;
+extern bool g_enable_calcite_view_optimize;
 extern bool g_enable_bump_allocator;
 extern bool g_enable_interop;
 extern bool g_enable_union;
@@ -1561,6 +1562,8 @@ TEST(Select, InValues) {
       dt);
     c(R"(SELECT t FROM test WHERE t NOT IN (NULL) GROUP BY t ORDER BY t;)", dt);
     c(R"(SELECT t FROM test WHERE t NOT IN (1001, 1003, 1005, 1007, 1009, -10) GROUP BY t ORDER BY t;)",
+      dt);
+    c(R"(WITH dimensionValues AS (SELECT b FROM test GROUP BY b ORDER BY b) SELECT x FROM test WHERE b in (SELECT b FROM dimensionValues) GROUP BY x ORDER BY x;)",
       dt);
   }
 }
@@ -9753,21 +9756,24 @@ TEST(Select, UnsupportedSortOfIntermediateResult) {
 TEST(Select, Views) {
   SKIP_WITH_TEMP_TABLES();
 
-  for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
-    SKIP_NO_GPU();
-    c("SELECT x, COUNT(*) FROM view_test WHERE y > 41 GROUP BY x;", dt);
-    c("SELECT x FROM join_view_test WHERE x IS NULL;", dt);
-  }
-}
+  auto run_test = [] {
+    for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
+      SKIP_NO_GPU();
+      c("SELECT x, COUNT(*) FROM view_test WHERE y > 41 GROUP BY x;", dt);
+      c("SELECT x FROM join_view_test WHERE x IS NULL;", dt);
+      c(R"(SELECT t1.i FROM test_ranges t1 LEFT JOIN join_view_test t2 ON t1.i = t2.x ORDER BY 1;)",
+        dt);
+      c(R"(SELECT x, COUNT(*) FROM view_test WHERE y < (SELECT max(y) FROM test) GROUP BY x;)",
+        dt);
+    }
+  };
 
-TEST(Select, Views_With_Subquery) {
-  SKIP_WITH_TEMP_TABLES();
+  run_test();
 
-  for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
-    SKIP_NO_GPU();
-    c("SELECT x, COUNT(*) FROM view_test WHERE y < (SELECT max(y) FROM test) GROUP BY x;",
-      dt);
-  }
+  ScopeGuard reset_calcite_view_opt = [] { g_enable_calcite_view_optimize = true; };
+  g_enable_calcite_view_optimize = false;
+  // re-run with calcite view optimization disabled
+  run_test();
 }
 
 TEST(Select, CreateTableAsSelect) {
@@ -10236,6 +10242,163 @@ TEST(Select, Dateadd) {
               dateadd("millennium", 1, "2000-02-29 23:59:59.999999", dt));
     EXPECT_EQ(timestampToInt64("5000-02-28 23:59:59.999", dt),
               dateadd("millennium", 3, "2000-02-29 23:59:59.999", dt));
+  }
+}
+
+// Test adding intervals that are higher precision than the timestamp being added to.
+TEST(Select, DateaddHighPrecision) {
+  for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
+    SKIP_NO_GPU();
+    // Comparing strings is preferred, but "Cast from TIMESTAMP(6) to TEXT not supported"
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("millisecond", 999, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00", dt),
+              dateadd("millisecond", 1000, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00", dt),
+              dateadd("millisecond", 1999, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("millisecond", -1, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("millisecond", -1000, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:58", dt),
+              dateadd("millisecond", -1001, "1960-03-01 00:00:00", dt));
+
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("microsecond", 999999, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.999", dt),
+              dateadd("microsecond", 999999, "1960-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00", dt),
+              dateadd("microsecond", 1000000, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00.000", dt),
+              dateadd("microsecond", 1000000, "1960-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00", dt),
+              dateadd("microsecond", 1999999, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00.999", dt),
+              dateadd("microsecond", 1999999, "1960-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("microsecond", -1, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.999", dt),
+              dateadd("microsecond", -1, "1960-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("microsecond", -1000000, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.000", dt),
+              dateadd("microsecond", -1000000, "1960-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:58", dt),
+              dateadd("microsecond", -1000001, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:58.999", dt),
+              dateadd("microsecond", -1000001, "1960-03-01 00:00:00.000", dt));
+
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("nanosecond", 999999999, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.999", dt),
+              dateadd("nanosecond", 999999999, "1960-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.999999", dt),
+              dateadd("nanosecond", 999999999, "1960-02-29 23:59:59.000000", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00", dt),
+              dateadd("nanosecond", 1000000000, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00.000", dt),
+              dateadd("nanosecond", 1000000000, "1960-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00.000000", dt),
+              dateadd("nanosecond", 1000000000, "1960-02-29 23:59:59.000000", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00", dt),
+              dateadd("nanosecond", 1999999999, "1960-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00.999", dt),
+              dateadd("nanosecond", 1999999999, "1960-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-03-01 00:00:00.999999", dt),
+              dateadd("nanosecond", 1999999999, "1960-02-29 23:59:59.000000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("nanosecond", -1, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.999", dt),
+              dateadd("nanosecond", -1, "1960-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.999999", dt),
+              dateadd("nanosecond", -1, "1960-03-01 00:00:00.000000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59", dt),
+              dateadd("nanosecond", -1000000000, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.000", dt),
+              dateadd("nanosecond", -1000000000, "1960-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:59.000000", dt),
+              dateadd("nanosecond", -1000000000, "1960-03-01 00:00:00.000000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:58", dt),
+              dateadd("nanosecond", -1000000001, "1960-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:58.999", dt),
+              dateadd("nanosecond", -1000000001, "1960-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("1960-02-29 23:59:58.999999", dt),
+              dateadd("nanosecond", -1000000001, "1960-03-01 00:00:00.000000", dt));
+
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("millisecond", 999, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00", dt),
+              dateadd("millisecond", 1000, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00", dt),
+              dateadd("millisecond", 1999, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("millisecond", -1, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("millisecond", -1000, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:58", dt),
+              dateadd("millisecond", -1001, "2000-03-01 00:00:00", dt));
+
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("microsecond", 999999, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.999", dt),
+              dateadd("microsecond", 999999, "2000-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00", dt),
+              dateadd("microsecond", 1000000, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00.000", dt),
+              dateadd("microsecond", 1000000, "2000-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00", dt),
+              dateadd("microsecond", 1999999, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00.999", dt),
+              dateadd("microsecond", 1999999, "2000-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("microsecond", -1, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.999", dt),
+              dateadd("microsecond", -1, "2000-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("microsecond", -1000000, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.000", dt),
+              dateadd("microsecond", -1000000, "2000-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:58", dt),
+              dateadd("microsecond", -1000001, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:58.999", dt),
+              dateadd("microsecond", -1000001, "2000-03-01 00:00:00.000", dt));
+
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("nanosecond", 999999999, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.999", dt),
+              dateadd("nanosecond", 999999999, "2000-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.999999", dt),
+              dateadd("nanosecond", 999999999, "2000-02-29 23:59:59.000000", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00", dt),
+              dateadd("nanosecond", 1000000000, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00.000", dt),
+              dateadd("nanosecond", 1000000000, "2000-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00.000000", dt),
+              dateadd("nanosecond", 1000000000, "2000-02-29 23:59:59.000000", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00", dt),
+              dateadd("nanosecond", 1999999999, "2000-02-29 23:59:59", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00.999", dt),
+              dateadd("nanosecond", 1999999999, "2000-02-29 23:59:59.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-03-01 00:00:00.999999", dt),
+              dateadd("nanosecond", 1999999999, "2000-02-29 23:59:59.000000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("nanosecond", -1, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.999", dt),
+              dateadd("nanosecond", -1, "2000-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.999999", dt),
+              dateadd("nanosecond", -1, "2000-03-01 00:00:00.000000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59", dt),
+              dateadd("nanosecond", -1000000000, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.000", dt),
+              dateadd("nanosecond", -1000000000, "2000-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:59.000000", dt),
+              dateadd("nanosecond", -1000000000, "2000-03-01 00:00:00.000000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:58", dt),
+              dateadd("nanosecond", -1000000001, "2000-03-01 00:00:00", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:58.999", dt),
+              dateadd("nanosecond", -1000000001, "2000-03-01 00:00:00.000", dt));
+    EXPECT_EQ(timestampToInt64("2000-02-29 23:59:58.999999", dt),
+              dateadd("nanosecond", -1000000001, "2000-03-01 00:00:00.000000", dt));
   }
 }
 
@@ -17617,6 +17780,97 @@ TEST(Select, GeoSpatial_Projection) {
                   "SELECT COUNT(*) FROM geospatial_test WHERE "
                   "ST_Contains(poly, ST_Point(0.1 + ST_NRings(poly)/10.0, 0.1));",
                   dt)));
+
+    // ST_Centroid geo constructor
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg(
+                    "SELECT ST_Distance('POINT(1 1)', ST_Centroid('POINT(1 1)')) "
+                    "from geospatial_test limit 1;",
+                    dt)),
+                static_cast<double>(0.00001));
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg("SELECT ST_Distance('POINT(-6.0 40.5)', "
+                                         "ST_Centroid('LINESTRING(-20 35, 8 46)')) "
+                                         "from geospatial_test limit 1;",
+                                         dt)),
+                static_cast<double>(0.00001));
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg("SELECT ST_Distance('POINT(1.3333333 1)', "
+                                         "ST_Centroid('LINESTRING(0 0, 2 0, 2 2, 0 2)')) "
+                                         "from geospatial_test limit 1;",
+                                         dt)),
+                static_cast<double>(0.00001));
+    ASSERT_NEAR(
+        static_cast<double>(0.0),
+        v<double>(run_simple_agg("SELECT ST_Distance('POINT(1 1)', "
+                                 "ST_Centroid('LINESTRING(0 0, 2 0, 2 2, 0 2, 0 0)')) "
+                                 "from geospatial_test limit 1;",
+                                 dt)),
+        static_cast<double>(0.00001));
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg("SELECT ST_Distance('POINT(1 1)', "
+                                         "ST_Centroid('POLYGON((0 0, 2 0, 2 2, 0 2))')) "
+                                         "from geospatial_test limit 1;",
+                                         dt)),
+                static_cast<double>(0.00001));
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg(
+                    "SELECT ST_Distance('POINT(10.9291 50.68245)', "
+                    "ST_Centroid('POLYGON((10.9099 50.6917,10.9483 50.6917,10.9483 "
+                    "50.6732,10.9099 50.6732,10.9099 50.6917))')) "
+                    "from geospatial_test limit 1;",
+                    dt)),
+                static_cast<double>(0.0001));
+    ASSERT_NEAR(
+        static_cast<double>(0.0),
+        v<double>(run_simple_agg(
+            "SELECT ST_Distance('POINT(0.166666666 0.933333333)', "
+            "ST_Centroid('MULTIPOLYGON(((1 0,2 1,2 0,1 0)),((-1 -1,2 2,-1 2,-1 -1)))')) "
+            "from geospatial_test limit 1;",
+            dt)),
+        static_cast<double>(0.00001));
+    // Degenerate input geometries triggering fall backs to linestring and point centroids
+    // zero-area, non-zero-length: fall back to linestring centroid
+    ASSERT_NEAR(
+        static_cast<double>(0.0),
+        v<double>(run_simple_agg(
+            "SELECT ST_Distance('POINT(1.585786 1.0)', ST_Centroid('MULTIPOLYGON(((0 0, "
+            "2 2, 0 2, 2 0, 0 0)),((3 0, 3 2, 3 1, 3 0)))'));",
+            dt)),
+        static_cast<double>(0.0001));
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg(
+                    "SELECT ST_Distance('POINT(1.0 1.0)', ST_Centroid('MULTIPOLYGON(((0 "
+                    "0, 1 0, 2 0)),((0 2, 1 2, 2 2)))'));",
+                    dt)),
+                static_cast<double>(0.0001));
+    // zero-area, zero-length: point centroid
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg(
+                    "SELECT ST_Distance('POINT(1.5 1.5)', ST_Centroid('MULTIPOLYGON(((0 "
+                    "0, 0 0, 0 0, 0 0)),((3 3, 3 3, 3 3, 3 3)))'));",
+                    dt)),
+                static_cast<double>(0.0001));
+    // zero-area, non-zero-length: linestring centroid
+    ASSERT_NEAR(
+        static_cast<double>(0.0),
+        v<double>(run_simple_agg("SELECT ST_Distance('POINT(1.0 1.0)', "
+                                 "ST_Centroid('POLYGON((0 0, 2 2, 0 2, 2 0, 0 0))'));",
+                                 dt)),
+        static_cast<double>(0.0001));
+    // zero-area, zero-length: point centroid
+    ASSERT_NEAR(static_cast<double>(0.0),
+                v<double>(run_simple_agg("SELECT ST_Distance('POINT(3.0 3.0)', "
+                                         "ST_Centroid('POLYGON((3 3, 3 3, 3 3, 3 3))'));",
+                                         dt)),
+                static_cast<double>(0.0001));
+    // zero-length: fallback to point centroid
+    ASSERT_NEAR(
+        static_cast<double>(0.0),
+        v<double>(run_simple_agg("SELECT ST_Distance('POINT(0 89)', "
+                                 "ST_CENTROID('LINESTRING(0 89, 0 89, 0 89, 0 89)'));",
+                                 dt)),
+        static_cast<double>(0.0001));
   }
 }
 

@@ -785,6 +785,9 @@ class RexUsedInputsVisitor : public RexVisitor<std::unordered_set<const RexInput
 };
 
 const RelAlgNode* get_data_sink(const RelAlgNode* ra_node) {
+  if (auto table_func = dynamic_cast<const RelTableFunction*>(ra_node)) {
+    return table_func;
+  }
   if (auto join = dynamic_cast<const RelJoin*>(ra_node)) {
     CHECK_EQ(size_t(2), join->inputCount());
     return join;
@@ -972,6 +975,8 @@ get_join_source_used_inputs(const RelAlgNode* ra_node,
 
   if (dynamic_cast<const RelLogicalUnion*>(ra_node)) {
     CHECK_GT(ra_node->inputCount(), 1u) << ra_node->toString();
+  } else if (dynamic_cast<const RelTableFunction*>(ra_node)) {
+    CHECK_GT(ra_node->inputCount(), 0u) << ra_node->toString();
   } else {
     CHECK_EQ(ra_node->inputCount(), 1u) << ra_node->toString();
   }
@@ -2766,7 +2771,6 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
                                          co,
                                          eo,
                                          cat_,
-                                         executor_->row_set_mem_owner_,
                                          render_info,
                                          has_cardinality_estimation,
                                          column_cache),
@@ -2784,6 +2788,7 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
           queue_time_ms);
     }
   };
+
   auto cache_key = ra_exec_unit_desc_for_caching(ra_exe_unit);
   try {
     auto cached_cardinality = executor_->getCachedCardinality(cache_key);
@@ -2795,8 +2800,7 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
           max_groups_buffer_entry_guess,
           groups_approx_upper_bound(table_infos) <= g_big_group_threshold);
     }
-    VLOG(3) << "result.getRows()->entryCount()=" << result.getRows()->entryCount();
-  } catch (const CardinalityEstimationRequired&) {
+  } catch (const CardinalityEstimationRequired& e) {
     // check the cardinality cache
     auto cached_cardinality = executor_->getCachedCardinality(cache_key);
     auto card = cached_cardinality.second;
@@ -2805,7 +2809,7 @@ ExecutionResult RelAlgExecutor::executeWorkUnit(
     } else {
       const auto estimated_groups_buffer_entry_guess =
           2 * std::min(groups_approx_upper_bound(table_infos),
-                       getNDVEstimation(work_unit, is_agg, co, eo));
+                       getNDVEstimation(work_unit, e.range(), is_agg, co, eo));
       CHECK_GT(estimated_groups_buffer_entry_guess, size_t(0));
       result = execute_and_handle_errors(estimated_groups_buffer_entry_guess, true);
       if (!(eo.just_validate || eo.just_explain)) {
@@ -2855,7 +2859,6 @@ ssize_t RelAlgExecutor::getFilteredCountAll(const WorkUnit& work_unit,
                                    co,
                                    eo,
                                    cat_,
-                                   executor_->row_set_mem_owner_,
                                    nullptr,
                                    false,
                                    column_cache);
@@ -2969,7 +2972,6 @@ ExecutionResult RelAlgExecutor::handleOutOfMemoryRetry(
                                            co,
                                            eo_no_multifrag,
                                            cat_,
-                                           executor_->row_set_mem_owner_,
                                            nullptr,
                                            true,
                                            column_cache),
@@ -3008,7 +3010,6 @@ ExecutionResult RelAlgExecutor::handleOutOfMemoryRetry(
                                            co_cpu,
                                            eo_no_multifrag,
                                            cat_,
-                                           executor_->row_set_mem_owner_,
                                            nullptr,
                                            true,
                                            column_cache),
@@ -3786,7 +3787,6 @@ RelAlgExecutor::TableFunctionWorkUnit RelAlgExecutor::createTableFunctionWorkUni
   std::tie(input_descs, input_col_descs, std::ignore) =
       get_input_desc(table_func, input_to_nest_level, {}, cat_);
   const auto query_infos = get_table_infos(input_descs, executor_);
-  CHECK_EQ(size_t(1), table_func->inputCount());
 
   RelAlgTranslator translator(
       cat_, query_state_, executor_, input_to_nest_level, {}, now_, just_explain);
@@ -3821,12 +3821,13 @@ RelAlgExecutor::TableFunctionWorkUnit RelAlgExecutor::createTableFunctionWorkUni
   }
 
   std::vector<Analyzer::ColumnVar*> input_col_exprs;
+  size_t index = 0;
   for (auto input_expr : input_exprs) {
     if (auto col_var = dynamic_cast<Analyzer::ColumnVar*>(input_expr)) {
-      size_t i = input_col_exprs.size();
-      input_expr->set_type_info(table_function_impl.getInputSQLType(i));
+      input_expr->set_type_info(table_function_impl.getInputSQLType(index));
       input_col_exprs.push_back(col_var);
     }
+    index++;
   }
   CHECK_EQ(input_col_exprs.size(), table_func->getColInputsSize());
 

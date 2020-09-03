@@ -66,6 +66,7 @@ add_executable(BumpAllocatorTest BumpAllocatorTest.cpp)
 add_executable(SpecialCharsTest SpecialCharsTest.cpp)
 add_executable(TableFunctionsTest TableFunctionsTest.cpp)
 add_executable(ArrayTest ArrayTest.cpp)
+add_executable(HighCardinalityGroupByTest HighCardinalityGroupByTest.cpp)
 add_executable(ParallelExecutorsTest ParallelExecutorsTest.cpp)
 add_executable(MigrationMgrTest MigrationMgrTest.cpp)
 add_executable(TopKTest TopKTest.cpp)
@@ -97,7 +98,8 @@ elseif(ENABLE_DBE)
   add_executable(EmbeddedDatabaseTest EmbeddedDatabaseTest.cpp)
 endif()
 if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
-  add_executable(UserMappingDdlTest UserMappingDdlTest.cpp)
+  add_executable(UserMappingDdlTest ee/UserMappingDdlTest.cpp)
+  add_executable(PkiEncryptorTest ee/PkiEncryptorTest.cpp)
 endif()
 
 # Tests + Microbenchmarks
@@ -136,6 +138,7 @@ target_link_libraries(ComputeMetadataTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(TableFunctionsTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(ArrayTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(ParallelExecutorsTest ${EXECUTE_TEST_LIBS})
+target_link_libraries(HighCardinalityGroupByTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(MigrationMgrTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(BumpAllocatorTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(SpecialCharsTest ${EXECUTE_TEST_LIBS})
@@ -186,6 +189,7 @@ endif()
 
 if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
   target_link_libraries(UserMappingDdlTest ${THRIFT_HANDLER_TEST_LIBRARIES})
+  target_link_libraries(PkiEncryptorTest gtest Shared)
 endif()
 
 set(TEST_ARGS "--gtest_output=xml:../")
@@ -216,6 +220,7 @@ add_test(SpecialCharsTest SpecialCharsTest ${TEST_ARGS})
 add_test(TableFunctionsTest TableFunctionsTest ${TEST_ARGS})
 add_test(ArrayTest ArrayTest ${TEST_ARGS})
 add_test(ParallelExecutorsTest ParallelExecutorsTest ${TEST_ARGS})
+add_test(HighCardinalityGroupByTest HighCardinalityGroupByTest ${TEST_ARGS})
 add_test(MigrationMgrTest MigrationMgrTest ${TEST_ARGS})
 add_test(StoragePerfTest StoragePerfTest ${TEST_ARGS})
 add_test(TopKTest TopKTest ${TEST_ARGS})
@@ -256,6 +261,7 @@ endif()
 
 if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
   add_test(UserMappingDdlTest UserMappingDdlTest ${TEST_ARGS})
+  add_test(PkiEncryptorTest PkiEncryptorTest ${TEST_ARGS})
 endif()
 
 add_executable(ArrowIpcIntegrationTest ArrowIpcIntegrationTest.cpp)
@@ -292,6 +298,7 @@ set(TEST_PROGRAMS
   SpecialCharsTest
   TableFunctionsTest
   ArrayTest
+  HighCardinalityGroupByTest
   ParallelExecutorsTest
   MigrationMgrTest
   TopKTest
@@ -337,6 +344,7 @@ endif()
 
 if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
   list(APPEND TEST_PROGRAMS UserMappingDdlTest)
+  list(APPEND TEST_PROGRAMS PkiEncryptorTest)
 endif()
 
 set(SANITY_TESTS ${TEST_PROGRAMS})

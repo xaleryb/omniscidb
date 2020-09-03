@@ -39,9 +39,12 @@ std::pair<const int8_t*, size_t> ColumnFetcher::getOneColumnFragment(
   if (fragment.isEmptyPhysicalFragment()) {
     return {nullptr, 0};
   }
+  const auto table_id = hash_col.get_table_id();
+  auto chunk_meta_it = fragment.getChunkMetadataMap().find(hash_col.get_column_id());
+  CHECK(chunk_meta_it != fragment.getChunkMetadataMap().end());
   const auto& catalog = *executor->getCatalog();
-  const auto cd = get_column_descriptor_maybe(
-      hash_col.get_column_id(), hash_col.get_table_id(), catalog);
+  const auto cd =
+      get_column_descriptor_maybe(hash_col.get_column_id(), table_id, catalog);
   CHECK(!cd || !(cd->isVirtualCol));
   const int8_t* col_buff = nullptr;
   if (cd) {  // real table

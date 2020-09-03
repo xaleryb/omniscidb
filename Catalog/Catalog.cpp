@@ -3087,6 +3087,17 @@ void Catalog::doTruncateTable(const TableDescriptor* td) {
   }
 }
 
+void Catalog::removeFragmenterForTable(const int table_id) {
+  cat_write_lock write_lock(this);
+  auto td = getMetadataForTable(table_id);
+  if (td->fragmenter != nullptr) {
+    auto tableDescIt = tableDescriptorMapById_.find(table_id);
+    CHECK(tableDescIt != tableDescriptorMapById_.end());
+    tableDescIt->second->fragmenter = nullptr;
+    CHECK(td->fragmenter == nullptr);
+  }
+}
+
 // used by rollback_table_epoch to clean up in memory artifacts after a rollback
 void Catalog::removeChunks(const int table_id) {
   auto td = getMetadataForTable(table_id);
@@ -3995,7 +4006,28 @@ void unserialize_key_metainfo(std::vector<std::string>& shared_dicts,
 
 }  // namespace
 
-// returns a "CREATE TABLE" statement in a string
+#include "Parser/ReservedKeywords.h"
+
+//! returns true if the string contains one or more spaces
+inline bool contains_spaces(std::string_view str) {
+  return std::find_if(str.begin(), str.end(), [](const unsigned char& ch) {
+           return std::isspace(ch);
+         }) != str.end();
+}
+
+//! returns true if the string contains one or more OmniSci SQL reserved characters
+inline bool contains_sql_reserved_chars(
+    std::string_view str,
+    std::string_view chars = "`~!@#$%^&*()-=+[{]}\\|;:'\",<.>/?") {
+  return str.find_first_of(chars) != std::string_view::npos;
+}
+
+//! returns true if the string equals an OmniSci SQL reserved keyword
+inline bool is_reserved_sql_keyword(std::string_view str) {
+  return reserved_keywords.find(to_upper(std::string(str))) != reserved_keywords.end();
+}
+
+// returns a "CREATE TABLE" statement in a string for "SHOW CREATE TABLE"
 std::string Catalog::dumpCreateTable(const TableDescriptor* td,
                                      bool multiline_formatting,
                                      bool dump_defaults) const {
@@ -4035,7 +4067,15 @@ std::string Catalog::dumpCreateTable(const TableDescriptor* td,
       if (multiline_formatting) {
         os << "\n  ";
       }
-      os << cd->columnName;
+      // column name
+      bool column_name_needs_quotes = is_reserved_sql_keyword(cd->columnName) ||
+                                      contains_spaces(cd->columnName) ||
+                                      contains_sql_reserved_chars(cd->columnName);
+      if (!column_name_needs_quotes) {
+        os << cd->columnName;
+      } else {
+        os << "\"" << cd->columnName << "\"";
+      }
       // CHAR is perculiar... better dump it as TEXT(32) like \d does
       if (ti.get_type() == SQLTypes::kCHAR) {
         os << " "
@@ -4062,6 +4102,13 @@ std::string Catalog::dumpCreateTable(const TableDescriptor* td,
                    (ti.get_size() > 0 && ti.get_size() != ti.get_logical_size())) {
           const auto comp_param = ti.get_comp_param() ? ti.get_comp_param() : 32;
           os << " ENCODING " << ti.get_compression_name() << "(" << comp_param << ")";
+        } else if (ti.is_geometry()) {
+          if (ti.get_compression() == kENCODING_GEOINT) {
+            os << " ENCODING " << ti.get_compression_name() << "(" << ti.get_comp_param()
+               << ")";
+          } else {
+            os << " ENCODING NONE";
+          }
         }
       }
     }

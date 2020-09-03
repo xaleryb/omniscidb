@@ -25,6 +25,7 @@
 #include "DBHandlerTestHelpers.h"
 #include "DataMgr/ForeignStorage/ForeignStorageCache.h"
 #include "DataMgr/ForeignStorage/ForeignStorageMgr.h"
+#include "ImportExport/DelimitedParserUtils.h"
 #include "Shared/geo_types.h"
 #include "TestHelpers.h"
 
@@ -64,14 +65,16 @@ class ForeignTableTest : public DBHandlerTestFixture {
       const std::string& file_name_base,
       const std::string& data_wrapper_type,
       const int table_number = 0,
-      const std::string& table_name = default_table_name) {
+      const std::string& table_name = default_table_name,
+      const std::string extension = "") {
     std::string query{"CREATE FOREIGN TABLE " + table_name};
     if (table_number) {
       query += "_" + std::to_string(table_number);
     }
-    query += columns + " SERVER omnisci_local_" + data_wrapper_type +
-             " WITH (file_path = '" + getDataFilesPath() + file_name_base + "." +
-             data_wrapper_type + "'";
+    std::string filename =
+        file_name_base + "." + (extension.size() > 0 ? extension : data_wrapper_type);
+    query += " " + columns + " SERVER omnisci_local_" + data_wrapper_type +
+             " WITH (file_path = '" + getDataFilesPath() + filename + "'";
     for (auto& [key, value] : options) {
       query += ", " + key + " = '" + value + "'";
     }
@@ -87,16 +90,33 @@ class ForeignTableTest : public DBHandlerTestFixture {
   static void sqlCreateForeignTable(const std::string& columns,
                                     const std::string& file_name,
                                     const std::string& data_wrapper_type,
+                                    const std::map<std::string, std::string> options = {},
                                     const int table_number = 0,
                                     const std::string& table_name = default_table_name) {
-    sqlDropForeignTable(table_name);
+    sqlDropForeignTable(table_number, table_name);
     auto query = getCreateForeignTableQuery(
-        columns, {}, file_name, data_wrapper_type, table_number, table_name);
+        columns, options, file_name, data_wrapper_type, table_number, table_name);
     sql(query);
   }
 
-  static void sqlDropForeignTable(const std::string& table_name = default_table_name) {
-    sql("DROP FOREIGN TABLE IF EXISTS " + table_name);
+  static void sqlDropForeignTable(const int table_number = 0,
+                                  const std::string& table_name = default_table_name) {
+    std::string query{"DROP FOREIGN TABLE IF EXISTS " + table_name};
+    if (table_number != 0) {
+      query += "_" + std::to_string(table_number);
+    }
+    sql(query);
+  }
+
+  static ChunkKey getChunkKeyFromTable(const Catalog_Namespace::Catalog& cat,
+                                       const std::string& table_name,
+                                       const ChunkKey& key_suffix) {
+    const TableDescriptor* fd = cat.getMetadataForTable(table_name);
+    ChunkKey key{cat.getCurrentDB().dbId, fd->tableId};
+    for (auto i : key_suffix) {
+      key.push_back(i);
+    }
+    return key;
   }
 };
 
@@ -104,6 +124,7 @@ class SelectQueryTest : public ForeignTableTest {
  protected:
   void SetUp() override {
     DBHandlerTestFixture::SetUp();
+    import_export::delimited_parser::set_max_buffer_resize(max_buffer_resize_);
     sql("DROP FOREIGN TABLE IF EXISTS test_foreign_table;");
     sql("DROP FOREIGN TABLE IF EXISTS test_foreign_table_2;");
     sql("DROP SERVER IF EXISTS test_server;");
@@ -115,17 +136,23 @@ class SelectQueryTest : public ForeignTableTest {
     sql("DROP SERVER IF EXISTS test_server;");
     DBHandlerTestFixture::TearDown();
   }
+
+  inline static size_t max_buffer_resize_ =
+      import_export::delimited_parser::get_max_buffer_resize();
 };
 
 class DataWrapperSelectQueryTest : public SelectQueryTest,
                                    public ::testing::WithParamInterface<std::string> {};
 
-class DataTypeFragmentSizeTest : public SelectQueryTest,
-                                 public testing::WithParamInterface<int> {};
+struct DataTypeFragmentSizeAndDataWrapperParam {
+  int fragment_size;
+  std::string wrapper;
+  std::string extension;
+};
 
 class DataTypeFragmentSizeAndDataWrapperTest
     : public SelectQueryTest,
-      public testing::WithParamInterface<std::pair<int, std::string>> {};
+      public testing::WithParamInterface<DataTypeFragmentSizeAndDataWrapperParam> {};
 
 class RowGroupAndFragmentSizeSelectQueryTest
     : public SelectQueryTest,
@@ -206,9 +233,30 @@ struct PrintToStringParamName {
   }
 
   std::string operator()(
+      const ::testing::TestParamInfo<DataTypeFragmentSizeAndDataWrapperParam>& info)
+      const {
+    std::stringstream ss;
+    ss << "Fragment_size_" << info.param.fragment_size << "_Data_wrapper_"
+       << info.param.wrapper << "_Extension_" << info.param.extension;
+
+    return ss.str();
+  }
+
+  std::string operator()(
       const ::testing::TestParamInfo<std::pair<int64_t, int64_t>>& info) const {
     std::stringstream ss;
     ss << "Rowgroup_size_" << info.param.first << "_Fragment_size_" << info.param.second;
+    return ss.str();
+  }
+  std::string operator()(
+      const ::testing::TestParamInfo<std::pair<std::string, std::string>>& info) const {
+    std::stringstream ss;
+    ss << "File_type_" << info.param.second;
+    return ss.str();
+  }
+  std::string operator()(const ::testing::TestParamInfo<TExecuteMode::type>& info) const {
+    std::stringstream ss;
+    ss << ((info.param == TExecuteMode::GPU) ? "GPU" : "CPU");
     return ss.str();
   }
 };
@@ -437,6 +485,73 @@ TEST_F(SelectQueryTest, CSV_CustomDelimiters) {
   // clang-format on
 }
 
+class CSVFileTypeTests
+    : public SelectQueryTest,
+      public ::testing::WithParamInterface<std::pair<std::string, std::string>> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    CSVFileTypeParameterizedTests,
+    CSVFileTypeTests,
+    ::testing::Values(std::make_pair("example_1.csv", "uncompressed"),
+                      std::make_pair("example_1.zip", "zip"),
+                      std::make_pair("example_1_multi.zip", "multi_zip"),
+                      std::make_pair("example_1_multilevel.zip", "multilevel_zip"),
+                      std::make_pair("example_1.tar.gz", "tar_gz"),
+                      std::make_pair("example_1_multi.tar.gz", "multi_tar_gz"),
+                      std::make_pair("example_1.7z", "7z"),
+                      std::make_pair("example_1.rar", "rar"),
+                      std::make_pair("example_1.bz2", "bz2"),
+                      std::make_pair("example_1_multi.7z", "7z_multi"),
+                      std::make_pair("example_1.csv.gz", "gz"),
+                      std::make_pair("example_1_dir", "dir"),
+                      std::make_pair("example_1_dir_archives", "dir_archives"),
+                      std::make_pair("example_1_dir_multilevel", "multilevel_dir")),
+    PrintToStringParamName());
+
+TEST_P(CSVFileTypeTests, SelectCSV) {
+  std::string query = "CREATE FOREIGN TABLE test_foreign_table (t TEXT, i INTEGER[]) "s +
+                      "SERVER omnisci_local_csv WITH (file_path = '" +
+                      getDataFilesPath() + "/" + GetParam().first + "');";
+  sql(query);
+  TQueryResult result;
+  sql(result, "SELECT * FROM test_foreign_table  ORDER BY t;");
+  assertResultSetEqual({{"a", array({i(1), i(1), i(1)})},
+                        {"aa", array({Null_i, i(2), i(2)})},
+                        {"aaa", array({i(3), Null_i, i(3)})}},
+                       result);
+}
+
+TEST_F(SelectQueryTest, CsvEmptyArchive) {
+  std::string query = "CREATE FOREIGN TABLE test_foreign_table (t TEXT, i INTEGER[]) "s +
+                      "SERVER omnisci_local_csv WITH (file_path = '" +
+                      getDataFilesPath() + "/" + "example_1_empty.zip" + "');";
+  sql(query);
+  TQueryResult result;
+  sql(result, "SELECT * FROM test_foreign_table  ORDER BY t;");
+  assertResultSetEqual({}, result);
+}
+
+TEST_F(SelectQueryTest, CsvDirectoryBadFileExt) {
+  std::string query = "CREATE FOREIGN TABLE test_foreign_table (t TEXT, i INTEGER[]) "s +
+                      "SERVER omnisci_local_csv WITH (file_path = '" +
+                      getDataFilesPath() + "/" + "example_1_dir_bad_ext/" + "');";
+  sql(query);
+  queryAndAssertException("SELECT * FROM test_foreign_table  ORDER BY t;",
+                          "Exception: Invalid extention for file \"" +
+                              getDataFilesPath() +
+                              "example_1_dir_bad_ext/example_1c.tmp\".");
+}
+
+TEST_F(SelectQueryTest, CsvArchiveInvalidFile) {
+  std::string query = "CREATE FOREIGN TABLE test_foreign_table (t TEXT, i INTEGER[]) "s +
+                      "SERVER omnisci_local_csv WITH (file_path = '" +
+                      getDataFilesPath() + "/" + "example_1_invalid_file.zip" + "');";
+  sql(query);
+  queryAndAssertException("SELECT * FROM test_foreign_table  ORDER BY t;",
+                          "Exception: Mismatched number of logical columns: (expected 2 "
+                          "columns, has 1): (random text)");
+}
+
 TEST_F(SelectQueryTest, CSV_CustomLineDelimiters) {
   const auto& query = getCreateForeignTableQuery("(b BOOLEAN, i INTEGER, t TEXT)",
                                                  {{"line_delimiter", "*"}},
@@ -526,6 +641,33 @@ TEST_F(SelectQueryTest, WithBufferSizeOption) {
                        result);
 }
 
+TEST_F(SelectQueryTest, WithBufferSizeLessThanRowSize) {
+  const auto& query = getCreateForeignTableQuery(
+      "(t TEXT, i INTEGER[])", {{"buffer_size", "10"}}, "example_1", "csv");
+  sql(query);
+
+  TQueryResult result;
+  sql(result, "SELECT * FROM test_foreign_table ORDER BY t;");
+  assertResultSetEqual({{"a", array({i(1), i(1), i(1)})},
+                        {"aa", array({Null_i, i(2), i(2)})},
+                        {"aaa", array({i(3), Null_i, i(3)})}},
+                       result);
+}
+
+TEST_F(SelectQueryTest, WithMaxBufferResizeLessThanRowSize) {
+  import_export::delimited_parser::set_max_buffer_resize(15);
+  const auto& query = getCreateForeignTableQuery(
+      "(t TEXT, i INTEGER[])", {{"buffer_size", "10"}}, "example_1", "csv");
+  sql(query);
+
+  queryAndAssertException(
+      "SELECT * FROM test_foreign_table ORDER BY t;",
+      "Exception: Unable to find an end of line character after reading 15 characters. "
+      "Please ensure that the correct \"line_delimiter\" option is specified or update "
+      "the \"buffer_size\" option appropriately. Row number: 2. "
+      "First few characters in row: aa,{'NA', 2, 2}");
+}
+
 TEST_F(SelectQueryTest, ReverseLongitudeAndLatitude) {
   const auto& query = getCreateForeignTableQuery(
       "(p POINT)", {{"lonlat", "false"}}, "reversed_long_lat", "csv");
@@ -543,89 +685,532 @@ TEST_F(SelectQueryTest, ReverseLongitudeAndLatitude) {
 
 class RefreshForeignTableTest : public ForeignTableTest {
  protected:
-  std::string table_1_filename = "example_1";
-  std::string table_2_filename = "example_1";
+  std::string table_1_filename = "refresh_tmp_1";
+  std::string table_2_filename = "refresh_tmp_2";
+  std::string table_1_name = default_table_name;
+  std::string table_2_name = default_table_name + "_1";
+  Catalog_Namespace::Catalog* cat;
+  foreign_storage::ForeignStorageCache* cache;
+  ChunkKey key_1, key_2;
 
-  void SetUp() override { ForeignTableTest::SetUp(); }
+  void SetUp() override {
+    ForeignTableTest::SetUp();
+    cat = &getCatalog();
+    cache = cat->getDataMgr().getForeignStorageMgr()->getForeignStorageCache();
+    cache->clear();
+  }
 
   void TearDown() override {
-    sql("DROP FOREIGN TABLE IF EXISTS " + default_table_name + ";");
-    sql("DROP FOREIGN TABLE IF EXISTS " + default_table_name + "_1;");
+    bf::remove(getDataFilesPath() + table_1_filename + ".csv");
+    bf::remove(getDataFilesPath() + table_2_filename + ".csv");
+    sqlDropForeignTable(0, table_1_name);
+    sqlDropForeignTable(0, table_2_name);
     ForeignTableTest::TearDown();
+  }
+
+  bool isChunkAndMetadataCached(const ChunkKey& chunk_key) {
+    if (cache->getCachedChunkIfExists(chunk_key) != nullptr &&
+        cache->isMetadataCached(chunk_key)) {
+      return true;
+    }
+    return false;
   }
 };
 
-// Refresh is not enabled yet, so currently we expect throws.
-TEST_F(RefreshForeignTableTest, RefreshSingleTable) {
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_1_filename, "csv");
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_2_filename, "csv", 1);
-  queryAndAssertException("REFRESH FOREIGN TABLES test_foreign_table",
-                          "Exception: REFRESH FOREIGN TABLES is not yet implemented");
-}
+class RefreshTests : public ForeignTableTest {
+ protected:
+  const std::string default_name = "refresh_tmp";
+  std::string file_type;
+  std::vector<std::string> tmp_file_names;
+  std::vector<std::string> table_names;
+  Catalog_Namespace::Catalog* cat;
+  foreign_storage::ForeignStorageCache* cache;
 
-TEST_F(RefreshForeignTableTest, RefreshMultipleTables) {
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_1_filename, "csv");
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_2_filename, "csv", 1);
-  queryAndAssertException(
-      "REFRESH FOREIGN TABLES test_foreign_table, test_foreign_table_2",
-      "Exception: REFRESH FOREIGN TABLES is not yet implemented");
-}
+  void SetUp() override {
+    ForeignTableTest::SetUp();
+    cat = &getCatalog();
+    cache = cat->getDataMgr().getForeignStorageMgr()->getForeignStorageCache();
+    cache->clear();
+  }
 
-TEST_F(RefreshForeignTableTest, RefreshEvictFalseCaps) {
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_1_filename, "csv");
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_2_filename, "csv", 1);
-  queryAndAssertException(
-      "REFRESH FOREIGN TABLES test_foreign_table WITH (EVICT='false')",
-      "Exception: REFRESH FOREIGN TABLES is not yet implemented");
-}
+  void TearDown() override {
+    for (auto file_name : tmp_file_names) {
+      bf::remove(getDataFilesPath() + file_name + "." + file_type);
+    }
+    for (auto table_name : table_names) {
+      sqlDropForeignTable(0, table_name);
+    }
+    ForeignTableTest::TearDown();
+  }
 
-TEST_F(RefreshForeignTableTest, RefreshEvictFalse) {
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_1_filename, "csv");
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_2_filename, "csv", 1);
-  queryAndAssertException(
-      "REFRESH FOREIGN TABLES test_foreign_table WITH (evict='false')",
-      "Exception: REFRESH FOREIGN TABLES is not yet implemented");
-}
+  bool isChunkAndMetadataCached(const ChunkKey& chunk_key) {
+    if (cache->getCachedChunkIfExists(chunk_key) != nullptr &&
+        cache->isMetadataCached(chunk_key)) {
+      return true;
+    }
+    return false;
+  }
 
-TEST_F(RefreshForeignTableTest, RefreshEvictTrue) {
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_1_filename, "csv");
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_2_filename, "csv", 1);
-  queryAndAssertException("REFRESH FOREIGN TABLES test_foreign_table WITH (EVICT='true')",
-                          "Exception: REFRESH FOREIGN TABLES is not yet implemented");
-}
+  void createFilesAndTables(
+      const std::vector<std::string>& file_names,
+      const std::string& column_schema = "(i INTEGER)",
+      const std::map<std::string, std::string>& table_options = {}) {
+    for (size_t i = 0; i < file_names.size(); ++i) {
+      tmp_file_names.emplace_back(default_name + std::to_string(i));
+      table_names.emplace_back(default_name + std::to_string(i));
+      bf::copy_file(getDataFilesPath() + file_names[i] + "." + file_type,
+                    getDataFilesPath() + tmp_file_names[i] + "." + file_type,
+                    bf::copy_option::overwrite_if_exists);
+      sqlCreateForeignTable(
+          column_schema, tmp_file_names[i], file_type, table_options, 0, table_names[i]);
+    }
+  }
+};
 
-TEST_F(RefreshForeignTableTest, RefreshEvictTrueCaps) {
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_1_filename, "csv");
-  sqlCreateForeignTable("(t TEXT, i INTEGER[])", table_2_filename, "csv", 1);
-  queryAndAssertException("REFRESH FOREIGN TABLES test_foreign_table WITH (EVICT='TRUE')",
-                          "Exception: REFRESH FOREIGN TABLES is not yet implemented");
-}
-
-INSTANTIATE_TEST_SUITE_P(FragmentSize_Small_Default,
-                         DataTypeFragmentSizeTest,
-                         ::testing::Values(1, 2, 32000000));
-
-INSTANTIATE_TEST_SUITE_P(DataTypeFragmentSizeAndDataWrapperParameterizedTests,
-                         DataTypeFragmentSizeAndDataWrapperTest,
-                         ::testing::Values(std::make_pair(1, "csv"),
-                                           std::make_pair(1, "parquet"),
-                                           std::make_pair(2, "csv"),
-                                           std::make_pair(2, "parquet"),
-                                           std::make_pair(32000000, "csv"),
-                                           std::make_pair(32000000, "parquet")),
+class RefreshParamTests : public RefreshTests,
+                          public ::testing::WithParamInterface<std::string> {
+ protected:
+  void SetUp() override {
+    file_type = GetParam();
+    RefreshTests::SetUp();
+  }
+};
+INSTANTIATE_TEST_SUITE_P(RefreshParamTestsParameterizedTests,
+                         RefreshParamTests,
+                         ::testing::Values("csv", "parquet"),
                          PrintToStringParamName());
+
+TEST_P(RefreshParamTests, SingleTable) {
+  // Create initial files and tables
+  createFilesAndTables({"0"});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ChunkKey orig_key = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "1" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}});
+}
+
+TEST_P(RefreshParamTests, FragmentSkip) {
+  // Create initial files and tables
+  createFilesAndTables({"0", "1"});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + " WHERE i >= 3;", {});
+  ChunkKey orig_key0 = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key0), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key0));
+
+  sqlAndCompareResult("SELECT * FROM " + table_names[1] + " WHERE i >= 3;", {});
+  ChunkKey orig_key1 = getChunkKeyFromTable(*cat, table_names[1], {1, 0});
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key1), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key1));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "2" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+  bf::copy_file(getDataFilesPath() + "3" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[1] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + " WHERE i >= 3;", {});
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key0), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key0));
+
+  sqlAndCompareResult("SELECT * FROM " + table_names[1] + " WHERE i >= 3;", {});
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key1), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key1));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ", " + tmp_file_names[1] + ";");
+
+  // Compare new results
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key0), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key0));
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key1), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key1));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + " WHERE i >= 3;", {});
+  sqlAndCompareResult("SELECT * FROM " + table_names[1] + " WHERE i >= 3;", {{i(3)}});
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key0), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+}
+
+TEST_P(RefreshParamTests, TwoTable) {
+  // Create initial files and tables
+  createFilesAndTables({"0", "1"});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ChunkKey orig_key0 = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+
+  sqlAndCompareResult("SELECT * FROM " + table_names[1] + ";", {{i(1)}});
+  ChunkKey orig_key1 = getChunkKeyFromTable(*cat, table_names[1], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "2" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+  bf::copy_file(getDataFilesPath() + "3" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[1] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+
+  sqlAndCompareResult("SELECT * FROM " + table_names[1] + ";", {{i(1)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ", " + tmp_file_names[1] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(2)}});
+  sqlAndCompareResult("SELECT * FROM " + table_names[1] + ";", {{i(3)}});
+}
+
+TEST_P(RefreshParamTests, EvictTrue) {
+  // Create initial files and tables
+  createFilesAndTables({"0"});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ChunkKey orig_key = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "1" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + " WITH (evict = true);");
+
+  // Compare new results
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key), nullptr);
+  ASSERT_FALSE(cache->isMetadataCached(orig_key));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}});
+}
+
+TEST_P(RefreshParamTests, TwoColumn) {
+  // Create initial files and tables
+  createFilesAndTables({"two_col_1_2"}, "(i INTEGER, i2 INTEGER)");
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1), i(2)}});
+  ChunkKey orig_key0 = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ChunkKey orig_key1 = getChunkKeyFromTable(*cat, table_names[0], {2, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "two_col_3_4" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1), i(2)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(3), i(4)}});
+}
+
+TEST_P(RefreshParamTests, ChangeSchema) {
+  // Create initial files and tables
+  createFilesAndTables({"1"});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}});
+  ChunkKey orig_key = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "two_col_3_4" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Refresh command
+  try {
+    sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+    FAIL() << "An exception should have been thrown";
+  } catch (const std::exception& e) {
+    ASSERT_NE(strstr(e.what(), "Mismatched number of logical columns"), nullptr);
+  }
+}
+
+TEST_P(RefreshParamTests, AddFrags) {
+  // Create initial files and tables
+  createFilesAndTables({"two_row_1_2"}, "(i INTEGER)", {{"fragment_size", "1"}});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}, {i(2)}});
+  ChunkKey orig_key0 = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ChunkKey orig_key1 = getChunkKeyFromTable(*cat, table_names[0], {1, 1});
+  ChunkKey orig_key2 = getChunkKeyFromTable(*cat, table_names[0], {1, 2});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "three_row_3_4_5" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}, {i(2)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key2), nullptr);
+  ASSERT_TRUE(cache->isMetadataCached(orig_key2));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(3)}, {i(4)}, {i(5)}});
+}
+
+TEST_P(RefreshParamTests, SubFrags) {
+  // Create initial files and tables
+  createFilesAndTables({"three_row_3_4_5"}, "(i INTEGER)", {{"fragment_size", "1"}});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(3)}, {i(4)}, {i(5)}});
+  ChunkKey orig_key0 = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ChunkKey orig_key1 = getChunkKeyFromTable(*cat, table_names[0], {1, 1});
+  ChunkKey orig_key2 = getChunkKeyFromTable(*cat, table_names[0], {1, 2});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key2));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "two_row_1_2" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(3)}, {i(4)}, {i(5)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key2));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+  ASSERT_EQ(cache->getCachedChunkIfExists(orig_key2), nullptr);
+  ASSERT_FALSE(cache->isMetadataCached(orig_key2));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}, {i(2)}});
+}
+
+TEST_P(RefreshParamTests, TwoFrags) {
+  // Create initial files and tables
+  createFilesAndTables({"two_row_1_2"}, "(i INTEGER)", {{"fragment_size", "1"}});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}, {i(2)}});
+  ChunkKey orig_key0 = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ChunkKey orig_key1 = getChunkKeyFromTable(*cat, table_names[0], {1, 1});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "two_row_3_4" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}, {i(2)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key0));
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key1));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(3)}, {i(4)}});
+}
+
+TEST_P(RefreshParamTests, String) {
+  // Create initial files and tables
+  createFilesAndTables({"a"}, "(t TEXT)");
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{"a"}});
+  ChunkKey orig_key = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "b" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{"a"}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{"b"}});
+}
+
+class RefreshDeviceTests : public RefreshTests,
+                           public ::testing::WithParamInterface<TExecuteMode::type> {
+ protected:
+  void SetUp() override {
+    RefreshTests::SetUp();
+    file_type = "csv";
+  }
+};
+INSTANTIATE_TEST_SUITE_P(RefreshDeviceTestsParameterizedTests,
+                         RefreshDeviceTests,
+                         ::testing::Values(TExecuteMode::CPU, TExecuteMode::GPU),
+                         PrintToStringParamName());
+
+TEST_P(RefreshDeviceTests, Device) {
+  if (!setExecuteMode(GetParam())) {
+    std::cerr << "Unable to set execution mode, skipping test\n";
+    return;
+  }
+  // Create initial files and tables
+  createFilesAndTables({"0"});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ChunkKey orig_key = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "1" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}});
+}
+
+class RefreshSyntaxTests : public RefreshTests,
+                           public ::testing::WithParamInterface<std::string> {
+ protected:
+  void SetUp() override {
+    RefreshTests::SetUp();
+    file_type = "csv";
+  }
+};
+INSTANTIATE_TEST_SUITE_P(RefreshSyntaxTestsParameterizedTests,
+                         RefreshSyntaxTests,
+                         ::testing::Values(" WITH (evict = false)",
+                                           " WITH (EVICT = FALSE)"));
+
+TEST_P(RefreshSyntaxTests, EvictFalse) {
+  // Create initial files and tables
+  createFilesAndTables({"0"});
+
+  // Read from table to populate cache.
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ChunkKey orig_key = getChunkKeyFromTable(*cat, table_names[0], {1, 0});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Change underlying file
+  bf::copy_file(getDataFilesPath() + "1" + "." + file_type,
+                getDataFilesPath() + tmp_file_names[0] + "." + file_type,
+                bf::copy_option::overwrite_if_exists);
+
+  // Confirm chaning file hasn't changed cached results
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(0)}});
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+
+  // Refresh command
+  sql("REFRESH FOREIGN TABLES " + tmp_file_names[0] + GetParam() + ";");
+
+  // Compare new results
+  ASSERT_TRUE(isChunkAndMetadataCached(orig_key));
+  sqlAndCompareResult("SELECT * FROM " + table_names[0] + ";", {{i(1)}});
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    DataTypeFragmentSizeAndDataWrapperParameterizedTests,
+    DataTypeFragmentSizeAndDataWrapperTest,
+    ::testing::Values(
+        DataTypeFragmentSizeAndDataWrapperParam{1, "csv", "csv"},
+        DataTypeFragmentSizeAndDataWrapperParam{1, "csv", "zip"},
+        DataTypeFragmentSizeAndDataWrapperParam{1, "parquet", "parquet"},
+        DataTypeFragmentSizeAndDataWrapperParam{2, "csv", "csv"},
+        DataTypeFragmentSizeAndDataWrapperParam{2, "csv", "zip"},
+        DataTypeFragmentSizeAndDataWrapperParam{2, "parquet", "parquet"},
+        DataTypeFragmentSizeAndDataWrapperParam{32000000, "csv", "csv"},
+        DataTypeFragmentSizeAndDataWrapperParam{32000000, "csv", "zip"},
+        DataTypeFragmentSizeAndDataWrapperParam{32000000, "parquet", "parquet"}),
+    PrintToStringParamName());
 
 TEST_P(DataTypeFragmentSizeAndDataWrapperTest, ScalarTypes) {
   auto& param = GetParam();
-  int fragment_size = param.first;
-  std::string data_wrapper_type = param.second;
+  int fragment_size = param.fragment_size;
+  std::string data_wrapper_type = param.wrapper;
+  std::string extension = param.extension;
   const auto& query = getCreateForeignTableQuery(
       "(b BOOLEAN, t TINYINT, s SMALLINT, i INTEGER, bi BIGINT, f FLOAT, "
       "dc DECIMAL(10, 5), tm TIME, tp TIMESTAMP, d DATE, txt TEXT, "
       "txt_2 TEXT ENCODING NONE)",
       {{"fragment_size", std::to_string(fragment_size)}},
       "scalar_types",
-      data_wrapper_type);
+      data_wrapper_type,
+      0,
+      default_table_name,
+      extension);
   sql(query);
 
   TQueryResult result;
@@ -648,17 +1233,27 @@ TEST_P(DataTypeFragmentSizeAndDataWrapperTest, ScalarTypes) {
   // clang-format on
 }
 
-// TODO: implement for parquet when kARRAY support implemented for parquet
-TEST_P(DataTypeFragmentSizeTest, ArrayTypes) {
+TEST_P(DataTypeFragmentSizeAndDataWrapperTest, ArrayTypes) {
+  auto& param = GetParam();
+  int fragment_size = param.fragment_size;
+  std::string data_wrapper_type = param.wrapper;
+  std::string extension = param.extension;
+  // TODO: implement for parquet when kARRAY support implemented for parquet
+  if (data_wrapper_type == "parquet") {
+    GTEST_SKIP();
+  }
   const auto& query = getCreateForeignTableQuery(
       "(b BOOLEAN[], t TINYINT[], s SMALLINT[], i INTEGER[], bi BIGINT[], f "
       "FLOAT[], "
       "tm "
       "TIME[], tp TIMESTAMP[], "
       "d DATE[], txt TEXT[], txt_2 TEXT[])",
-      {{"fragment_size", std::to_string(GetParam())}},
+      {{"fragment_size", std::to_string(fragment_size)}},
       "array_types",
-      "csv");
+      data_wrapper_type,
+      0,
+      default_table_name,
+      extension);
   sql(query);
 
   TQueryResult result;
@@ -689,13 +1284,17 @@ TEST_P(DataTypeFragmentSizeTest, ArrayTypes) {
 
 TEST_P(DataTypeFragmentSizeAndDataWrapperTest, GeoTypes) {
   auto& param = GetParam();
-  int fragment_size = param.first;
-  std::string data_wrapper_type = param.second;
+  int fragment_size = param.fragment_size;
+  std::string data_wrapper_type = param.wrapper;
+  std::string extension = param.extension;
   const auto& query = getCreateForeignTableQuery(
       "(p POINT, l LINESTRING, poly POLYGON, multipoly MULTIPOLYGON)",
       {{"fragment_size", std::to_string(fragment_size)}},
       "geo_types",
-      data_wrapper_type);
+      data_wrapper_type,
+      0,
+      default_table_name,
+      extension);
   sql(query);
 
   TQueryResult result;

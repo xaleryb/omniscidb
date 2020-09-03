@@ -27,7 +27,7 @@
 #include "ExecutionKernel.h"
 #include "GpuSharedMemoryContext.h"
 #include "GroupByAndAggregate.h"
-#include "JoinHashTable.h"
+#include "JoinHashTable/JoinHashTable.h"
 #include "LoopControlFlow/JoinLoop.h"
 #include "NvidiaKernel.h"
 #include "PlanState.h"
@@ -378,6 +378,28 @@ class Executor {
   unsigned blockSize() const;
   size_t maxGpuSlabSize() const;
 
+#if 0
+  ResultSetPtr executeWorkUnit(size_t& max_groups_buffer_entry_guess,
+                               const bool is_agg,
+                               const std::vector<InputTableInfo>&,
+                               const RelAlgExecutionUnit&,
+                               const CompilationOptions&,
+                               const ExecutionOptions& options,
+                               const Catalog_Namespace::Catalog&,
+                               RenderInfo* render_info,
+                               const bool has_cardinality_estimation,
+                               ColumnCacheMap& column_cache);
+
+  void executeUpdate(const RelAlgExecutionUnit& ra_exe_unit,
+                     const std::vector<InputTableInfo>& table_infos,
+                     const CompilationOptions& co,
+                     const ExecutionOptions& eo,
+                     const Catalog_Namespace::Catalog& cat,
+                     std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
+                     const UpdateLogForFragment::Callback& cb,
+                     const bool is_agg);
+#endif
+
  private:
   void clearMetaInfoCache();
 
@@ -435,7 +457,7 @@ class Executor {
                                  const CompilationOptions&,
                                  const ExecutionOptions& options,
                                  const Catalog_Namespace::Catalog&,
-                                 std::shared_ptr<RowSetMemoryOwner>,
+                                 // std::shared_ptr<RowSetMemoryOwner>,
                                  RenderInfo* render_info,
                                  const bool has_cardinality_estimation,
                                  ColumnCacheMap& column_cache);
@@ -808,6 +830,9 @@ class Executor {
  public:
   void setupCaching(const std::unordered_set<PhysicalInput>& phys_inputs,
                     const std::unordered_set<int>& phys_table_ids);
+  void setColRangeCache(const AggregatedColRange& aggregated_col_range) {
+    agg_col_range_cache_ = aggregated_col_range;
+  }
 
   template <typename SESSION_MAP_LOCK>
   void setCurrentQuerySession(const std::string& query_session,
