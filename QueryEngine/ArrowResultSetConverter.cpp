@@ -44,6 +44,18 @@ using namespace arrow;
 
 namespace {
 
+/* We can create Arrow buffers which refer memory owned by ResultSet.
+   For safe memory access we should keep a ResultSetPtr to keep
+   data live while buffer lives. Use this custom buffer for that. */
+class ResultSetBuffer : public Buffer {
+ public:
+  ResultSetBuffer(const uint8_t* buf, size_t size, ResultSetPtr rs)
+      : Buffer(buf, size), _rs(rs) {}
+
+ private:
+  ResultSetPtr _rs;
+};
+
 inline SQLTypes get_dict_index_type(const SQLTypeInfo& ti) {
   CHECK(ti.is_dict_encoded_string());
   switch (ti.get_size()) {
@@ -158,13 +170,14 @@ void convert_column(ResultSetPtr result,
   std::shared_ptr<Buffer> is_valid;
   const int64_t buf_size = entry_count * sizeof(C_TYPE);
   if (result->isZeroCopyColumnarConversionPossible(col)) {
-    values.reset(new Buffer(
-      reinterpret_cast<const uint8_t*>(
-      result->getColumnarBuffer(col)), buf_size));
+    values.reset(new ResultSetBuffer(
+        reinterpret_cast<const uint8_t*>(result->getColumnarBuffer(col)),
+        buf_size,
+        result));
   } else {
     AllocateBuffer(buf_size, &values);
-    result->copyColumnIntoBuffer(col, 
-      reinterpret_cast<int8_t*>(values->mutable_data()), buf_size);
+    result->copyColumnIntoBuffer(
+        col, reinterpret_cast<int8_t*>(values->mutable_data()), buf_size);
   }
 
   int64_t null_count = 0;
