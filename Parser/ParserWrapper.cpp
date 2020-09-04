@@ -61,7 +61,6 @@ extern bool g_enable_fsi;
 ParserWrapper::ParserWrapper(std::string query_string) {
   query_type_ = QueryType::SchemaRead;
   if (boost::istarts_with(query_string, exec_ra_str)) {
-    actual_query = boost::trim_copy(query_string.substr(exec_ra_str.size()));
     is_exec_ra = true;
     return;
   }

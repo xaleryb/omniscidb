@@ -254,6 +254,9 @@ class DBEngineImpl : public DBEngine {
   }
 
   std::unique_ptr<CursorImpl> executeRA(const std::string& query) {
+    if (boost::starts_with(query, "execute calcite")) {
+      return executeDML(query);
+    }
     try {
       const auto execution_result =
           QR::get()->runSelectQueryRA(query, ExecutorDeviceType::CPU, true, true);

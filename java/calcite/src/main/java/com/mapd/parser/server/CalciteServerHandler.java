@@ -17,9 +17,15 @@ package com.mapd.parser.server;
 
 import static com.mapd.calcite.parser.MapDParser.CURRENT_PARSER;
 
+import com.fasterxml.jackson.databind.type.TypeFactory;
+import com.google.common.collect.ImmutableList;
 import com.mapd.calcite.parser.MapDParser;
 import com.mapd.calcite.parser.MapDParserOptions;
+import com.mapd.calcite.parser.MapDSchema;
+import com.mapd.calcite.parser.MapDSerializer;
+import com.mapd.calcite.parser.MapDTypeSystem;
 import com.mapd.calcite.parser.MapDUser;
+import com.mapd.calcite.parser.ProjectProjectRemoveRule;
 import com.mapd.common.SockTransportProperties;
 import com.omnisci.thrift.calciteserver.CalciteServer;
 import com.omnisci.thrift.calciteserver.InvalidParseRequest;
@@ -32,12 +38,56 @@ import com.omnisci.thrift.calciteserver.TPlanResult;
 import com.omnisci.thrift.calciteserver.TUserDefinedFunction;
 import com.omnisci.thrift.calciteserver.TUserDefinedTableFunction;
 
+import org.apache.calcite.adapter.enumerable.EnumerableRules;
+import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.config.CalciteConnectionConfig;
+import org.apache.calcite.config.CalciteConnectionConfigImpl;
+import org.apache.calcite.config.CalciteConnectionProperty;
+import org.apache.calcite.config.CalciteSystemProperty;
+import org.apache.calcite.jdbc.CalciteSchema;
+import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
+import org.apache.calcite.plan.Context;
+import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptLattice;
+import org.apache.calcite.plan.RelOptMaterialization;
+import org.apache.calcite.plan.RelOptPlanner;
+import org.apache.calcite.plan.RelOptUtil;
+import org.apache.calcite.plan.volcano.VolcanoPlanner;
+import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.prepare.MapDPlanner;
 import org.apache.calcite.prepare.SqlIdentifierCapturer;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.core.RelFactories;
+import org.apache.calcite.rel.externalize.MapDRelJsonReader;
+import org.apache.calcite.rel.externalize.RelJsonReader;
+import org.apache.calcite.rel.externalize.RelJsonWriter;
+import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
+import org.apache.calcite.rel.rules.AggregateExpandDistinctAggregatesRule;
+import org.apache.calcite.rel.rules.AggregateReduceFunctionsRule;
+import org.apache.calcite.rel.rules.AggregateStarTableRule;
+import org.apache.calcite.rel.rules.FilterAggregateTransposeRule;
+import org.apache.calcite.rel.rules.FilterJoinRule;
+import org.apache.calcite.rel.rules.FilterMergeRule;
+import org.apache.calcite.rel.rules.FilterProjectTransposeRule;
+import org.apache.calcite.rel.rules.FilterTableScanRule;
+import org.apache.calcite.rel.rules.JoinAssociateRule;
+import org.apache.calcite.rel.rules.JoinCommuteRule;
+import org.apache.calcite.rel.rules.JoinProjectTransposeRule;
+import org.apache.calcite.rel.rules.JoinPushThroughJoinRule;
+import org.apache.calcite.rel.rules.MatchRule;
+import org.apache.calcite.rel.rules.ProjectMergeRule;
+import org.apache.calcite.rel.rules.SemiJoinRule;
+import org.apache.calcite.rel.rules.SortProjectTransposeRule;
+import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.runtime.CalciteContextException;
+import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.validate.SqlMoniker;
 import org.apache.calcite.sql.validate.SqlMonikerType;
+import org.apache.calcite.tools.Program;
+import org.apache.calcite.tools.Programs;
 import org.apache.calcite.tools.RelConversionException;
 import org.apache.calcite.tools.ValidationException;
 import org.apache.commons.pool.PoolableObjectFactory;
@@ -48,10 +98,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 /**
  *
@@ -152,6 +205,13 @@ public class CalciteServerHandler implements CalciteServer.Iface {
     CURRENT_PARSER.set(parser);
 
     // need to trim the sql string as it seems it is not trimed prior to here
+    boolean is_calcite = false;
+
+    if (sqlText.startsWith("execute calcite")) {
+      sqlText = sqlText.replaceFirst("execute calcite", "");
+      is_calcite = true;
+    }
+
     sqlText = sqlText.trim();
     // remove last charcter if it is a ;
     if (sqlText.length() > 0 && sqlText.charAt(sqlText.length() - 1) == ';') {
@@ -169,9 +229,128 @@ public class CalciteServerHandler implements CalciteServer.Iface {
                 req.input_prev, req.input_start, req.input_next));
       }
       try {
-        MapDParserOptions parserOptions = new MapDParserOptions(
-                filterPushDownInfo, legacySyntax, isExplain, isViewOptimize);
-        jsonResult = parser.processSql(sqlText, parserOptions);
+        if (!is_calcite) {
+          MapDParserOptions parserOptions = new MapDParserOptions(
+                  filterPushDownInfo, legacySyntax, isExplain, isViewOptimize);
+          jsonResult = parser.processSql(sqlText, parserOptions);
+          capturer = parser.captureIdentifiers(sqlText, legacySyntax);
+
+          primaryAccessedObjects.tables_selected_from = new ArrayList<>(capturer.selects);
+          primaryAccessedObjects.tables_inserted_into = new ArrayList<>(capturer.inserts);
+          primaryAccessedObjects.tables_updated_in = new ArrayList<>(capturer.updates);
+          primaryAccessedObjects.tables_deleted_from = new ArrayList<>(capturer.deletes);
+
+          // also resolve all the views in the select part
+          // resolution of the other parts is not
+          // necessary as these cannot be views
+          resolvedAccessedObjects.tables_selected_from =
+                  new ArrayList<>(parser.resolveSelectIdentifiers(capturer));
+          resolvedAccessedObjects.tables_inserted_into =
+                  new ArrayList<>(capturer.inserts);
+          resolvedAccessedObjects.tables_updated_in = new ArrayList<>(capturer.updates);
+          resolvedAccessedObjects.tables_deleted_from = new ArrayList<>(capturer.deletes);
+        } else {
+          MapDSchema schema = new MapDSchema(dataDir,
+                  parser,
+                  mapdPort,
+                  parser.mapdUser,
+                  parser.sock_transport_properties);
+          MapDPlanner planner = parser.getPlanner();
+
+          final MapDTypeSystem typeSystem = new MapDTypeSystem();
+          JavaTypeFactory typeFactory = new JavaTypeFactoryImpl(typeSystem);
+          RexBuilder rexBuilder = new RexBuilder(typeFactory);
+          RelOptPlanner relOptPlanner = new VolcanoPlanner();
+          RelOptCluster cluster = RelOptCluster.create(relOptPlanner, rexBuilder);
+
+          final SchemaPlus rootSchema =
+                  MapDPlanner.rootSchema(planner.config.getDefaultSchema());
+          final Context context = planner.config.getContext();
+          final CalciteConnectionConfig connectionConfig;
+
+          if (context != null) {
+            connectionConfig = context.unwrap(CalciteConnectionConfig.class);
+          } else {
+            Properties properties = new Properties();
+            properties.setProperty(CalciteConnectionProperty.CASE_SENSITIVE.camelName(),
+                    String.valueOf(planner.config.getParserConfig().caseSensitive()));
+            connectionConfig = new CalciteConnectionConfigImpl(properties);
+          }
+
+          CalciteCatalogReader catalogReader = new CalciteCatalogReader(
+                  CalciteSchema.from(rootSchema),
+                  CalciteSchema.from(planner.config.getDefaultSchema()).path(null),
+                  typeFactory,
+                  connectionConfig);
+
+          MapDRelJsonReader reader =
+                  new MapDRelJsonReader(cluster, catalogReader, schema);
+
+          RelRoot relR = RelRoot.of(reader.read(sqlText), SqlKind.SELECT);
+          planner.applyQueryOptimizationRules(relR);
+          planner.applyFilterPushdown(relR);
+          ProjectMergeRule projectMergeRule =
+                  new ProjectMergeRule(true, RelFactories.LOGICAL_BUILDER);
+          final Program program = Programs.hep(
+                  ImmutableList.of(FilterProjectTransposeRule.INSTANCE,
+                          projectMergeRule,
+                          ProjectProjectRemoveRule.INSTANCE,
+                          FilterMergeRule.INSTANCE,
+                          JoinProjectTransposeRule.LEFT_PROJECT_INCLUDE_OUTER,
+                          JoinProjectTransposeRule.RIGHT_PROJECT_INCLUDE_OUTER,
+                          JoinProjectTransposeRule.BOTH_PROJECT_INCLUDE_OUTER
+                          // EnumerableRules.ENUMERABLE_JOIN_RULE,
+                          // EnumerableRules.ENUMERABLE_MERGE_JOIN_RULE,
+                          // EnumerableRules.ENUMERABLE_CORRELATE_RULE,
+                          // EnumerableRules.ENUMERABLE_PROJECT_RULE,
+                          // EnumerableRules.ENUMERABLE_FILTER_RULE,
+                          // EnumerableRules.ENUMERABLE_AGGREGATE_RULE,
+                          // EnumerableRules.ENUMERABLE_SORT_RULE,
+                          // EnumerableRules.ENUMERABLE_LIMIT_RULE,
+                          // EnumerableRules.ENUMERABLE_UNION_RULE,
+                          // EnumerableRules.ENUMERABLE_INTERSECT_RULE,
+                          // EnumerableRules.ENUMERABLE_MINUS_RULE,
+                          // EnumerableRules.ENUMERABLE_TABLE_MODIFICATION_RULE,
+                          // EnumerableRules.ENUMERABLE_VALUES_RULE,
+                          // EnumerableRules.ENUMERABLE_WINDOW_RULE,
+                          // EnumerableRules.ENUMERABLE_MATCH_RULE,
+                          // SemiJoinRule.PROJECT,
+                          // SemiJoinRule.JOIN,
+                          // MatchRule.INSTANCE,
+                          // CalciteSystemProperty.COMMUTE.value()
+                          //         ? JoinAssociateRule.INSTANCE
+                          //         : ProjectMergeRule.INSTANCE,
+                          // AggregateStarTableRule.INSTANCE,
+                          // AggregateStarTableRule.INSTANCE2,
+                          // FilterTableScanRule.INSTANCE,
+                          // FilterProjectTransposeRule.INSTANCE,
+                          // FilterJoinRule.FILTER_ON_JOIN,
+                          // AggregateExpandDistinctAggregatesRule.INSTANCE,
+                          // AggregateReduceFunctionsRule.INSTANCE,
+                          // FilterAggregateTransposeRule.INSTANCE,
+                          // JoinCommuteRule.INSTANCE,
+                          // JoinPushThroughJoinRule.RIGHT,
+                          // JoinPushThroughJoinRule.LEFT,
+                          // SortProjectTransposeRule.INSTANCE
+                          ),
+                  true,
+                  DefaultRelMetadataProvider.INSTANCE);
+
+          RelNode oldRel;
+          RelNode newRel = relR.project();
+
+          do {
+            oldRel = newRel;
+            newRel = program.run(null,
+                    oldRel,
+                    null,
+                    ImmutableList.<RelOptMaterialization>of(),
+                    ImmutableList.<RelOptLattice>of());
+            // there must be a better way to compare these
+          } while (!RelOptUtil.toString(oldRel).equals(RelOptUtil.toString(newRel)));
+
+          jsonResult = MapDSerializer.toString(newRel);
+        }
       } catch (ValidationException ex) {
         String msg = "Validation: " + ex.getMessage();
         MAPDLOGGER.error(msg, ex);
@@ -181,22 +360,6 @@ public class CalciteServerHandler implements CalciteServer.Iface {
         MAPDLOGGER.error(msg, ex);
         throw ex;
       }
-      capturer = parser.captureIdentifiers(sqlText, legacySyntax);
-
-      primaryAccessedObjects.tables_selected_from = new ArrayList<>(capturer.selects);
-      primaryAccessedObjects.tables_inserted_into = new ArrayList<>(capturer.inserts);
-      primaryAccessedObjects.tables_updated_in = new ArrayList<>(capturer.updates);
-      primaryAccessedObjects.tables_deleted_from = new ArrayList<>(capturer.deletes);
-
-      // also resolve all the views in the select part
-      // resolution of the other parts is not
-      // necessary as these cannot be views
-      resolvedAccessedObjects.tables_selected_from =
-              new ArrayList<>(parser.resolveSelectIdentifiers(capturer));
-      resolvedAccessedObjects.tables_inserted_into = new ArrayList<>(capturer.inserts);
-      resolvedAccessedObjects.tables_updated_in = new ArrayList<>(capturer.updates);
-      resolvedAccessedObjects.tables_deleted_from = new ArrayList<>(capturer.deletes);
-
     } catch (SqlParseException ex) {
       String msg = "Parse failed: " + ex.getMessage();
       MAPDLOGGER.error(msg, ex);
@@ -206,7 +369,10 @@ public class CalciteServerHandler implements CalciteServer.Iface {
       MAPDLOGGER.error(msg, ex);
       throw new InvalidParseRequest(-3, msg);
     } catch (Throwable ex) {
-      String msg = "Exception occurred: " + ex.getMessage();
+      StringWriter sw = new StringWriter();
+      PrintWriter pw = new PrintWriter(sw);
+      ex.printStackTrace(pw);
+      String msg = "Exception occurred: " + ex.getMessage() + "\n" + sw.toString();
       MAPDLOGGER.error(msg, ex);
       throw new InvalidParseRequest(-4, msg);
     } finally {
