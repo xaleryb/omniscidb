@@ -20,6 +20,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "DataMgr/ForeignStorage/ForeignStorageInterface.h"
 #include "DBHandlerTestHelpers.h"
 #include "DataMgr/ForeignStorage/ArrowForeignStorage.h"
 #include "DataMgr/ForeignStorage/ForeignStorageInterface.h"
