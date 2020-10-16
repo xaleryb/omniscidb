@@ -188,7 +188,8 @@ class DBHandler : public OmniSciIf {
 #ifdef ENABLE_GEOS
             const std::string& libgeos_so_filename,
 #endif
-            const DiskCacheConfig& disk_cache_config);
+            const DiskCacheConfig& disk_cache_config,
+            std::shared_ptr<ForeignStorageInterface> fsi = nullptr);
 
   ~DBHandler() override;
 
@@ -527,6 +528,7 @@ class DBHandler : public OmniSciIf {
                         const std::string& username,
                         const std::string& dbname);
 
+  std::shared_ptr<ForeignStorageInterface> fsi_;
   std::shared_ptr<Data_Namespace::DataMgr> data_mgr_;
 
   LeafAggregator leaf_aggregator_;
