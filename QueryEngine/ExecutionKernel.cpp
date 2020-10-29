@@ -74,9 +74,11 @@ const std::vector<uint64_t>& SharedKernelContext::getFragOffsets() {
 }
 
 void SharedKernelContext::addDeviceResults(ResultSetPtr&& device_results,
+                                           int outer_table_id,
                                            std::vector<size_t> outer_table_fragment_ids) {
   std::lock_guard<std::mutex> lock(reduce_mutex_);
   if (!needs_skip_result(device_results)) {
+    device_results->setOuterTableId(outer_table_id);
     all_fragment_results_.emplace_back(std::move(device_results),
                                        outer_table_fragment_ids);
   }
@@ -215,7 +217,8 @@ void ExecutionKernel::runImpl(Executor* executor, SharedKernelContext& shared_co
             *query_mem_desc,
             target_exprs_to_infos(ra_exe_unit_.target_exprs, *query_mem_desc),
             executor});
-    shared_context.addDeviceResults(std::move(device_results_), outer_tab_frag_ids);
+    shared_context.addDeviceResults(
+        std::move(device_results_), outer_table_id, outer_tab_frag_ids);
     return;
   }
   const CompilationResult& compilation_result = query_comp_desc.getCompilationResult();
@@ -331,5 +334,6 @@ void ExecutionKernel::runImpl(Executor* executor, SharedKernelContext& shared_co
   if (err) {
     throw QueryExecutionError(err);
   }
-  shared_context.addDeviceResults(std::move(device_results_), outer_tab_frag_ids);
+  shared_context.addDeviceResults(
+      std::move(device_results_), outer_table_id, outer_tab_frag_ids);
 }
