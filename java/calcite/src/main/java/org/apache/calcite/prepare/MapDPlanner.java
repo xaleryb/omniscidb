@@ -34,12 +34,14 @@ import org.apache.calcite.plan.RelOptMaterialization;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgram;
+import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.externalize.MapDRelJsonReader;
 import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
+import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.rules.DynamicFilterJoinRule;
 import org.apache.calcite.rel.rules.FilterJoinRule;
 import org.apache.calcite.rel.rules.FilterMergeRule;
@@ -221,27 +223,17 @@ public class MapDPlanner extends PlannerImpl {
     applyQueryOptimizationRules(relR);
     applyFilterPushdown(relR);
 
-    ProjectMergeRule projectMergeRule =
-            new ProjectMergeRule(true, RelFactories.LOGICAL_BUILDER);
-    final Program program =
-            Programs.hep(ImmutableList.of(FilterProjectTransposeRule.INSTANCE,
-                                 projectMergeRule,
-                                 ProjectProjectRemoveRule.INSTANCE,
-                                 FilterMergeRule.INSTANCE),
-                    true,
-                    DefaultRelMetadataProvider.INSTANCE);
-    RelNode oldRel;
-    RelNode newRel = relR.project();
+    HepProgramBuilder progBuilder = new HepProgramBuilder();
+    progBuilder.addRuleInstance(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE_INCLUDE_OUTER);
+    progBuilder.addRuleInstance(CoreRules.FILTER_MERGE);
+    progBuilder.addRuleInstance(CoreRules.FILTER_PROJECT_TRANSPOSE);
+    progBuilder.addRuleInstance(CoreRules.PROJECT_MERGE);
+    progBuilder.addRuleInstance(ProjectProjectRemoveRule.INSTANCE);
 
-    do {
-      oldRel = newRel;
-      newRel = program.run(null,
-              oldRel,
-              null,
-              ImmutableList.<RelOptMaterialization>of(),
-              ImmutableList.<RelOptLattice>of());
-      // there must be a better way to compare these
-    } while (!RelOptUtil.toString(oldRel).equals(RelOptUtil.toString(newRel)));
+    HepPlanner hepPlanner = new HepPlanner(progBuilder.build());
+    final RelNode root = relR.project();
+    hepPlanner.setRoot(root);
+    final RelNode newRel = hepPlanner.findBestExp();
 
     return RelRoot.of(newRel, relR.kind);
   }

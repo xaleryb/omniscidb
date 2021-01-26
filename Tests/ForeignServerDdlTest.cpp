@@ -127,7 +127,8 @@ TEST_F(CreateForeignServerTest, MissingBasePath) {
 TEST_F(CreateForeignServerTest, InvalidOption) {
   std::string query{
       "CREATE SERVER test_server FOREIGN DATA WRAPPER omnisci_csv WITH "
-      "(invalid_key = 'value', storage_type = 'LOCAL_FILE', base_path = './test_path/');"};
+      "(invalid_key = 'value', storage_type = 'LOCAL_FILE', base_path = "
+      "'./test_path/');"};
   std::string error_message{
       "Exception: Invalid option \"INVALID_KEY\". "
       "Option must be one of the following: STORAGE_TYPE, BASE_PATH."};

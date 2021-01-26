@@ -760,7 +760,8 @@ std::shared_ptr<Catalog> SysCatalog::login(std::string& dbname,
   }
   Catalog_Namespace::DBMetadata db_meta;
   getMetadataWithDefaultDB(dbname, username, db_meta, user_meta);
-  return getCatalog(basePath_, db_meta, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, false);
+  return getCatalog(
+      basePath_, db_meta, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, false);
 }
 
 // loginImpl() with no EE code and no SAML code
@@ -781,8 +782,8 @@ std::shared_ptr<Catalog> SysCatalog::switchDatabase(std::string& dbname,
 
   // NOTE(max): register database in Catalog that early to allow ldap
   // and saml create default user and role privileges on databases
-  auto cat =
-      getCatalog(basePath_, db_meta, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, false);
+  auto cat = getCatalog(
+      basePath_, db_meta, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, false);
 
   DBObject dbObject(dbname, DatabaseDBObjectType);
   dbObject.loadKey();
@@ -1150,7 +1151,8 @@ void SysCatalog::createDatabase(const string& name, int owner) {
         name);
     CHECK(getMetadataForDB(name, db));
 
-    cat = getCatalog(basePath_, db, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, true);
+    cat =
+        getCatalog(basePath_, db, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, true);
 
     if (owner != OMNISCI_ROOT_USER_ID) {
       DBObject object(name, DBObjectType::DatabaseDBObjectType);
@@ -1168,7 +1170,7 @@ void SysCatalog::createDatabase(const string& name, int owner) {
 
   // force a migration on the new database
   removeCatalog(name);
-  cat = getCatalog(basePath_, db, dataMgr_, string_dict_hosts_, calciteMgr_, false);
+  cat = getCatalog(basePath_, db, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, false);
 
   if (g_enable_fsi) {
     try {
@@ -1183,7 +1185,8 @@ void SysCatalog::createDatabase(const string& name, int owner) {
 void SysCatalog::dropDatabase(const DBMetadata& db) {
   sys_write_lock write_lock(this);
   sys_sqlite_lock sqlite_lock(this);
-  auto cat = getCatalog(basePath_, db, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, false);
+  auto cat =
+      getCatalog(basePath_, db, dataMgr_, string_dict_hosts_, calciteMgr_, fsi_, false);
   sqliteConnector_->query("BEGIN TRANSACTION");
   try {
     // remove this database ID from any users that have it set as their default database

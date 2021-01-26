@@ -107,6 +107,7 @@ bool g_enable_bump_allocator{false};
 double g_bump_allocator_step_reduction{0.75};
 bool g_enable_direct_columnarization{true};
 extern bool g_enable_experimental_string_functions;
+bool g_enable_lazy_fetch{true};
 bool g_enable_runtime_query_interrupt{false};
 bool g_use_estimator_result_cache{true};
 unsigned g_pending_query_interrupt_freq{1000};
@@ -157,7 +158,7 @@ std::shared_ptr<Executor> Executor::getExecutor(
     const ExecutorId executor_id,
     const std::string& debug_dir,
     const std::string& debug_file,
-    const SystemParameters system_parameters) {
+    const SystemParameters& system_parameters) {
   INJECT_TIMER(getExecutor);
 
   mapd_unique_lock<mapd_shared_mutex> write_lock(executors_cache_mutex_);
