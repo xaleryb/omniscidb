@@ -31,7 +31,7 @@ requirements:
   host:
     - numpy
     - cython
-    - arrow-cpp =1.0
+    - arrow-cpp =2.0
     - bisonpp
     - blosc
     - boost-cpp {{ boost_cpp }}
@@ -78,7 +78,7 @@ outputs:
         - openjdk 8.*
         - xz
         - zlib
-        - arrow-cpp =1.0
+        - arrow-cpp =2.0
         - tbb {{ tbb }}
         - llvm <11
 
@@ -120,7 +120,7 @@ outputs:
         - openjdk 8.*
         - xz
         - zlib
-        - arrow-cpp =1.0
+        - arrow-cpp =2.0
         - tbb {{ tbb }}
         - {{ pin_subpackage('omniscidb-common', exact=True) }}
       run_constrained:
@@ -190,7 +190,7 @@ outputs:
         # new tbb needs glibc >= 2.14
         - sysroot_linux-64 >=2.14 # [linux]
       host:
-        - arrow-cpp =1.0
+        - arrow-cpp =2.0
         - bisonpp
         - blosc
         - boost-cpp {{ boost_cpp }}
@@ -216,11 +216,11 @@ outputs:
         - python
         - cython
         - numpy
-        - pyarrow =1.0
+        - pyarrow =2.0
         - {{ pin_subpackage('omniscidbe', exact=True) }}
       run:
         - python
-        - pyarrow =1.0
+        - pyarrow =2.0
         - tbb4py {{ tbb }}
         - {{ pin_subpackage('omniscidbe', exact=True) }}
         - {{ pin_subpackage('omniscidb-common', exact=True) }}

@@ -1028,7 +1028,8 @@ void DBHandler::sql_execute_local(
     const bool column_format,
     const std::string& nonce,
     const int32_t first_n,
-    const int32_t at_most_n) {
+    const int32_t at_most_n,
+    const bool use_calcite) {
   _return.total_time_ms = 0;
   _return.nonce = nonce;
   ParserWrapper pw{query_str};
@@ -1066,7 +1067,8 @@ void DBHandler::sql_execute_local(
                                 column_format,
                                 session_ptr->get_executor_device_type(),
                                 first_n,
-                                at_most_n);
+                                at_most_n,
+                                use_calcite);
     convert_data(
         _return, result, query_state_proxy, query_str, column_format, first_n, at_most_n);
   });
@@ -1114,8 +1116,12 @@ void DBHandler::sql_execute(TQueryResult& _return,
                             const std::string& nonce,
                             const int32_t first_n,
                             const int32_t at_most_n) {
+  const std::string exec_ra_prefix = "execute relalg";
+  const bool use_calcite = !boost::starts_with(query_str, exec_ra_prefix);
+  auto actual_query = use_calcite ? query_str
+                                  : boost::trim_copy(query_str.substr(exec_ra_prefix.size()));
   auto session_ptr = get_session_ptr(session);
-  auto query_state = create_query_state(session_ptr, query_str);
+  auto query_state = create_query_state(session_ptr, actual_query);
   auto stdlog = STDLOG(session_ptr, query_state);
   stdlog.appendNameValuePairs("client", getConnectionInfo().toString());
   stdlog.appendNameValuePairs("nonce", nonce);
@@ -1149,11 +1155,12 @@ void DBHandler::sql_execute(TQueryResult& _return,
       sql_execute_local(_return,
                         query_state->createQueryStateProxy(),
                         session_ptr,
-                        query_str,
+                        actual_query,
                         column_format,
                         nonce,
                         first_n,
-                        at_most_n);
+                        at_most_n,
+                        use_calcite);
     }
     _return.total_time_ms += process_geo_copy_from(session);
     std::string debug_json = timer.stopAndGetJson();
@@ -1188,8 +1195,13 @@ void DBHandler::sql_execute(ExecutionResult& _return,
                             const bool column_format,
                             const int32_t first_n,
                             const int32_t at_most_n) {
+  const std::string exec_ra_prefix = "execute relalg";
+  const bool use_calcite = !boost::starts_with(query_str, exec_ra_prefix);
+  auto actual_query = use_calcite ? query_str
+                                  : boost::trim_copy(query_str.substr(exec_ra_prefix.size()));
+
   auto session_ptr = get_session_ptr(session);
-  auto query_state = create_query_state(session_ptr, query_str);
+  auto query_state = create_query_state(session_ptr, actual_query);
   auto stdlog = STDLOG(session_ptr, query_state);
   auto timer = DEBUG_TIMER(__func__);
 
@@ -1208,7 +1220,8 @@ void DBHandler::sql_execute(ExecutionResult& _return,
                                   column_format,
                                   session_ptr->get_executor_device_type(),
                                   first_n,
-                                  at_most_n);
+                                  at_most_n,
+                                  use_calcite);
     });
 
     _return.setExecutionTime(total_time_ms + process_geo_copy_from(session));
@@ -5464,7 +5477,8 @@ void DBHandler::sql_execute_impl(ExecutionResult& _return,
                                  const bool column_format,
                                  const ExecutorDeviceType executor_device_type,
                                  const int32_t first_n,
-                                 const int32_t at_most_n) {
+                                 const int32_t at_most_n,
+                                 const bool use_calcite) {
   if (leaf_handler_) {
     leaf_handler_->flush_queue();
   }
@@ -5496,13 +5510,14 @@ void DBHandler::sql_execute_impl(ExecutionResult& _return,
         *legacylockmgr::LockMgr<mapd_shared_mutex, bool>::getMutex(
             legacylockmgr::ExecutorOuterLock, true));
 
-    std::string query_ra;
-    _return.addExecutionTime(measure<>::execution([&]() {
-      TPlanResult result;
-      std::tie(result, locks) =
-          parse_to_ra(query_state_proxy, query_str, {}, true, system_parameters_);
-      query_ra = result.plan_result;
-    }));
+    std::string query_ra = query_str;
+    if (use_calcite) {
+      _return.addExecutionTime(measure<>::execution([&]() {
+        TPlanResult result;
+        std::tie(result, locks) =
+            parse_to_ra(query_state_proxy, query_str, {}, true, system_parameters_);
+        query_ra = result.plan_result;
+    }));}
     std::string query_ra_calcite_explain;
     if (pw.isCalciteExplain() && (!g_enable_filter_push_down || g_cluster)) {
       // return the ra as the result

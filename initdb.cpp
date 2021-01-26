@@ -29,8 +29,6 @@
 #include "ImportExport/Importer.h"
 #include "Logger/Logger.h"
 #include "OSDependent/omnisci_path.h"
-#include "DataMgr/ForeignStorage/ForeignStorageInterface.h"
-#include "Import/Importer.h"
 #include "QueryRunner/QueryRunner.h"
 
 #define CALCITEPORT 3279

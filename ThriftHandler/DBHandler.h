@@ -651,7 +651,8 @@ class DBHandler : public OmniSciIf {
       const bool column_format,
       const std::string& nonce,
       const int32_t first_n,
-      const int32_t at_most_n);
+      const int32_t at_most_n,
+      const bool use_calcite);
 
   int64_t process_geo_copy_from(const TSessionId& session_id);
 
@@ -668,7 +669,8 @@ class DBHandler : public OmniSciIf {
                         const bool column_format,
                         const ExecutorDeviceType executor_device_type,
                         const int32_t first_n,
-                        const int32_t at_most_n);
+                        const int32_t at_most_n,
+                        const bool use_calcite);
 
   bool user_can_access_table(const Catalog_Namespace::SessionInfo&,
                              const TableDescriptor* td,
