@@ -710,28 +710,22 @@ std::shared_ptr<arrow::RecordBatch> ArrowResultSetConverter::getArrowBatch(
       const auto& column = builders[col];
       switch (column.physical_type) {
         case kTINYINT:
-          convert_column<int8_t>(
-              results_, col, entry_count, result[col]);
+          convert_column<int8_t>(results_, col, entry_count, result[col]);
           break;
         case kSMALLINT:
-          convert_column<int16_t>(
-              results_, col, entry_count, result[col]);
+          convert_column<int16_t>(results_, col, entry_count, result[col]);
           break;
         case kINT:
-          convert_column<int32_t>(
-              results_, col, entry_count, result[col]);
+          convert_column<int32_t>(results_, col, entry_count, result[col]);
           break;
         case kBIGINT:
-          convert_column<int64_t>(
-              results_, col, entry_count, result[col]);
+          convert_column<int64_t>(results_, col, entry_count, result[col]);
           break;
         case kFLOAT:
-          convert_column<float>(
-              results_, col, entry_count, result[col]);
+          convert_column<float>(results_, col, entry_count, result[col]);
           break;
         case kDOUBLE:
-          convert_column<double>(
-              results_, col, entry_count, result[col]);
+          convert_column<double>(results_, col, entry_count, result[col]);
           break;
         default:
           throw std::runtime_error(column.col_type.get_type_name() +
