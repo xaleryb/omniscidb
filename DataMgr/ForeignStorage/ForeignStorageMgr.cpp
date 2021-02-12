@@ -17,11 +17,12 @@
 #include "ForeignStorageMgr.h"
 
 #include "Catalog/ForeignTable.h"
-#include "CsvDataWrapper.h"
+#include "CsvShared.h"
 #include "ForeignStorageException.h"
 #include "ForeignTableSchema.h"
 #include "ParquetDataWrapper.h"
 
+extern bool g_enable_fsi;
 extern bool g_enable_s3_fsi;
 
 namespace foreign_storage {
@@ -142,6 +143,10 @@ bool ForeignStorageMgr::fetchBufferIfTempBufferMapEntryExists(
 void ForeignStorageMgr::getChunkMetadataVecForKeyPrefix(
     ChunkMetadataVector& chunk_metadata,
     const ChunkKey& key_prefix) {
+  if (!g_enable_fsi) {
+    throw ForeignStorageException{
+        "Query cannot be executed for foreign table because FSI is currently disabled."};
+  }
   CHECK(is_table_key(key_prefix));
   checkIfS3NeedsToBeEnabled(key_prefix);
   createDataWrapperIfNotExists(key_prefix);
@@ -201,8 +206,7 @@ bool ForeignStorageMgr::createDataWrapperIfNotExists(const ChunkKey& chunk_key) 
 
     if (foreign_table->foreign_server->data_wrapper_type ==
         foreign_storage::DataWrapperType::CSV) {
-      data_wrapper_map_[table_key] =
-          std::make_shared<CsvDataWrapper>(db_id, foreign_table);
+      data_wrapper_map_[table_key] = Csv::get_csv_data_wrapper(db_id, foreign_table);
     } else if (foreign_table->foreign_server->data_wrapper_type ==
                foreign_storage::DataWrapperType::PARQUET) {
       data_wrapper_map_[table_key] =

@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 OmniSci, Inc.
+ * Copyright 2021 OmniSci, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -91,9 +91,10 @@ float g_filter_push_down_low_frac{-1.0f};
 float g_filter_push_down_high_frac{-1.0f};
 size_t g_filter_push_down_passing_row_ubound{0};
 bool g_enable_columnar_output{false};
-bool g_enable_overlaps_hashjoin{false};
+bool g_enable_overlaps_hashjoin{true};
 bool g_enable_hashjoin_many_to_many{false};
 size_t g_overlaps_max_table_size_bytes{1024 * 1024 * 1024};
+double g_overlaps_target_entries_per_bin{1.3};
 bool g_strip_join_covered_quals{false};
 size_t g_constrained_by_in_threshold{10};
 size_t g_big_group_threshold{20000};
@@ -239,15 +240,12 @@ StringDictionaryProxy* RowSetMemoryOwner::getOrAddStringDictProxy(
   return lit_str_dict_proxy_.get();
 }
 
-quantile::TDigest* RowSetMemoryOwner::newTDigest() {
+quantile::TDigest* RowSetMemoryOwner::nullTDigest() {
   std::lock_guard<std::mutex> lock(state_mutex_);
-  auto& td = t_digests_.emplace_back(std::make_unique<quantile::TDigest>());
-  // Separating TDigests from their buffers allows for flexibile memory management.
-  // The incoming Buffer is used to collect and sort incoming data,
-  // and used as scratch space during its merging into the main Centroids buffer.
-  td->setBuffer(t_digest_buffers_.emplace_back(g_approx_quantile_buffer));
-  td->setCentroids(t_digest_buffers_.emplace_back(g_approx_quantile_centroids));
-  return td.get();
+  return t_digests_
+      .emplace_back(std::make_unique<quantile::TDigest>(
+          this, g_approx_quantile_buffer, g_approx_quantile_centroids))
+      .get();
 }
 
 bool Executor::isCPUOnly() const {
@@ -2826,9 +2824,10 @@ int32_t Executor::executePlanWithoutGroupBy(
       for (int i = 0; i < num_iterations; i++) {
         int64_t val1;
         const bool float_argument_input = takes_float_argument(agg_info);
-        if (is_distinct_target(agg_info)) {
+        if (is_distinct_target(agg_info) || agg_info.agg_kind == kAPPROX_MEDIAN) {
           CHECK(agg_info.agg_kind == kCOUNT ||
-                agg_info.agg_kind == kAPPROX_COUNT_DISTINCT);
+                agg_info.agg_kind == kAPPROX_COUNT_DISTINCT ||
+                agg_info.agg_kind == kAPPROX_MEDIAN);
           val1 = out_vec[out_vec_idx][0];
           error_code = 0;
         } else {
@@ -3254,6 +3253,19 @@ llvm::Value* Executor::castToIntPtrTyIn(llvm::Value* val, const size_t bitWidth)
 #include "StringFunctions.cpp"
 #undef EXECUTE_INCLUDE
 
+namespace {
+void add_deleted_col_to_map(PlanState::DeletedColumnsMap& deleted_cols_map,
+                            const ColumnDescriptor* deleted_cd) {
+  auto deleted_cols_it = deleted_cols_map.find(deleted_cd->tableId);
+  if (deleted_cols_it == deleted_cols_map.end()) {
+    CHECK(
+        deleted_cols_map.insert(std::make_pair(deleted_cd->tableId, deleted_cd)).second);
+  } else {
+    CHECK_EQ(deleted_cd, deleted_cols_it->second);
+  }
+}
+}  // namespace
+
 std::tuple<RelAlgExecutionUnit, PlanState::DeletedColumnsMap> Executor::addDeletedColumn(
     const RelAlgExecutionUnit& ra_exe_unit,
     const CompilationOptions& co) {
@@ -3280,19 +3292,15 @@ std::tuple<RelAlgExecutionUnit, PlanState::DeletedColumnsMap> Executor::addDelet
           input_col.get()->getScanDesc().getTableId() == deleted_cd->tableId &&
           input_col.get()->getScanDesc().getNestLevel() == input_table.getNestLevel()) {
         found = true;
+        add_deleted_col_to_map(deleted_cols_map, deleted_cd);
+        break;
       }
     }
     if (!found) {
       // add deleted column
       ra_exe_unit_with_deleted.input_col_descs.emplace_back(new InputColDescriptor(
           deleted_cd->columnId, deleted_cd->tableId, input_table.getNestLevel()));
-      auto deleted_cols_it = deleted_cols_map.find(deleted_cd->tableId);
-      if (deleted_cols_it == deleted_cols_map.end()) {
-        CHECK(deleted_cols_map.insert(std::make_pair(deleted_cd->tableId, deleted_cd))
-                  .second);
-      } else {
-        CHECK_EQ(deleted_cd, deleted_cols_it->second);
-      }
+      add_deleted_col_to_map(deleted_cols_map, deleted_cd);
     }
   }
   return std::make_tuple(ra_exe_unit_with_deleted, deleted_cols_map);

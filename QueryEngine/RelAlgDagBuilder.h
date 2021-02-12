@@ -1868,7 +1868,7 @@ class RelAlgDagBuilder : public boost::noncopyable {
             CHECK(target->second.getListOptions().size() == 1);
             double overlaps_bucket_threshold =
                 std::stod(target->second.getListOptions()[0]);
-            if (overlaps_bucket_threshold >= 0.0 && overlaps_bucket_threshold <= 1.0) {
+            if (overlaps_bucket_threshold >= 0.0 && overlaps_bucket_threshold <= 90.0) {
               query_hint_.hint_delivered = true;
               query_hint_.overlaps_bucket_threshold = overlaps_bucket_threshold;
             } else {
@@ -1891,6 +1891,12 @@ class RelAlgDagBuilder : public boost::noncopyable {
                       << overlaps_max_size
                       << ") : the hint value should be larger than or equal to zero";
             }
+            break;
+          }
+          case 3: {  // overlaps_allow_gpu_build
+            query_hint_.hint_delivered = true;
+            query_hint_.overlaps_allow_gpu_build = true;
+            VLOG(1) << "Allowing GPU hash table build for overlaps join.";
             break;
           }
           default:

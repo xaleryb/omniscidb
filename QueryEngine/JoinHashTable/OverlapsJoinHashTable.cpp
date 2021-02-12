@@ -25,13 +25,19 @@
 #include "QueryEngine/JoinHashTable/Runtime/HashJoinKeyHandlers.h"
 #include "QueryEngine/JoinHashTable/Runtime/JoinHashTableGpuUtils.h"
 
-std::unique_ptr<
-    HashTableCache<HashTableCacheKey, OverlapsJoinHashTable::HashTableCacheValue>>
+std::unique_ptr<OverlapsHashTableCache<OverlapsHashTableCacheKey,
+                                       OverlapsJoinHashTable::HashTableCacheValue>>
     OverlapsJoinHashTable::hash_table_cache_ = std::make_unique<
-        HashTableCache<HashTableCacheKey, OverlapsJoinHashTable::HashTableCacheValue>>();
+        OverlapsHashTableCache<OverlapsHashTableCacheKey,
+                               OverlapsJoinHashTable::HashTableCacheValue>>();
 
-std::map<HashTableCacheKey, double> OverlapsJoinHashTable::auto_tuner_cache_;
-std::mutex OverlapsJoinHashTable::auto_tuner_cache_mutex_;
+std::unique_ptr<HashTableCache<HashTableCacheKey,
+                               std::pair<OverlapsJoinHashTable::BucketThreshold,
+                                         OverlapsJoinHashTable::BucketSizes>>>
+    OverlapsJoinHashTable::auto_tuner_cache_ =
+        std::make_unique<HashTableCache<HashTableCacheKey,
+                                        std::pair<OverlapsJoinHashTable::BucketThreshold,
+                                                  OverlapsJoinHashTable::BucketSizes>>>();
 
 //! Make hash table from an in-flight SQL query's parse tree etc.
 std::shared_ptr<OverlapsJoinHashTable> OverlapsJoinHashTable::getInstance(
@@ -81,17 +87,10 @@ std::shared_ptr<OverlapsJoinHashTable> OverlapsJoinHashTable::getInstance(
   if (total_entries > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
     throw TooManyHashEntries();
   }
-  const auto shard_count = memory_level == Data_Namespace::GPU_LEVEL
-                               ? BaselineJoinHashTable::getShardCountForCondition(
-                                     condition.get(), executor, inner_outer_pairs)
-                               : 0;
-  const auto entries_per_device =
-      get_entries_per_device(total_entries, shard_count, device_count, memory_level);
+
   auto join_hash_table = std::make_shared<OverlapsJoinHashTable>(condition,
                                                                  query_infos,
                                                                  memory_level,
-                                                                 layout,
-                                                                 entries_per_device,
                                                                  column_cache,
                                                                  executor,
                                                                  inner_outer_pairs,
@@ -123,6 +122,127 @@ std::shared_ptr<OverlapsJoinHashTable> OverlapsJoinHashTable::getInstance(
   return join_hash_table;
 }
 
+namespace {
+
+void compute_bucket_sizes(std::vector<double>& bucket_sizes_for_dimension,
+                          const double bucket_threshold,
+                          const Data_Namespace::MemoryLevel effective_memory_level,
+                          const JoinColumn& join_column,
+                          const JoinColumnTypeInfo& join_column_type,
+                          const std::vector<InnerOuter>& inner_outer_pairs,
+                          const Executor* executor) {
+  // No coalesced keys for overlaps joins yet
+  CHECK_EQ(inner_outer_pairs.size(), 1u);
+
+  const auto col = inner_outer_pairs[0].first;
+  CHECK(col);
+  const auto col_ti = col->get_type_info();
+  CHECK(col_ti.is_array());
+
+  // TODO: Compute the number of dimensions for this overlaps key
+  const int num_dims = 2;
+  std::vector<double> local_bucket_sizes(num_dims, std::numeric_limits<double>::max());
+
+  VLOG(1)
+      << "Computing x and y bucket sizes for overlaps hash join with minimum bucket size "
+      << std::to_string(bucket_threshold);
+
+  if (effective_memory_level == Data_Namespace::MemoryLevel::CPU_LEVEL) {
+    const int thread_count = cpu_threads();
+    compute_bucket_sizes_on_cpu(local_bucket_sizes,
+                                join_column,
+                                join_column_type,
+                                bucket_threshold,
+                                thread_count);
+  }
+#ifdef HAVE_CUDA
+  else {
+    // Note that we compute the bucket sizes using only a single GPU
+    const int device_id = 0;
+    auto& data_mgr = executor->getCatalog()->getDataMgr();
+    CudaAllocator allocator(&data_mgr, device_id);
+    auto device_bucket_sizes_gpu =
+        transfer_vector_of_flat_objects_to_gpu(local_bucket_sizes, allocator);
+    auto join_column_gpu = transfer_flat_object_to_gpu(join_column, allocator);
+    auto join_column_type_gpu = transfer_flat_object_to_gpu(join_column_type, allocator);
+
+    compute_bucket_sizes_on_device(
+        device_bucket_sizes_gpu, join_column_gpu, join_column_type_gpu, bucket_threshold);
+    allocator.copyFromDevice(reinterpret_cast<int8_t*>(local_bucket_sizes.data()),
+                             reinterpret_cast<int8_t*>(device_bucket_sizes_gpu),
+                             local_bucket_sizes.size() * sizeof(double));
+  }
+#endif
+
+  size_t ctr = 0;
+  for (auto& bucket_sz : local_bucket_sizes) {
+    VLOG(1) << "Computed bucket size for dim[" << ctr++ << "]: " << bucket_sz;
+    bucket_sizes_for_dimension.push_back(1.0 / bucket_sz);
+  }
+
+  return;
+}
+
+struct BucketSizeTuner {
+  BucketSizeTuner(const double bucket_threshold,
+                  const double step,
+                  const double min_threshold)
+      : bucket_threshold(bucket_threshold * step)
+      , step(step)
+      , min_threshold(min_threshold) {}
+
+  bool operator()(const std::vector<double> last_iteration_bucket_sizes) {
+    bucket_threshold /= step;
+    if (!last_iteration_bucket_sizes.empty() &&
+        last_iteration_bucket_sizes == previous_bucket_sizes) {
+      // abort the tuning if the bucket size does not change. note that this will always
+      // run at least two steps, as the first step will have no computed bucket sizes
+      VLOG(1) << "Aborting overlaps tuning as bucket size is no longer changing.";
+      return false;
+    }
+    num_steps++;
+
+    previous_bucket_sizes = last_iteration_bucket_sizes;
+
+    return bucket_threshold >= min_threshold;
+  }
+
+  std::vector<double> computeBucketSizes(
+      const Data_Namespace::MemoryLevel effective_memory_level,
+      std::vector<ColumnsForDevice>& columns_per_device,
+      const std::vector<InnerOuter>& inner_outer_pairs,
+      const size_t device_count,
+      const Executor* executor) {
+    // compute bucket info for the current threshold value
+    CHECK(!columns_per_device.empty());
+    std::vector<double> bucket_sizes_for_dimension;
+    compute_bucket_sizes(bucket_sizes_for_dimension,
+                         bucket_threshold,
+                         effective_memory_level,
+                         columns_per_device.front().join_columns[0],
+                         columns_per_device.front().join_column_types[0],
+                         inner_outer_pairs,
+                         executor);
+    return bucket_sizes_for_dimension;
+  }
+
+  double bucket_threshold;
+  size_t num_steps{0};
+  const double step;
+  const double min_threshold;
+
+  std::vector<double> previous_bucket_sizes;
+};
+
+std::ostream& operator<<(std::ostream& os, const BucketSizeTuner& tuner) {
+  os << "Step Num: " << tuner.num_steps << ", Threshold: " << std::fixed
+     << tuner.bucket_threshold << ", Step Size: " << std::fixed << tuner.step
+     << ", Min: " << std::fixed << tuner.min_threshold;
+  return os;
+}
+
+}  // namespace
+
 void OverlapsJoinHashTable::reifyWithLayout(const HashType layout) {
   auto timer = DEBUG_TIMER(__func__);
   CHECK(layoutRequiresAdditionalBuffers(layout));
@@ -135,24 +255,24 @@ void OverlapsJoinHashTable::reifyWithLayout(const HashType layout) {
     return;
   }
 
+  const double default_overlaps_bucket_threshold = 0.1;
   auto overlaps_max_table_size_bytes = g_overlaps_max_table_size_bytes;
-  bool use_user_given_bucket_threshold = false;
+  std::optional<double> overlaps_threshold_override;
   auto query_hint = getRegisteredQueryHint();
   if (query_hint.hint_delivered) {
-    if (query_hint.overlaps_bucket_threshold != overlaps_hashjoin_bucket_threshold_) {
-      VLOG(1) << "User changes a threshold \'overlaps_hashjoin_bucket_threshold\' via "
+    if (query_hint.overlaps_bucket_threshold != default_overlaps_bucket_threshold) {
+      VLOG(1) << "Setting overlaps bucket threshold "
+                 "\'overlaps_hashjoin_bucket_threshold\' via "
                  "query hint: "
-              << overlaps_hashjoin_bucket_threshold_ << " -> "
               << query_hint.overlaps_bucket_threshold;
-      overlaps_hashjoin_bucket_threshold_ = query_hint.overlaps_bucket_threshold;
-      use_user_given_bucket_threshold = true;
+      overlaps_threshold_override = query_hint.overlaps_bucket_threshold;
     }
     if (query_hint.overlaps_max_size != overlaps_max_table_size_bytes) {
       std::ostringstream oss;
       oss << "User requests to change a threshold \'overlaps_max_table_size_bytes\' via "
              "query hint: "
           << overlaps_max_table_size_bytes << " -> " << query_hint.overlaps_max_size;
-      if (!use_user_given_bucket_threshold) {
+      if (!overlaps_threshold_override.has_value()) {
         overlaps_max_table_size_bytes = query_hint.overlaps_max_size;
       } else {
         oss << ", but is skipped since the query hint also changes the threshold "
@@ -190,10 +310,6 @@ void OverlapsJoinHashTable::reifyWithLayout(const HashType layout) {
   // Prepare to calculate the size of the hash table.
   const auto composite_key_info =
       HashJoin::getCompositeKeyInfo(inner_outer_pairs_, executor_);
-  HashTableCacheKey cache_key{columns_per_device.front().join_columns.front().num_elems,
-                              composite_key_info.cache_key_chunks,
-                              condition_->get_optype()};
-  bucket_sizes_for_dimension_.clear();
 
   auto cache_key_contains_intermediate_table = [](const auto cache_key) {
     for (auto key : cache_key.chunk_keys) {
@@ -205,104 +321,181 @@ void OverlapsJoinHashTable::reifyWithLayout(const HashType layout) {
     return false;
   };
 
-  // Auto-tuner: Pre-calculate some possible hash table sizes.
-  std::lock_guard<std::mutex> guard(auto_tuner_cache_mutex_);
-  if (!use_user_given_bucket_threshold) {
-    // auto-tuning is valid iff no query hint is delivered to change bucket threshold
-    auto atc = auto_tuner_cache_.find(cache_key);
-    if (atc != auto_tuner_cache_.end()) {
-      overlaps_hashjoin_bucket_threshold_ = atc->second;
+  if (overlaps_threshold_override) {
+    // compute bucket sizes based on the user provided threshold
+    BucketSizeTuner tuner(
+        *overlaps_threshold_override, /*step=*/1.0, /*min_threshold=*/0.0);
+    auto bucket_sizes =
+        tuner.computeBucketSizes(getEffectiveMemoryLevel(inner_outer_pairs_),
+                                 columns_per_device,
+                                 inner_outer_pairs_,
+                                 device_count_,
+                                 executor_);
+
+    auto [entry_count, emitted_keys_count] =
+        computeHashTableCounts(shard_count, bucket_sizes, columns_per_device);
+    setBucketSizeInfo(bucket_sizes, columns_per_device, device_count_);
+    // reifyImpl will check the hash table cache for an appropriate hash table w/ those
+    // bucket sizes (or within tolerances) if a hash table exists use it, otherwise build
+    // one
+    reifyImpl(columns_per_device,
+              query_info,
+              layout,
+              shard_count,
+              entry_count,
+              emitted_keys_count);
+  } else {
+    HashTableCacheKey cache_key{columns_per_device.front().join_columns.front().num_elems,
+                                composite_key_info.cache_key_chunks,
+                                condition_->get_optype()};
+    double overlaps_bucket_threshold = -1;
+    auto cached_bucket_threshold_opt = auto_tuner_cache_->get(cache_key);
+    if (cached_bucket_threshold_opt) {
+      overlaps_bucket_threshold = cached_bucket_threshold_opt->first;
       VLOG(1) << "Auto tuner using cached overlaps hash table size of: "
-              << overlaps_hashjoin_bucket_threshold_;
+              << overlaps_bucket_threshold;
+      auto bucket_sizes = cached_bucket_threshold_opt->second;
+
+      OverlapsHashTableCacheKey hash_table_cache_key(cache_key, bucket_sizes);
+      if (auto hash_table_cache_opt =
+              hash_table_cache_->getWithKey(hash_table_cache_key)) {
+        // if we already have a built hash table, we can skip the scans required for
+        // computing bucket size and tuple count
+        auto key = hash_table_cache_opt->first;
+        // reset as the hash table sizes can vary a bit
+        setBucketSizeInfo(key.bucket_sizes, columns_per_device, device_count_);
+        auto hash_table = hash_table_cache_opt->second;
+        CHECK(hash_table);
+
+        VLOG(1) << "Using cached hash table bucket size";
+
+        reifyImpl(columns_per_device,
+                  query_info,
+                  layout,
+                  shard_count,
+                  hash_table->getEntryCount(),
+                  hash_table->getEmittedKeysCount());
+      } else {
+        VLOG(1) << "Computing bucket size for cached bucket threshold";
+        // compute bucket size using our cached tuner value
+        BucketSizeTuner tuner(
+            overlaps_bucket_threshold, /*step=*/1, /*min_threshold=*/0.0);
+
+        auto bucket_sizes =
+            tuner.computeBucketSizes(getEffectiveMemoryLevel(inner_outer_pairs_),
+                                     columns_per_device,
+                                     inner_outer_pairs_,
+                                     device_count_,
+                                     executor_);
+
+        auto [entry_count, emitted_keys_count] =
+            computeHashTableCounts(shard_count, bucket_sizes, columns_per_device);
+        setBucketSizeInfo(bucket_sizes, columns_per_device, device_count_);
+
+        reifyImpl(columns_per_device,
+                  query_info,
+                  layout,
+                  shard_count,
+                  entry_count,
+                  emitted_keys_count);
+      }
     } else {
-      VLOG(1) << "Auto tuning for the overlaps hash table size:";
+      // compute bucket size using the auto tuner
+
       // TODO(jclay): Currently, joining on large poly sets
       // will lead to lengthy construction times (and large hash tables)
       // tune this to account for the characteristics of the data being joined.
-      const double min_threshold{1e-5};
-      const double max_threshold{1};
-      double good_threshold{max_threshold};
-      for (double threshold = max_threshold; threshold >= min_threshold;
-           threshold /= 10.0) {
-        overlaps_hashjoin_bucket_threshold_ = threshold;
-        size_t entry_count;
-        size_t emitted_keys_count;
-        std::tie(entry_count, emitted_keys_count) =
-            calculateCounts(shard_count, query_info, columns_per_device);
-        size_t hash_table_size = calculateHashTableSize(
-            bucket_sizes_for_dimension_.size(), emitted_keys_count, entry_count);
-        bucket_sizes_for_dimension_.clear();
-        VLOG(1) << "Calculated bin threshold of " << std::fixed << threshold
-                << " giving: entry count " << entry_count << " hash table size "
-                << hash_table_size;
-        if (hash_table_size <= overlaps_max_table_size_bytes) {
-          good_threshold = overlaps_hashjoin_bucket_threshold_;
-        } else {
-          VLOG(1) << "Rejected bin threshold of " << std::fixed << threshold;
+      size_t entry_count{0};
+      size_t emitted_keys_count{0};
+      double chosen_overlaps_threshold{-1};
+      double last_keys_per_bin{-1};
+      const size_t max_hash_table_size_for_uncapped_min_keys_per_bin{2097152};  // 2MB
+
+      BucketSizeTuner tuner(
+          /*initial_threshold=*/1.0, /*step=*/2.0, /*min_threshold=*/1e-7);
+      VLOG(1) << "Running overlaps join size auto tune with parameters: " << tuner;
+
+      std::vector<double> bucket_sizes;
+      while (tuner(bucket_sizes)) {
+        bucket_sizes =
+            tuner.computeBucketSizes(getEffectiveMemoryLevel(inner_outer_pairs_),
+                                     columns_per_device,
+                                     inner_outer_pairs_,
+                                     device_count_,
+                                     executor_);
+        const auto [crt_entry_count, crt_emitted_keys_count] =
+            computeHashTableCounts(shard_count, bucket_sizes, columns_per_device);
+
+        const size_t hash_table_size = calculateHashTableSize(
+            bucket_sizes.size(), crt_emitted_keys_count, crt_entry_count);
+        const double keys_per_bin = crt_emitted_keys_count / (crt_entry_count / 2.0);
+        VLOG(1) << "Tuner output: " << tuner << " giving entry_count: " << crt_entry_count
+                << ", emitted_keys " << crt_emitted_keys_count << ", hash table size "
+                << hash_table_size << ", keys per bin " << keys_per_bin;
+
+        // decision points for termination prior to reaching the minimum threshold
+        const bool previous_iteration_valid =
+            last_keys_per_bin > 0 && chosen_overlaps_threshold > 0;
+        const bool hash_table_too_big = hash_table_size > overlaps_max_table_size_bytes;
+        const bool keys_per_bin_increasing = keys_per_bin > last_keys_per_bin;
+        if (previous_iteration_valid && (hash_table_too_big || keys_per_bin_increasing)) {
+          if (hash_table_too_big) {
+            VLOG(1) << "Reached hash table size limit: " << overlaps_max_table_size_bytes
+                    << " with " << hash_table_size << " byte hash table, " << keys_per_bin
+                    << " keys per bin.";
+          } else if (keys_per_bin_increasing) {
+            VLOG(1) << "Keys per bin increasing from " << last_keys_per_bin << " to "
+                    << keys_per_bin;
+          }
+          VLOG(1) << "Using previous threshold value " << chosen_overlaps_threshold;
+          // reset bucket size info, as it will get overwriten with calculate counts above
+          setBucketSizeInfo(
+              bucket_sizes_for_dimension_, columns_per_device, device_count_);
+          break;
+        }
+        chosen_overlaps_threshold = tuner.bucket_threshold;
+        last_keys_per_bin = keys_per_bin;
+        setBucketSizeInfo(bucket_sizes, columns_per_device, device_count_);
+        entry_count = crt_entry_count;
+        emitted_keys_count = crt_emitted_keys_count;
+        const bool keys_per_bin_under_threshold =
+            hash_table_size > max_hash_table_size_for_uncapped_min_keys_per_bin &&
+            keys_per_bin < g_overlaps_target_entries_per_bin;
+        if (keys_per_bin_under_threshold) {
+          VLOG(1) << "Hash table reached size " << hash_table_size << " over threshold "
+                  << max_hash_table_size_for_uncapped_min_keys_per_bin
+                  << " with keys per bin " << keys_per_bin << " under threshold "
+                  << g_overlaps_target_entries_per_bin
+                  << ". Terminating bucket size loop.";
           break;
         }
       }
-      overlaps_hashjoin_bucket_threshold_ = good_threshold;
-      if (!cache_key_contains_intermediate_table(cache_key)) {
-        auto_tuner_cache_[cache_key] = overlaps_hashjoin_bucket_threshold_;
+      const size_t hash_table_size = calculateHashTableSize(
+          bucket_sizes_for_dimension_.size(), emitted_keys_count, entry_count);
+      const double keys_per_bin = emitted_keys_count / (entry_count / 2.0);
+      VLOG(1) << "Final tuner output: " << tuner << " giving entry_count: " << entry_count
+              << ", emitted_keys_count " << emitted_keys_count << " hash table size "
+              << hash_table_size << ", keys per bin " << keys_per_bin;
+      CHECK(!bucket_sizes_for_dimension_.empty());
+      VLOG(1) << "Final bucket sizes: ";
+      for (size_t dim = 0; dim < bucket_sizes_for_dimension_.size(); dim++) {
+        VLOG(1) << "dim[" << dim << "]: " << 1.0 / bucket_sizes_for_dimension_[dim];
       }
+      CHECK_GE(chosen_overlaps_threshold, double(0));
+      if (!cache_key_contains_intermediate_table(cache_key)) {
+        auto cache_value =
+            std::make_pair(chosen_overlaps_threshold, bucket_sizes_for_dimension_);
+        auto_tuner_cache_->insert(cache_key, cache_value);
+      }
+
+      reifyImpl(columns_per_device,
+                query_info,
+                layout,
+                shard_count,
+                entry_count,
+                emitted_keys_count);
     }
   }
-
-  // Calculate the final size of the hash table.
-  VLOG(1) << "Accepted bin threshold of " << std::fixed
-          << overlaps_hashjoin_bucket_threshold_;
-  auto [entry_count, emitted_keys_count] =
-      calculateCounts(shard_count, query_info, columns_per_device);
-  size_t hash_table_size = calculateHashTableSize(
-      bucket_sizes_for_dimension_.size(), emitted_keys_count, entry_count);
-  VLOG(1) << "Finalized overlaps hashjoin bucket threshold of " << std::fixed
-          << overlaps_hashjoin_bucket_threshold_ << " giving: entry count " << entry_count
-          << " hash table size " << hash_table_size;
-
-  std::vector<std::future<void>> init_threads;
-  for (int device_id = 0; device_id < device_count_; ++device_id) {
-    const auto fragments =
-        shard_count
-            ? only_shards_for_device(query_info.fragments, device_id, device_count_)
-            : query_info.fragments;
-    init_threads.push_back(std::async(std::launch::async,
-                                      &OverlapsJoinHashTable::reifyForDevice,
-                                      this,
-                                      columns_per_device[device_id],
-                                      layout,
-                                      entry_count,
-                                      emitted_keys_count,
-                                      device_id,
-                                      logger::thread_id()));
-  }
-  for (auto& init_thread : init_threads) {
-    init_thread.wait();
-  }
-  for (auto& init_thread : init_threads) {
-    init_thread.get();
-  }
-}
-
-std::pair<size_t, size_t> OverlapsJoinHashTable::calculateCounts(
-    size_t shard_count,
-    const Fragmenter_Namespace::TableInfo& query_info,
-    std::vector<ColumnsForDevice>& columns_per_device) {
-  // re-compute bucket counts per device based on global bucket size
-  CHECK_EQ(columns_per_device.size(), size_t(device_count_));
-  for (int device_id = 0; device_id < device_count_; ++device_id) {
-    auto& columns_for_device = columns_per_device[device_id];
-    columns_for_device.join_buckets = computeBucketInfo(
-        columns_for_device.join_columns, columns_for_device.join_column_types, device_id);
-  }
-  size_t tuple_count;
-  size_t emitted_keys_count;
-  std::tie(tuple_count, emitted_keys_count) = approximateTupleCount(columns_per_device);
-  const auto entry_count = 2 * std::max(tuple_count, size_t(1));
-
-  return std::make_pair(
-      get_entries_per_device(entry_count, shard_count, device_count_, memory_level_),
-      emitted_keys_count);
 }
 
 size_t OverlapsJoinHashTable::calculateHashTableSize(size_t number_of_dimensions,
@@ -355,39 +548,26 @@ ColumnsForDevice OverlapsJoinHashTable::fetchColumnsForDevice(
                                                       get_join_column_type_kind(ti)});
     CHECK(ti.is_array()) << "Overlaps join currently only supported for arrays.";
   }
-  // compute initial bucket info
-  auto join_bucket_info = computeBucketInfo(join_columns, join_column_types, device_id);
-  return {join_columns, join_column_types, chunks_owner, join_bucket_info, malloc_owner};
+  return {join_columns, join_column_types, chunks_owner, {}, malloc_owner};
 }
 
-std::vector<JoinBucketInfo> OverlapsJoinHashTable::computeBucketInfo(
-    const std::vector<JoinColumn>& join_columns,
-    const std::vector<JoinColumnTypeInfo>& join_column_types,
-    const int device_id) {
-  std::vector<JoinBucketInfo> join_bucket_info;
-  CHECK_EQ(inner_outer_pairs_.size(), join_columns.size());
-  CHECK_EQ(join_columns.size(), join_column_types.size());
-  for (size_t i = 0; i < join_columns.size(); i++) {
-    const auto& inner_outer_pair = inner_outer_pairs_[i];
-    const auto inner_col = inner_outer_pair.first;
-    const auto& ti = inner_col->get_type_info();
-    const auto elem_ti = ti.get_elem_type();
-    CHECK(elem_ti.is_fp());
+std::pair<size_t, size_t> OverlapsJoinHashTable::computeHashTableCounts(
+    const size_t shard_count,
+    const std::vector<double>& bucket_sizes_for_dimension,
+    std::vector<ColumnsForDevice>& columns_per_device) {
+  CHECK(!bucket_sizes_for_dimension.empty());
+  const auto [tuple_count, emitted_keys_count] =
+      approximateTupleCount(bucket_sizes_for_dimension, columns_per_device);
+  const auto entry_count = 2 * std::max(tuple_count, size_t(1));
 
-    if (bucket_sizes_for_dimension_.empty()) {
-      computeBucketSizes(bucket_sizes_for_dimension_,
-                         join_columns[i],
-                         join_column_types[i],
-                         inner_outer_pairs_);
-    }
-    join_bucket_info.emplace_back(
-        JoinBucketInfo{bucket_sizes_for_dimension_, elem_ti.get_type() == kDOUBLE});
-  }
-  return join_bucket_info;
+  return std::make_pair(
+      get_entries_per_device(entry_count, shard_count, device_count_, memory_level_),
+      emitted_keys_count);
 }
 
 std::pair<size_t, size_t> OverlapsJoinHashTable::approximateTupleCount(
-    const std::vector<ColumnsForDevice>& columns_per_device) const {
+    const std::vector<double>& bucket_sizes_for_dimension,
+    std::vector<ColumnsForDevice>& columns_per_device) {
   const auto effective_memory_level = getEffectiveMemoryLevel(inner_outer_pairs_);
   CountDistinctDescriptor count_distinct_desc{
       CountDistinctImplType::Bitmap,
@@ -402,23 +582,35 @@ std::pair<size_t, size_t> OverlapsJoinHashTable::approximateTupleCount(
 
   CHECK(!columns_per_device.empty() && !columns_per_device.front().join_columns.empty());
   if (columns_per_device.front().join_columns.front().num_elems == 0) {
-    return {0, 0};
+    return std::make_pair(0, 0);
   }
+
+  // TODO: state management in here should be revisited, but this should be safe enough
+  // for now
+  // re-compute bucket counts per device based on global bucket size
+  for (size_t device_id = 0; device_id < columns_per_device.size(); ++device_id) {
+    auto& columns_for_device = columns_per_device[device_id];
+    columns_for_device.setBucketInfo(bucket_sizes_for_dimension, inner_outer_pairs_);
+  }
+
   // Number of keys must match dimension of buckets
   CHECK_EQ(columns_per_device.front().join_columns.size(),
            columns_per_device.front().join_buckets.size());
   if (effective_memory_level == Data_Namespace::MemoryLevel::CPU_LEVEL) {
+    // Note that this path assumes each device has the same hash table (for GPU hash join
+    // w/ hash table built on CPU)
     const auto composite_key_info =
         HashJoin::getCompositeKeyInfo(inner_outer_pairs_, executor_);
-    HashTableCacheKey cache_key{columns_per_device.front().join_columns.front().num_elems,
-                                composite_key_info.cache_key_chunks,
-                                condition_->get_optype(),
-                                overlaps_hashjoin_bucket_threshold_};
+    OverlapsHashTableCacheKey cache_key{
+        columns_per_device.front().join_columns.front().num_elems,
+        composite_key_info.cache_key_chunks,
+        condition_->get_optype(),
+        bucket_sizes_for_dimension};
     const auto cached_count_info = getApproximateTupleCountFromCache(cache_key);
-    if (cached_count_info.first) {
-      VLOG(1) << "Using a cached tuple count: " << *cached_count_info.first
-              << ", emitted keys count: " << cached_count_info.second;
-      return std::make_pair(*cached_count_info.first, cached_count_info.second);
+    if (cached_count_info) {
+      VLOG(1) << "Using a cached tuple count: " << cached_count_info->first
+              << ", emitted keys count: " << cached_count_info->second;
+      return *cached_count_info;
     }
     int thread_count = cpu_threads();
     std::vector<uint8_t> hll_buffer_all_cpus(thread_count * padded_size_bytes);
@@ -426,7 +618,6 @@ std::pair<size_t, size_t> OverlapsJoinHashTable::approximateTupleCount(
 
     std::vector<int32_t> num_keys_for_row;
     // TODO(adb): support multi-column overlaps join
-    CHECK_EQ(columns_per_device.size(), 1u);
     num_keys_for_row.resize(columns_per_device.front().join_columns[0].num_elems);
 
     approximate_distinct_tuples_overlaps(hll_result,
@@ -442,8 +633,9 @@ std::pair<size_t, size_t> OverlapsJoinHashTable::approximateTupleCount(
                 hll_result + i * padded_size_bytes,
                 1 << count_distinct_desc.bitmap_sz_bits);
     }
-    return std::make_pair(hll_size(hll_result, count_distinct_desc.bitmap_sz_bits),
-                          num_keys_for_row.size() > 0 ? num_keys_for_row.back() : 0);
+    return std::make_pair(
+        hll_size(hll_result, count_distinct_desc.bitmap_sz_bits),
+        static_cast<size_t>(num_keys_for_row.size() > 0 ? num_keys_for_row.back() : 0));
   }
 #ifdef HAVE_CUDA
   auto& data_mgr = executor_->getCatalog()->getDataMgr();
@@ -541,11 +733,27 @@ std::pair<size_t, size_t> OverlapsJoinHashTable::approximateTupleCount(
 #endif  // HAVE_CUDA
 }
 
+void OverlapsJoinHashTable::setBucketSizeInfo(
+    const std::vector<double>& bucket_sizes,
+    std::vector<ColumnsForDevice>& columns_per_device,
+    const size_t device_count) {
+  // set global bucket size
+  bucket_sizes_for_dimension_ = bucket_sizes;
+
+  // re-compute bucket counts per device based on global bucket size
+  CHECK_EQ(columns_per_device.size(), size_t(device_count));
+  for (size_t device_id = 0; device_id < device_count; ++device_id) {
+    auto& columns_for_device = columns_per_device[device_id];
+    columns_for_device.setBucketInfo(bucket_sizes_for_dimension_, inner_outer_pairs_);
+  }
+}
+
 size_t OverlapsJoinHashTable::getKeyComponentWidth() const {
   return 8;
 }
 
 size_t OverlapsJoinHashTable::getKeyComponentCount() const {
+  CHECK(!bucket_sizes_for_dimension_.empty());
   return bucket_sizes_for_dimension_.size();
 }
 
@@ -573,6 +781,36 @@ void OverlapsJoinHashTable::reify(const HashType preferred_layout) {
   }
 }
 
+void OverlapsJoinHashTable::reifyImpl(std::vector<ColumnsForDevice>& columns_per_device,
+                                      const Fragmenter_Namespace::TableInfo& query_info,
+                                      const HashType layout,
+                                      const size_t shard_count,
+                                      const size_t entry_count,
+                                      const size_t emitted_keys_count) {
+  std::vector<std::future<void>> init_threads;
+  for (int device_id = 0; device_id < device_count_; ++device_id) {
+    const auto fragments =
+        shard_count
+            ? only_shards_for_device(query_info.fragments, device_id, device_count_)
+            : query_info.fragments;
+    init_threads.push_back(std::async(std::launch::async,
+                                      &OverlapsJoinHashTable::reifyForDevice,
+                                      this,
+                                      columns_per_device[device_id],
+                                      layout,
+                                      entry_count,
+                                      emitted_keys_count,
+                                      device_id,
+                                      logger::thread_id()));
+  }
+  for (auto& init_thread : init_threads) {
+    init_thread.wait();
+  }
+  for (auto& init_thread : init_threads) {
+    init_thread.get();
+  }
+}
+
 void OverlapsJoinHashTable::reifyForDevice(const ColumnsForDevice& columns_for_device,
                                            const HashType layout,
                                            const size_t entry_count,
@@ -585,55 +823,48 @@ void OverlapsJoinHashTable::reifyForDevice(const ColumnsForDevice& columns_for_d
   const auto effective_memory_level = getEffectiveMemoryLevel(inner_outer_pairs_);
 
   if (effective_memory_level == Data_Namespace::MemoryLevel::CPU_LEVEL) {
-    initHashTableOnCpu(columns_for_device.join_columns,
-                       columns_for_device.join_column_types,
-                       columns_for_device.join_buckets,
-                       layout,
-                       entry_count,
-                       emitted_keys_count);
-  } else {
-    // TODO(adb): 4 byte keys
+    VLOG(1) << "Building overlaps join hash table on CPU.";
+    auto hash_table = initHashTableOnCpu(columns_for_device.join_columns,
+                                         columns_for_device.join_column_types,
+                                         columns_for_device.join_buckets,
+                                         layout,
+                                         entry_count,
+                                         emitted_keys_count);
+    CHECK(hash_table);
 
 #ifdef HAVE_CUDA
-    const auto catalog = executor_->getCatalog();
-    CHECK(catalog);
-    BaselineJoinHashTableBuilder builder(catalog);
-
-    auto& data_mgr = catalog->getDataMgr();
-    CudaAllocator allocator(&data_mgr, device_id);
-    auto join_columns_gpu = transfer_vector_of_flat_objects_to_gpu(
-        columns_for_device.join_columns, allocator);
-    CHECK_EQ(columns_for_device.join_columns.size(), 1u);
-    CHECK(!columns_for_device.join_buckets.empty());
-    auto& bucket_sizes_for_dimension =
-        columns_for_device.join_buckets[0].bucket_sizes_for_dimension;
-    auto bucket_sizes_gpu =
-        transfer_vector_of_flat_objects_to_gpu(bucket_sizes_for_dimension, allocator);
-    const auto key_handler = OverlapsKeyHandler(
-        bucket_sizes_for_dimension.size(), join_columns_gpu, bucket_sizes_gpu);
-
-    const auto err = builder.initHashTableOnGpu(&key_handler,
-                                                columns_for_device.join_columns,
-                                                layout,
-                                                getKeyComponentWidth(),
-                                                getKeyComponentCount(),
-                                                entry_count,
-                                                emitted_keys_count,
-                                                device_id);
-    if (err) {
-      throw HashJoinFail(
-          std::string("Unrecognized error when initializing overlaps hash table (") +
-          std::to_string(err) + std::string(")"));
+    if (memory_level_ == Data_Namespace::MemoryLevel::GPU_LEVEL) {
+      auto gpu_hash_table = copyCpuHashTableToGpu(
+          std::move(hash_table), layout, entry_count, emitted_keys_count, device_id);
+      CHECK_LT(size_t(device_id), hash_tables_for_device_.size());
+      hash_tables_for_device_[device_id] = std::move(gpu_hash_table);
+    } else {
+#else
+    CHECK_EQ(Data_Namespace::CPU_LEVEL, effective_memory_level);
+#endif
+      CHECK_EQ(hash_tables_for_device_.size(), size_t(1));
+      hash_tables_for_device_[0] = std::move(hash_table);
+#ifdef HAVE_CUDA
     }
+#endif
+  } else {
+#ifdef HAVE_CUDA
+    auto hash_table = initHashTableOnGpu(columns_for_device.join_columns,
+                                         columns_for_device.join_column_types,
+                                         columns_for_device.join_buckets,
+                                         layout,
+                                         entry_count,
+                                         emitted_keys_count,
+                                         device_id);
     CHECK_LT(size_t(device_id), hash_tables_for_device_.size());
-    hash_tables_for_device_[device_id] = builder.getHashTable();
+    hash_tables_for_device_[device_id] = std::move(hash_table);
 #else
     UNREACHABLE();
 #endif
   }
 }
 
-void OverlapsJoinHashTable::initHashTableOnCpu(
+std::shared_ptr<BaselineHashTable> OverlapsJoinHashTable::initHashTableOnCpu(
     const std::vector<JoinColumn>& join_columns,
     const std::vector<JoinColumnTypeInfo>& join_column_types,
     const std::vector<JoinBucketInfo>& join_bucket_info,
@@ -645,21 +876,23 @@ void OverlapsJoinHashTable::initHashTableOnCpu(
       HashJoin::getCompositeKeyInfo(inner_outer_pairs_, executor_);
   CHECK(!join_columns.empty());
   CHECK(!join_bucket_info.empty());
-  HashTableCacheKey cache_key{join_columns.front().num_elems,
-                              composite_key_info.cache_key_chunks,
-                              condition_->get_optype(),
-                              overlaps_hashjoin_bucket_threshold_};
+  OverlapsHashTableCacheKey cache_key{join_columns.front().num_elems,
+                                      composite_key_info.cache_key_chunks,
+                                      condition_->get_optype(),
+                                      bucket_sizes_for_dimension_};
 
-  if (auto hash_table = initHashTableOnCpuFromCache(cache_key)) {
-    // See if a hash table of a different layout was returned.
-    // If it was OneToMany, we can reuse it on ManyToMany.
-    if (layout == HashType::ManyToMany &&
-        hash_table->getLayout() == HashType::OneToMany) {
-      // use the cached hash table
-      layout_override_ = HashType::ManyToMany;
-      CHECK_GT(hash_tables_for_device_.size(), size_t(0));
-      hash_tables_for_device_[0] = hash_table;
-      return;
+  std::lock_guard<std::mutex> cpu_hash_table_buff_lock(cpu_hash_table_buff_mutex_);
+  if (auto generic_hash_table = initHashTableOnCpuFromCache(cache_key)) {
+    if (auto hash_table =
+            std::dynamic_pointer_cast<BaselineHashTable>(generic_hash_table)) {
+      // See if a hash table of a different layout was returned.
+      // If it was OneToMany, we can reuse it on ManyToMany.
+      if (layout == HashType::ManyToMany &&
+          hash_table->getLayout() == HashType::OneToMany) {
+        // use the cached hash table
+        layout_override_ = HashType::ManyToMany;
+        return hash_table;
+      }
     }
   }
   CHECK(layoutRequiresAdditionalBuffers(layout));
@@ -683,15 +916,97 @@ void OverlapsJoinHashTable::initHashTableOnCpu(
                                               getKeyComponentCount());
   if (err) {
     throw HashJoinFail(
-        std::string("Unrecognized error when initializing overlaps hash table (") +
+        std::string("Unrecognized error when initializing CPU overlaps hash table (") +
         std::to_string(err) + std::string(")"));
   }
-  CHECK(!hash_tables_for_device_.empty());
-  hash_tables_for_device_[0] = builder.getHashTable();
+  std::shared_ptr<BaselineHashTable> hash_table = builder.getHashTable();
   if (HashJoin::getInnerTableId(inner_outer_pairs_) > 0) {
-    putHashTableOnCpuToCache(cache_key, hash_tables_for_device_[0]);
+    putHashTableOnCpuToCache(cache_key, hash_table);
   }
+  return hash_table;
 }
+
+#ifdef HAVE_CUDA
+
+std::shared_ptr<BaselineHashTable> OverlapsJoinHashTable::initHashTableOnGpu(
+    const std::vector<JoinColumn>& join_columns,
+    const std::vector<JoinColumnTypeInfo>& join_column_types,
+    const std::vector<JoinBucketInfo>& join_bucket_info,
+    const HashType layout,
+    const size_t entry_count,
+    const size_t emitted_keys_count,
+    const size_t device_id) {
+  CHECK_EQ(memory_level_, Data_Namespace::MemoryLevel::GPU_LEVEL);
+
+  VLOG(1) << "Building overlaps join hash table on GPU.";
+
+  const auto catalog = executor_->getCatalog();
+  CHECK(catalog);
+  BaselineJoinHashTableBuilder builder(catalog);
+
+  auto& data_mgr = catalog->getDataMgr();
+  CudaAllocator allocator(&data_mgr, device_id);
+  auto join_columns_gpu = transfer_vector_of_flat_objects_to_gpu(join_columns, allocator);
+  CHECK_EQ(join_columns.size(), 1u);
+  CHECK(!join_bucket_info.empty());
+  auto& bucket_sizes_for_dimension = join_bucket_info[0].bucket_sizes_for_dimension;
+  auto bucket_sizes_gpu =
+      transfer_vector_of_flat_objects_to_gpu(bucket_sizes_for_dimension, allocator);
+  const auto key_handler = OverlapsKeyHandler(
+      bucket_sizes_for_dimension.size(), join_columns_gpu, bucket_sizes_gpu);
+
+  const auto err = builder.initHashTableOnGpu(&key_handler,
+                                              join_columns,
+                                              layout,
+                                              getKeyComponentWidth(),
+                                              getKeyComponentCount(),
+                                              entry_count,
+                                              emitted_keys_count,
+                                              device_id);
+  if (err) {
+    throw HashJoinFail(
+        std::string("Unrecognized error when initializing GPU overlaps hash table (") +
+        std::to_string(err) + std::string(")"));
+  }
+  return builder.getHashTable();
+}
+
+std::shared_ptr<BaselineHashTable> OverlapsJoinHashTable::copyCpuHashTableToGpu(
+    std::shared_ptr<BaselineHashTable>&& cpu_hash_table,
+    const HashType layout,
+    const size_t entry_count,
+    const size_t emitted_keys_count,
+    const size_t device_id) {
+  CHECK_EQ(memory_level_, Data_Namespace::MemoryLevel::GPU_LEVEL);
+
+  auto catalog = executor_->getCatalog();
+  CHECK(catalog);
+  auto& data_mgr = catalog->getDataMgr();
+
+  // copy hash table to GPU
+  BaselineJoinHashTableBuilder gpu_builder(executor_->catalog_);
+  gpu_builder.allocateDeviceMemory(layout,
+                                   getKeyComponentWidth(),
+                                   getKeyComponentCount(),
+                                   entry_count,
+                                   emitted_keys_count,
+                                   device_id);
+  std::shared_ptr<BaselineHashTable> gpu_hash_table = gpu_builder.getHashTable();
+  CHECK(gpu_hash_table);
+  auto gpu_buffer_ptr = gpu_hash_table->getGpuBuffer();
+  CHECK(gpu_buffer_ptr);
+
+  CHECK_LE(cpu_hash_table->getHashTableBufferSize(ExecutorDeviceType::CPU),
+           gpu_hash_table->getHashTableBufferSize(ExecutorDeviceType::GPU));
+  copy_to_gpu(&data_mgr,
+              reinterpret_cast<CUdeviceptr>(gpu_buffer_ptr),
+              cpu_hash_table->getCpuBuffer(),
+              cpu_hash_table->getHashTableBufferSize(ExecutorDeviceType::CPU),
+              device_id);
+  return gpu_hash_table;
+}
+
+#endif  // HAVE_CUDA
 
 #define LL_CONTEXT executor_->cgen_state_->context_
 #define LL_BUILDER executor_->cgen_state_->ir_builder_
@@ -1012,6 +1327,15 @@ std::set<DecodedJoinHashBufferEntry> OverlapsJoinHashTable::toSet(
                           buffer_size);
 }
 
+Data_Namespace::MemoryLevel OverlapsJoinHashTable::getEffectiveMemoryLevel(
+    const std::vector<InnerOuter>& inner_outer_pairs) const {
+  // always build on CPU
+  if (query_hint_.hint_delivered && query_hint_.overlaps_allow_gpu_build) {
+    return memory_level_;
+  }
+  return Data_Namespace::MemoryLevel::CPU_LEVEL;
+}
+
 int OverlapsJoinHashTable::getInnerTableId() const noexcept {
   try {
     return HashJoin::getInnerTableId(inner_outer_pairs_);
@@ -1022,36 +1346,42 @@ int OverlapsJoinHashTable::getInnerTableId() const noexcept {
 }
 
 std::shared_ptr<HashTable> OverlapsJoinHashTable::initHashTableOnCpuFromCache(
-    const HashTableCacheKey& key) {
+    const OverlapsHashTableCacheKey& key) {
   auto timer = DEBUG_TIMER(__func__);
   VLOG(1) << "Checking CPU hash table cache.";
   CHECK(hash_table_cache_);
-  return hash_table_cache_->get(key);
+  auto hash_table_opt = hash_table_cache_->getWithKey(key);
+  if (hash_table_opt) {
+    CHECK(bucket_sizes_for_dimension_ == hash_table_opt->first.bucket_sizes);
+    return hash_table_opt->second;
+  }
+  return nullptr;
 }
 
-std::pair<std::optional<size_t>, size_t>
+std::optional<std::pair<size_t, size_t>>
 OverlapsJoinHashTable::getApproximateTupleCountFromCache(
-    const HashTableCacheKey& key) const {
+    const OverlapsHashTableCacheKey& key) {
   for (auto chunk_key : key.chunk_keys) {
     CHECK_GE(chunk_key.size(), size_t(2));
     if (chunk_key[1] < 0) {
-      return std::make_pair(std::nullopt, 0);
+      return std::nullopt;
       ;
     }
   }
 
   CHECK(hash_table_cache_);
-  auto hash_table = hash_table_cache_->get(key);
-  if (hash_table) {
+  auto hash_table_opt = hash_table_cache_->getWithKey(key);
+  if (hash_table_opt) {
+    auto hash_table = hash_table_opt->second;
     return std::make_pair(hash_table->getEntryCount() / 2,
                           hash_table->getEmittedKeysCount());
   }
-  return std::make_pair(std::nullopt, 0);
+  return std::nullopt;
 }
 
 void OverlapsJoinHashTable::putHashTableOnCpuToCache(
-    const HashTableCacheKey& key,
-    std::shared_ptr<HashTable>& hash_table) {
+    const OverlapsHashTableCacheKey& key,
+    std::shared_ptr<HashTable> hash_table) {
   for (auto chunk_key : key.chunk_keys) {
     CHECK_GE(chunk_key.size(), size_t(2));
     if (chunk_key[1] < 0) {
@@ -1060,63 +1390,4 @@ void OverlapsJoinHashTable::putHashTableOnCpuToCache(
   }
   CHECK(hash_table_cache_);
   hash_table_cache_->insert(key, hash_table);
-}
-
-void OverlapsJoinHashTable::computeBucketSizes(
-    std::vector<double>& bucket_sizes_for_dimension,
-    const JoinColumn& join_column,
-    const JoinColumnTypeInfo& join_column_type,
-    const std::vector<InnerOuter>& inner_outer_pairs) {
-  // No coalesced keys for overlaps joins yet
-  CHECK_EQ(inner_outer_pairs.size(), 1u);
-
-  const auto col = inner_outer_pairs[0].first;
-  CHECK(col);
-  const auto col_ti = col->get_type_info();
-  CHECK(col_ti.is_array());
-
-  // TODO: Compute the number of dimensions for this overlaps key
-  const int num_dims = 2;
-  std::vector<double> local_bucket_sizes(num_dims, std::numeric_limits<double>::max());
-
-  VLOG(1) << "Computing bucketed hashjoin with minimum bucket size "
-          << std::to_string(overlaps_hashjoin_bucket_threshold_);
-
-  const auto effective_memory_level = getEffectiveMemoryLevel(inner_outer_pairs);
-  if (effective_memory_level == Data_Namespace::MemoryLevel::CPU_LEVEL) {
-    const int thread_count = cpu_threads();
-    compute_bucket_sizes(local_bucket_sizes,
-                         join_column,
-                         join_column_type,
-                         overlaps_hashjoin_bucket_threshold_,
-                         thread_count);
-  }
-#ifdef HAVE_CUDA
-  else {
-    // Note that we compute the bucket sizes using only a single GPU
-    const int device_id = 0;
-    auto& data_mgr = executor_->getCatalog()->getDataMgr();
-    CudaAllocator allocator(&data_mgr, device_id);
-    auto device_bucket_sizes_gpu =
-        transfer_vector_of_flat_objects_to_gpu(local_bucket_sizes, allocator);
-    auto join_column_gpu = transfer_flat_object_to_gpu(join_column, allocator);
-    auto join_column_type_gpu = transfer_flat_object_to_gpu(join_column_type, allocator);
-
-    compute_bucket_sizes_on_device(device_bucket_sizes_gpu,
-                                   join_column_gpu,
-                                   join_column_type_gpu,
-                                   overlaps_hashjoin_bucket_threshold_);
-    allocator.copyFromDevice(reinterpret_cast<int8_t*>(local_bucket_sizes.data()),
-                             reinterpret_cast<int8_t*>(device_bucket_sizes_gpu),
-                             local_bucket_sizes.size() * sizeof(double));
-  }
-#endif
-
-  size_t ctr = 0;
-  for (auto& bucket_sz : local_bucket_sizes) {
-    VLOG(1) << "Computed bucket size for dim[" << ctr++ << "]: " << bucket_sz;
-    bucket_sizes_for_dimension.push_back(1.0 / bucket_sz);
-  }
-
-  return;
 }

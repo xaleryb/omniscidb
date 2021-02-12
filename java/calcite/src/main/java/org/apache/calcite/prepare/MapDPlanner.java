@@ -223,14 +223,15 @@ public class MapDPlanner extends PlannerImpl {
     applyQueryOptimizationRules(relR);
     applyFilterPushdown(relR);
 
-    HepProgramBuilder progBuilder = new HepProgramBuilder();
-    progBuilder.addRuleInstance(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE_INCLUDE_OUTER);
-    progBuilder.addRuleInstance(CoreRules.FILTER_MERGE);
-    progBuilder.addRuleInstance(CoreRules.FILTER_PROJECT_TRANSPOSE);
-    progBuilder.addRuleInstance(CoreRules.PROJECT_MERGE);
-    progBuilder.addRuleInstance(ProjectProjectRemoveRule.INSTANCE);
+    HepProgramBuilder hepBuilder = new HepProgramBuilder();
+    hepBuilder.addRuleInstance(CoreRules.JOIN_PROJECT_BOTH_TRANSPOSE_INCLUDE_OUTER);
+    hepBuilder.addRuleInstance(CoreRules.FILTER_MERGE);
+    hepBuilder.addRuleInstance(CoreRules.FILTER_PROJECT_TRANSPOSE);
+    hepBuilder.addRuleInstance(CoreRules.PROJECT_MERGE);
+    hepBuilder.addRuleInstance(ProjectProjectRemoveRule.INSTANCE);
 
-    HepPlanner hepPlanner = new HepPlanner(progBuilder.build());
+    HepPlanner hepPlanner = new HepPlanner(hepBuilder.build());
+
     final RelNode root = relR.project();
     hepPlanner.setRoot(root);
     final RelNode newRel = hepPlanner.findBestExp();

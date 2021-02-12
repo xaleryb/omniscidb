@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 OmniSci, Inc.
+ * Copyright (c) 2021 OmniSci, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
 #pragma once
 
 #include "DoubleSort.h"
+#include "SimpleAllocator.h"
 #include "VectorView.h"
 #include "gpu_enabled.h"
 
@@ -179,9 +180,14 @@ class CentroidsMemory {
 
 template <typename RealType, typename IndexType = size_t>
 class TDigest {
-  Centroids<RealType, IndexType> centroids_;
   Centroids<RealType, IndexType> buf_;  // incoming buffer
+  Centroids<RealType, IndexType> centroids_;
   bool forward_{true};  // alternate direction on each call to mergeCentroids().
+
+  // simple_allocator_, buf_allocate_, centroids_allocate_ are used only by allocate().
+  SimpleAllocator* const simple_allocator_{nullptr};
+  IndexType const buf_allocate_{0};
+  IndexType const centroids_allocate_{0};
 
   DEVICE RealType max() const { return centroids_.max_; }
   DEVICE RealType min() const { return centroids_.min_; }
@@ -210,10 +216,20 @@ class TDigest {
     centroids_.clear();
   }
 
+  DEVICE TDigest(SimpleAllocator* simple_allocator,
+                 IndexType buf_allocate,
+                 IndexType centroids_allocate)
+      : simple_allocator_(simple_allocator)
+      , buf_allocate_(buf_allocate)
+      , centroids_allocate_(centroids_allocate) {}
+
   DEVICE Centroids<RealType, IndexType>& centroids() { return centroids_; }
 
   // Store value to buf_, and merge when full.
   DEVICE void add(RealType value);
+
+  // Allocate memory if needed by simple_allocator_.
+  DEVICE void allocate();
 
   DEVICE void mergeBuffer();
 
@@ -387,27 +403,29 @@ DEVICE CentroidsMerger<RealType, IndexType>::CentroidsMerger(
 template <typename RealType, typename IndexType>
 DEVICE Centroids<RealType, IndexType>*
 CentroidsMerger<RealType, IndexType>::getNextCentroid() const {
-  if (buf_->hasNext() && centroids_->hasNext()) {
-    return (*buf_ < *centroids_) == forward_ ? buf_ : centroids_;
-  } else if (buf_->hasNext()) {
+  if (buf_->hasNext()) {
+    if (centroids_->hasNext()) {
+      return (*buf_ < *centroids_) == forward_ ? buf_ : centroids_;
+    }
     return buf_;
   } else if (centroids_->hasNext()) {
     return centroids_;
-  } else {
-    return nullptr;  // hasNext() is false
   }
+  return nullptr;
 }
 
 namespace {
 
 // Helper struct for mergeCentroids() for tracking skipped centroids.
+// A consecutive sequence of incoming centroids with the same mean
+// and exceed max_count are skipped before expensive reshuffling of memory.
 template <typename RealType, typename IndexType>
 class Skipped {
   struct Data {
     Centroids<RealType, IndexType>* centroid_{nullptr};
-    IndexType start_{};
-    IndexType count_merged_{};
-    IndexType count_skipped_{};
+    IndexType start_{0};
+    IndexType count_merged_{0};
+    IndexType count_skipped_{0};
   } data_[2];
   Centroid<RealType, IndexType> mean_;
 
@@ -454,13 +472,8 @@ class Skipped {
   }
   DEVICE void merged(Centroids<RealType, IndexType>* next_centroid) {
     IndexType const idx = index(next_centroid);
-    if (idx == 1 && data_[1].centroid_ == nullptr) {
-      data_[1] = {next_centroid, next_centroid->next_idx_ + next_centroid->inc_, 0, 0};
-    } else if (data_[idx].count_skipped_) {
+    if (data_[idx].count_skipped_) {
       ++data_[idx].count_merged_;
-    } else {
-      assert(idx == 1);
-      data_[1].start_ += next_centroid->inc_;
     }
   }
   DEVICE operator bool() const { return data_[0].centroid_; }
@@ -477,6 +490,7 @@ class Skipped {
     mean_ = Centroid<RealType, IndexType>{next_centroid->nextSum(),
                                           next_centroid->nextCount()};
     data_[0] = {next_centroid, next_centroid->next_idx_, 0, 1};
+    next_centroid->next_idx_ += next_centroid->inc_;
   }
   DEVICE void skipSubsequent(Centroids<RealType, IndexType>* next_centroid) {
     IndexType const idx = index(next_centroid);
@@ -558,6 +572,23 @@ DEVICE void TDigest<RealType, IndexType>::add(RealType value) {
   }
   buf_.sums_.push_back(value);
   buf_.counts_.push_back(1);
+}
+
+// Assumes buf_ is allocated iff centroids_ is allocated.
+template <typename RealType, typename IndexType>
+DEVICE void TDigest<RealType, IndexType>::allocate() {
+  if (buf_.capacity() == 0) {
+    auto* p0 = simple_allocator_->allocate(buf_allocate_ * sizeof(RealType));
+    auto* p1 = simple_allocator_->allocate(buf_allocate_ * sizeof(IndexType));
+    buf_ = Centroids<RealType, IndexType>(
+        VectorView<RealType>(reinterpret_cast<RealType*>(p0), 0, buf_allocate_),
+        VectorView<IndexType>(reinterpret_cast<IndexType*>(p1), 0, buf_allocate_));
+    p0 = simple_allocator_->allocate(centroids_allocate_ * sizeof(RealType));
+    p1 = simple_allocator_->allocate(centroids_allocate_ * sizeof(IndexType));
+    centroids_ = Centroids<RealType, IndexType>(
+        VectorView<RealType>(reinterpret_cast<RealType*>(p0), 0, centroids_allocate_),
+        VectorView<IndexType>(reinterpret_cast<IndexType*>(p1), 0, centroids_allocate_));
+  }
 }
 
 template <typename RealType, typename IndexType>
