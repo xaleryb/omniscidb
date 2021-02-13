@@ -47,7 +47,6 @@
 #include "../Shared/measure.h"
 #include "MapDRelease.h"
 #include "RWLocks.h"
-#include "Shared/scope.h"
 #include "bcrypt.h"
 
 using std::list;
@@ -356,8 +355,6 @@ void insertOrUpdateObjectPrivileges(std::unique_ptr<SqliteConnector>& sqliteConn
                                     std::string roleName,
                                     bool userRole,
                                     DBObject& object) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   CHECK(object.valid());
   DBObjectKey key = object.getObjectKey();
 
@@ -383,7 +380,6 @@ void insertOrUpdateObjectPrivileges(std::unique_ptr<SqliteConnector>& sqliteConn
           std::to_string(object.getOwner()),                  // objectOwnerId
           object.getName()                                    // name
       });
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 }  // namespace
@@ -1520,14 +1516,11 @@ void SysCatalog::grantDBObjectPrivilegesBatch_unsafe(
     const vector<string>& grantees,
     const vector<DBObject>& objects,
     const Catalog_Namespace::Catalog& catalog) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   for (const auto& grantee : grantees) {
     for (const auto& object : objects) {
       grantDBObjectPrivileges_unsafe(grantee, object, catalog);
     }
   }
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 // GRANT INSERT ON TABLE payroll_table TO payroll_dept_role;
@@ -1535,8 +1528,6 @@ void SysCatalog::grantDBObjectPrivileges_unsafe(
     const std::string& granteeName,
     DBObject object,
     const Catalog_Namespace::Catalog& catalog) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   object.loadKey(catalog);
   CHECK(object.valid());
   if (object.getPrivileges().hasPermission(DatabasePrivileges::ALL) &&
@@ -1549,7 +1540,6 @@ void SysCatalog::grantDBObjectPrivileges_unsafe(
   UserMetadata user_meta;
   if (instance().getMetadataForUser(granteeName, user_meta)) {
     if (user_meta.isSuper) {
-      LOG(INFO) << ".......... skipping super";
       // super doesn't have explicit privileges so nothing to do
       return;
     }
@@ -1570,7 +1560,6 @@ void SysCatalog::grantDBObjectPrivileges_unsafe(
   insertOrUpdateObjectPrivileges(
       sqliteConnector_, granteeName, grantee->isUser(), object);
   updateObjectDescriptorMap(granteeName, object, grantee->isUser(), catalog);
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 void SysCatalog::grantAllOnDatabase_unsafe(const std::string& roleName,
@@ -1782,8 +1771,6 @@ void SysCatalog::getDBObjectPrivileges(const std::string& granteeName,
 
 void SysCatalog::createRole_unsafe(const std::string& roleName,
                                    const bool userPrivateRole) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   sys_write_lock write_lock(this);
 
   auto* grantee = getGrantee(roleName);
@@ -1792,10 +1779,8 @@ void SysCatalog::createRole_unsafe(const std::string& roleName,
                              " failed because grantee with this name already exists.");
   }
   if (userPrivateRole) {
-    LOG(INFO) << ".......... new User " << roleName;
     grantee = new User(roleName);
   } else {
-    LOG(INFO) << ".......... new Role " << roleName;
     grantee = new Role(roleName);
   }
   granteeMap_[to_upper(roleName)] = grantee;
@@ -1812,7 +1797,6 @@ void SysCatalog::createRole_unsafe(const std::string& roleName,
 
   sys_sqlite_lock sqlite_lock(this);
   insertOrUpdateObjectPrivileges(sqliteConnector_, roleName, userPrivateRole, dbObject);
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 void SysCatalog::dropRole_unsafe(const std::string& roleName) {
@@ -1899,8 +1883,6 @@ void SysCatalog::updateObjectDescriptorMap(const std::string& roleName,
                                            DBObject& object,
                                            bool roleType,
                                            const Catalog_Namespace::Catalog& cat) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   bool present = false;
   auto privs = object.getPrivileges();
   sys_write_lock write_lock(this);
@@ -1930,7 +1912,6 @@ void SysCatalog::updateObjectDescriptorMap(const std::string& roleName,
             std::to_string(od->objectId),
         od));
   }
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 // rename object descriptors
@@ -2052,17 +2033,12 @@ Grantee* SysCatalog::getGrantee(const std::string& name) const {
   sys_read_lock read_lock(this);
   auto grantee = granteeMap_.find(to_upper(name));
   if (grantee == granteeMap_.end()) {  // check to make sure role exists
-    LOG(INFO) << ".......... role not found: " << name;
     return nullptr;
   }
-  LOG(INFO) << ".......... role found: " << name;
   return grantee->second;  // returns pointer to role
 }
 
 Role* SysCatalog::getRoleGrantee(const std::string& name) const {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
-  LOG(INFO) << "---------- " << __func__ << " BOT";
   return dynamic_cast<Role*>(getGrantee(name));
 }
 
@@ -2309,27 +2285,20 @@ void SysCatalog::buildObjectDescriptorMap() {
 
 template <typename F, typename... Args>
 void SysCatalog::execInTransaction(F&& f, Args&&... args) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   sys_write_lock write_lock(this);
   sys_sqlite_lock sqlite_lock(this);
   sqliteConnector_->query("BEGIN TRANSACTION");
   try {
     (this->*f)(std::forward<Args>(args)...);
   } catch (std::exception&) {
-    LOG(INFO) << ".......... catch rollback";
     sqliteConnector_->query("ROLLBACK TRANSACTION");
     throw;
   }
   sqliteConnector_->query("END TRANSACTION");
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 void SysCatalog::createRole(const std::string& roleName, const bool& userPrivateRole) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   execInTransaction(&SysCatalog::createRole_unsafe, roleName, userPrivateRole);
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 void SysCatalog::dropRole(const std::string& roleName) {
@@ -2364,21 +2333,15 @@ void SysCatalog::grantDBObjectPrivileges(const string& grantee,
 void SysCatalog::grantDBObjectPrivilegesBatch(const vector<string>& grantees,
                                               const vector<DBObject>& objects,
                                               const Catalog_Namespace::Catalog& catalog) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   execInTransaction(
       &SysCatalog::grantDBObjectPrivilegesBatch_unsafe, grantees, objects, catalog);
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 void SysCatalog::revokeDBObjectPrivileges(const string& grantee,
                                           const DBObject& object,
                                           const Catalog_Namespace::Catalog& catalog) {
-  LOG(INFO) << "++++++++++ " << __func__ << " TOP";
-  ScopeGuard logguard = [f = __func__] { LOG(INFO) << "---------- " << f << " END"; };
   execInTransaction(
       &SysCatalog::revokeDBObjectPrivileges_unsafe, grantee, object, catalog);
-  LOG(INFO) << "---------- " << __func__ << " BOT";
 }
 
 void SysCatalog::revokeDBObjectPrivilegesBatch(
