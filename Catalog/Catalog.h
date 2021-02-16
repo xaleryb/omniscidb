@@ -552,7 +552,7 @@ class Catalog final {
   ForeignServerMapById foreignServerMapById_;
 
   SqliteConnector sqliteConnector_;
-  DBMetadata currentDB_;
+  const DBMetadata currentDB_;
   std::shared_ptr<Data_Namespace::DataMgr> dataMgr_;
   std::shared_ptr<ForeignStorageInterface> fsi_;
 
