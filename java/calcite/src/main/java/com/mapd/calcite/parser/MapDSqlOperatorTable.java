@@ -195,7 +195,12 @@ public class MapDSqlOperatorTable extends ChainedSqlOperatorTable {
     opTab.addOperator(new ST_Contains());
     opTab.addOperator(new ST_Intersects());
     opTab.addOperator(new ST_Overlaps());
-    opTab.addOperator(new ST_Approx_Overlaps());
+
+    // this operator affects RA query optimization
+    // which could generate invalid IR, so we won't use it
+    // https://github.com/modin-project/modin/issues/2788
+    // opTab.addOperator(new ST_Approx_Overlaps());
+
     opTab.addOperator(new ST_Disjoint());
     opTab.addOperator(new ST_Within());
     opTab.addOperator(new ST_DWithin());
